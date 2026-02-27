@@ -1,0 +1,63 @@
+{
+  "version": "2.0",
+  "entry": [
+    "create_leave"
+  ],
+  "terminal": [
+    "submit_approval"
+  ],
+  "steps": {
+    "create_leave": {
+      "stepId": "create_leave",
+      "name": "create_leave",
+      "type": "HTTP",
+      "next": [
+        "submit_approval"
+      ],
+      "config": {
+        "method": "POST",
+        "endpoint": "/home/leaves/add",
+        "contentType": "application/x-www-form-urlencoded",
+        "inputMapping": {
+          "id": "0",
+          "types": "${types}",
+          "start_date": "${start_date}",
+          "end_date": "${end_date}",
+          "reason": "${reason}",
+          "duration": "${duration}",
+          "file_ids": ""
+        },
+        "outputMapping": {
+          "leave_id": "$.data.return_id",
+          "message": "$.msg"
+        },
+        "successCondition": "$.code == 0"
+      }
+    },
+    "submit_approval": {
+      "stepId": "submit_approval",
+      "name": "submit_approval",
+      "type": "HTTP",
+      "dependsOn": [
+        "create_leave"
+      ],
+      "config": {
+        "method": "POST",
+        "endpoint": "/api/check/submit_check",
+        "contentType": "application/x-www-form-urlencoded",
+        "inputMapping": {
+          "check_name": "leaves",
+          "action_id": "${create_leave.leave_id}",
+          "flow_id": "${check_flow_id}",
+          "check_uids": "${check_uids}",
+          "check_copy_uids": "${notify_uids}"
+        },
+        "outputMapping": {
+          "code": "$.code",
+          "final_message": "$.msg"
+        },
+        "successCondition": "$.code == 0"
+      }
+    }
+  }
+}

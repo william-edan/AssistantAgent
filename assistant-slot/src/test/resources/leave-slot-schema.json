@@ -1,0 +1,122 @@
+{
+  "slots": [
+    {
+      "name": "leave_type",
+      "type": "enum",
+      "title": "请假类型",
+      "description": "请假类型",
+      "ai_hint": "用户说的假期类型，如事假、年假、调休假、病假等",
+      "priority": "CORE",
+      "required": true,
+      "ask_mode": "BATCH",
+      "options": {
+        "source": "ENUM",
+        "enum_mapping": {
+          "事假": "1",
+          "年假": "2",
+          "调休假": "3",
+          "病假": "4"
+        }
+      },
+      "displayConfig": {
+        "showInSummary": true,
+        "summaryOrder": 1,
+        "summaryIcon": "📋",
+        "summaryGroup": "CORE"
+      }
+    },
+    {
+      "name": "start_date",
+      "type": "date",
+      "title": "开始日期",
+      "description": "请假开始日期",
+      "ai_hint": "YYYY-MM-DD格式",
+      "priority": "CORE",
+      "required": true,
+      "ask_mode": "BATCH",
+      "displayConfig": {
+        "showInSummary": true,
+        "summaryOrder": 2,
+        "summaryIcon": "📅",
+        "summaryGroup": "CORE"
+      }
+    },
+    {
+      "name": "end_date",
+      "type": "date",
+      "title": "结束日期",
+      "description": "请假结束日期",
+      "ai_hint": "YYYY-MM-DD格式",
+      "priority": "CORE",
+      "required": true,
+      "ask_mode": "BATCH",
+      "depends_on": ["start_date"],
+      "displayConfig": {
+        "showInSummary": true,
+        "summaryOrder": 3,
+        "summaryIcon": "📅",
+        "summaryGroup": "CORE"
+      }
+    },
+    {
+      "name": "duration",
+      "type": "number",
+      "title": "请假天数",
+      "description": "请假天数（自动计算）",
+      "priority": "CORE",
+      "computed": {
+        "enabled": true,
+        "type": "FUNCTION",
+        "function": "date_diff",
+        "params": {
+          "start": "start_date",
+          "end": "end_date",
+          "unit": "days",
+          "include_start": "true",
+          "include_end": "true"
+        },
+        "default_value": 1
+      },
+      "displayConfig": {
+        "showInSummary": true,
+        "summaryOrder": 4,
+        "summaryIcon": "⏱",
+        "summaryGroup": "CORE",
+        "displaySuffix": "天"
+      }
+    },
+    {
+      "name": "reason",
+      "type": "string",
+      "title": "请假事由",
+      "description": "请假原因",
+      "priority": "CONFIRM",
+      "required": false,
+      "ask_mode": "BATCH",
+      "default_value": "个人事务"
+    },
+    {
+      "name": "check_uids",
+      "type": "user",
+      "title": "审批人",
+      "description": "审批人",
+      "priority": "SUPPLEMENTARY",
+      "required": false,
+      "ask_mode": "FORM_ONLY",
+      "options": {
+        "source": "API",
+        "api": {
+          "endpoint": "/api/employees",
+          "method": "GET",
+          "value_field": "id",
+          "label_field": "name"
+        }
+      },
+      "displayConfig": {
+        "showInSummary": true,
+        "summaryGroup": "SECONDARY",
+        "summaryIcon": "👤"
+      }
+    }
+  ]
+}

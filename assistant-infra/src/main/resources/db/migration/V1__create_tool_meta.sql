@@ -1,0 +1,23 @@
+CREATE TABLE tool_meta (
+    id              BIGINT AUTO_INCREMENT PRIMARY KEY,
+    tenant_id       VARCHAR(64) NOT NULL DEFAULT 'default',
+    tool_code       VARCHAR(128) NOT NULL,
+    tool_name       VARCHAR(256) NOT NULL,
+    description     TEXT,
+    system_code     VARCHAR(64) NOT NULL,
+    api_endpoint    VARCHAR(512),
+    http_method     VARCHAR(16),
+    content_type    VARCHAR(128),
+    parameter_schema TEXT,
+    execution_plan  TEXT,
+    interaction_policy TEXT,
+    risk_level      VARCHAR(16) NOT NULL DEFAULT 'LOW',
+    requires_auth   TINYINT NOT NULL DEFAULT 1,
+    requires_confirm TINYINT NOT NULL DEFAULT 0,
+    capability_type VARCHAR(16) NOT NULL DEFAULT 'ACTION',
+    version         INT NOT NULL DEFAULT 1,
+    status          VARCHAR(16) NOT NULL DEFAULT 'enabled',
+    created_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uk_tenant_tool (tenant_id, tool_code, version)
+);

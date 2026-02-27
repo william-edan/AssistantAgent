@@ -1,0 +1,32 @@
+{
+  "type": "object",
+  "properties": {
+    "leave_type": {
+      "type": "string",
+      "title": "请假类型",
+      "description": "请假类型",
+      "ai_hint": "事假、年假、调休假、病假",
+      "enum_mapping": {
+        "事假": "1",
+        "年假": "2"
+      }
+    },
+    "start_date": {
+      "type": "string",
+      "title": "开始日期",
+      "description": "请假开始日期"
+    },
+    "end_date": {
+      "type": "string",
+      "title": "结束日期",
+      "description": "请假结束日期"
+    },
+    "reason": {
+      "type": "string",
+      "title": "请假事由",
+      "description": "请假原因",
+      "default": "个人事务"
+    }
+  },
+  "required": ["leave_type", "start_date", "end_date"]
+}

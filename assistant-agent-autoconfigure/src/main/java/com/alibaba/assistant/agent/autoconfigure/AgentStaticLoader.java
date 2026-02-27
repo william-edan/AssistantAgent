@@ -63,8 +63,10 @@ public class AgentStaticLoader implements AgentLoader {
 
 		// 注册 agent，使用 "grayscale_agent" 作为标识符
 		this.agents.put("grayscale_agent", agent);
+		// 兼容 migration 侧默认 appName
+		this.agents.put("assistant_agent", agent);
 
-		logger.info("AgentStaticLoader#<init> 已注册 agent: grayscale_agent");
+		logger.info("AgentStaticLoader#<init> 已注册 agent: {}", this.agents.keySet());
 	}
 
 	@Override
@@ -82,8 +84,12 @@ public class AgentStaticLoader implements AgentLoader {
 			logger.error("AgentStaticLoader#loadAgent Agent 名称为空");
 			throw new IllegalArgumentException("Agent name cannot be null or empty");
 		}
-		logger.info("AgentStaticLoader#loadAgent 成功加载 agent: {}", name);
-        // 随便选一个
+		BaseAgent agent = agents.get(name);
+		if (agent != null) {
+			logger.info("AgentStaticLoader#loadAgent 成功加载 agent: {}", name);
+			return agent;
+		}
+		logger.warn("AgentStaticLoader#loadAgent 未找到指定 agent, requested={}, fallback=grayscale_agent", name);
 		return agents.get("grayscale_agent");
 	}
 }

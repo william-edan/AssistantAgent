@@ -5,20 +5,44 @@
 # ============================================================================
 
 spring:
+  profiles:
+    active: migration
   application:
     name: assistant-agent-full
+  flyway:
+    enabled: false
+  autoconfigure:
+    exclude:
+      - org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration
+      - org.springframework.boot.autoconfigure.jdbc.DataSourceTransactionManagerAutoConfiguration
+      - org.springframework.boot.autoconfigure.flyway.FlywayAutoConfiguration
+      - org.springframework.boot.autoconfigure.orm.jpa.HibernateJpaAutoConfiguration
+      - org.springframework.boot.autoconfigure.data.redis.RedisAutoConfiguration
+      - org.springframework.boot.autoconfigure.data.redis.RedisRepositoriesAutoConfiguration
+      - com.baomidou.mybatisplus.autoconfigure.MybatisPlusAutoConfiguration
 
 server:
   port: 8080
+
+assistant:
+  chat:
+    default-app-name: grayscale_agent
+  debug:
+    http:
+      enabled: true
+      only-dashscope: true
+      max-body-chars: 4000
+      sanitize-invalid-tool-messages: true
 
 # ============================================================================
 # DashScope Configuration
 # ============================================================================
 spring.ai.dashscope:
-  api-key: ${DASHSCOPE_API_KEY}
+  api-key: ${DASHSCOPE_API_KEY:sk-8ae125796fc6476cb1062e2eabe5b43a}
   chat:
     options:
       model: qwen-max
+
 
 # ============================================================================
 # Experience Module - with FastIntent enabled
@@ -114,3 +138,11 @@ spring.ai.alibaba.codeact.extension.prompt:
 logging:
   level:
     com.alibaba.assistant.agent: DEBUG
+
+---
+spring:
+  config:
+    activate:
+      on-profile: migration
+  autoconfigure:
+    exclude: []

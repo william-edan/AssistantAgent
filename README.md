@@ -114,7 +114,9 @@ spring:
       api-key: ${DASHSCOPE_API_KEY}
       chat:
         options:
-          model: qwen-max
+          model: qwen3.5-plus
+          multi-model: true
+          incremental-output: true
 ```
 
 ### 4. Start the Application

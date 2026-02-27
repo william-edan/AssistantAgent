@@ -15,6 +15,12 @@
         <module>assistant-agent-prompt-builder</module>
         <module>assistant-agent-evaluation</module>
         <module>assistant-agent-start</module>
+        <module>assistant-api</module>
+        <module>assistant-runtime</module>
+        <module>assistant-slot</module>
+        <module>assistant-execution</module>
+        <module>assistant-controlplane</module>
+        <module>assistant-infra</module>
     </modules>
 
     <properties>
@@ -23,10 +29,11 @@
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <graalvm.polyglot.version>24.2.1</graalvm.polyglot.version>
         <spring-boot.version>3.4.8</spring-boot.version>
-        <spring-ai-alibaba-extensions.version>1.1.0.0</spring-ai-alibaba-extensions.version>
+        <spring-ai-alibaba-extensions.version>1.1.2.1</spring-ai-alibaba-extensions.version>
         <spring-ai-alibaba.version>1.1.2.0</spring-ai-alibaba.version>
         <spring-ai.version>1.1.0</spring-ai.version>
         <opentelemetry.version>1.35.0</opentelemetry.version>
+        <mybatis-plus.version>3.5.7</mybatis-plus.version>
     </properties>
 
     <dependencyManagement>
@@ -122,6 +129,44 @@
                 <scope>import</scope>
             </dependency>
 
+            <!-- New platform modules -->
+            <dependency>
+                <groupId>com.alibaba.agent.assistant</groupId>
+                <artifactId>assistant-api</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.alibaba.agent.assistant</groupId>
+                <artifactId>assistant-runtime</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.alibaba.agent.assistant</groupId>
+                <artifactId>assistant-slot</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.alibaba.agent.assistant</groupId>
+                <artifactId>assistant-execution</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.alibaba.agent.assistant</groupId>
+                <artifactId>assistant-controlplane</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.alibaba.agent.assistant</groupId>
+                <artifactId>assistant-infra</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <!-- MyBatis-Plus -->
+            <dependency>
+                <groupId>com.baomidou</groupId>
+                <artifactId>mybatis-plus-spring-boot3-starter</artifactId>
+                <version>${mybatis-plus.version}</version>
+            </dependency>
+
             <!-- OpenTelemetry BOM for observability -->
             <dependency>
                 <groupId>io.opentelemetry</groupId>
@@ -137,12 +182,31 @@
     <build>
         <plugins>
             <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <version>3.13.0</version>
+                <configuration>
+                    <source>17</source>
+                    <target>17</target>
+                    <parameters>true</parameters>
+                </configuration>
+            </plugin>
+            <plugin>
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>
                 <configuration>
-                    <mainClass>com.alibaba.assistant.agent.start.AssistantAgentApplication</mainClass>
+                    <skip>true</skip>
                 </configuration>
             </plugin>
         </plugins>
+        <pluginManagement>
+            <plugins>
+                <plugin>
+                    <groupId>org.springframework.boot</groupId>
+                    <artifactId>spring-boot-maven-plugin</artifactId>
+                    <version>${spring-boot.version}</version>
+                </plugin>
+            </plugins>
+        </pluginManagement>
     </build>
 </project>

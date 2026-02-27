@@ -57,7 +57,7 @@ public class DemoExperienceConfig implements CommandLineRunner {
     public void run(String... args) throws Exception {
         log.info("DemoExperienceConfig#run - reason=Initializing Demo Experiences");
 
-        // 初始化常识经验
+/*        // 初始化常识经验
         initializeCommonExperienceMoLiHong();
         initializeCommonExperienceMoLiHai();
 
@@ -66,7 +66,7 @@ public class DemoExperienceConfig implements CommandLineRunner {
         initializeReactExperienceXiaomingCoefficient();
 
         // 初始化 Code 经验
-        initializeCodeExperienceXiaomingCoefficient();
+        initializeCodeExperienceXiaomingCoefficient();*/
 
         log.info("DemoExperienceConfig#run - reason=Demo Experiences initialization completed");
     }

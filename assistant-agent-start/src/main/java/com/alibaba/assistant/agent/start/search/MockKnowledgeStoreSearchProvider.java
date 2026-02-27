@@ -45,12 +45,12 @@ public class MockKnowledgeStoreSearchProvider implements SearchProvider {
                     "Spring AI Alibaba 是阿里云提供的 Spring AI 实现，支持通义千问、百炼等模型。",
                     "# Spring AI Alibaba 快速开始\n\n" +
                             "Spring AI Alibaba 是基于 Spring AI 框架的阿里云实现，提供以下核心能力：\n\n" +
-                            "1. **模型支持**: 通义千问(Qwen)系列模型，包括 qwen-max, qwen-plus, qwen-turbo 等\n" +
+                            "1. **模型支持**: 通义千问(Qwen)系列模型，包括 qwen3.5-plus, qwen-max, qwen-plus, qwen-turbo 等\n" +
                             "2. **多模态**: 支持文本、图像、语音等多模态交互\n" +
                             "3. **函数调用**: 原生支持 Function Calling 和 Tool Use\n" +
                             "4. **向量存储**: 集成阿里云向量数据库\n\n" +
                             "## Maven 依赖\n```xml\n<dependency>\n    <groupId>com.alibaba.cloud.ai</groupId>\n    <artifactId>spring-ai-alibaba-starter-dashscope</artifactId>\n</dependency>\n```\n\n" +
-                            "## 配置示例\n```yaml\nspring:\n  ai:\n    dashscope:\n      api-key: ${DASHSCOPE_API_KEY}\n      chat:\n        options:\n          model: qwen-max\n```",
+                            "## 配置示例\n```yaml\nspring:\n  ai:\n    dashscope:\n      api-key: ${DASHSCOPE_API_KEY}\n      chat:\n        options:\n          model: qwen3.5-plus\n          multi-model: true\n          incremental-output: true\n```",
                     List.of("spring-ai", "阿里云", "通义千问", "快速开始")
             ),
             new KnowledgeItem(
