@@ -29,15 +29,13 @@ import com.alibaba.cloud.ai.graph.agent.hook.JumpTo;
 import com.alibaba.cloud.ai.graph.agent.hook.ModelHook;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.messages.Message;
-import org.springframework.ai.chat.messages.ToolResponseMessage;
+import org.springframework.ai.chat.messages.UserMessage;
 
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 
 /**
@@ -57,9 +55,9 @@ public abstract class PromptContributorModelHook extends ModelHook implements Pr
     private static final Logger log = LoggerFactory.getLogger(PromptContributorModelHook.class);
 
     /**
-     * 注入工具名称
+     * 普通上下文注入前缀（避免使用伪工具消息）。
      */
-    private static final String INJECTION_TOOL_NAME = "__prompt_contribution__";
+    private static final String CONTEXT_PREFIX = "【系统补充上下文】\n";
 
     /**
      * 默认的 order 值，设置为较大值以确保在评估 Hook（order=10）之后执行
@@ -158,22 +156,12 @@ public abstract class PromptContributorModelHook extends ModelHook implements Pr
         }
 
         if (!messagesToAdd.isEmpty()) {
-            // 使用 Tool Response 方式注入消息内容
             String content = buildInjectionContent(messagesToAdd);
-            String toolCallId = "contrib_" + UUID.randomUUID().toString().substring(0, 8);
-
-            AssistantMessage assistantMsg = AssistantMessage.builder()
-                    .content("")
-                    .toolCalls(List.of(new AssistantMessage.ToolCall(
-                            toolCallId, "function", INJECTION_TOOL_NAME, "{}")))
-                    .build();
-
-            ToolResponseMessage toolMsg = ToolResponseMessage.builder()
-                    .responses(List.of(new ToolResponseMessage.ToolResponse(
-                            toolCallId, INJECTION_TOOL_NAME, content)))
-                    .build();
-
-            updates.put("messages", List.of(assistantMsg, toolMsg));
+            if (content != null && !content.isBlank()) {
+                // 注入普通消息，避免模型将内部伪工具名当成可执行工具再次调用。
+                UserMessage contextMessage = new UserMessage(CONTEXT_PREFIX + content);
+                updates.put("messages", List.of(contextMessage));
+            }
         }
 
         return updates;

@@ -20,14 +20,26 @@ import com.alibaba.assistant.agent.common.enums.Language;
 import com.alibaba.assistant.agent.common.hook.AgentPhase;
 import com.alibaba.assistant.agent.common.hook.HookPhaseUtils;
 import com.alibaba.assistant.agent.common.tools.CodeactTool;
-import com.alibaba.assistant.agent.controlplane.toolregistry.ToolMeta;
-import com.alibaba.assistant.agent.controlplane.toolregistry.ToolMetaService;
+import com.alibaba.assistant.agent.extension.experience.hook.FastIntentReactHook;
 import com.alibaba.assistant.agent.extension.dynamic.spi.DynamicToolFactoryContext;
+import com.alibaba.assistant.agent.runtime.config.NullSafeStateSerializer;
+import com.alibaba.assistant.agent.runtime.interceptor.AuditToolInterceptor;
+import com.alibaba.assistant.agent.runtime.interceptor.HumanInTheLoopToolInterceptor;
+import com.alibaba.assistant.agent.runtime.interceptor.IdentityEnricherToolInterceptor;
+import com.alibaba.assistant.agent.runtime.interceptor.InternalPromptContributionToolInterceptor;
+import com.alibaba.assistant.agent.runtime.interceptor.PolicyCheckModelInterceptor;
+import com.alibaba.assistant.agent.runtime.interceptor.PolicyGuardToolInterceptor;
+import com.alibaba.assistant.agent.runtime.intent.AssistantFastIntentHook;
 import com.alibaba.assistant.agent.runtime.registry.TenantAwareToolRegistry;
 import com.alibaba.assistant.agent.runtime.tool.codeact.CapabilityBridgeToolFactory;
+import com.alibaba.cloud.ai.graph.CompileConfig;
+import com.alibaba.cloud.ai.graph.OverAllState;
 import com.alibaba.cloud.ai.graph.agent.hook.Hook;
+import com.alibaba.cloud.ai.graph.agent.hook.hip.HumanInTheLoopHook;
+import com.alibaba.cloud.ai.graph.agent.hook.hip.ToolConfig;
 import com.alibaba.cloud.ai.graph.agent.interceptor.Interceptor;
 import com.alibaba.cloud.ai.graph.checkpoint.BaseCheckpointSaver;
+import com.alibaba.cloud.ai.graph.checkpoint.config.SaverConfig;
 import com.alibaba.cloud.ai.graph.checkpoint.savers.MemorySaver;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -37,11 +49,13 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Profile;
-
-import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import org.springframework.util.StringUtils;
 
 import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 
 /**
@@ -68,19 +82,19 @@ public class AssistantAgentFactory {
 			- 通过代码编写和执行完成复杂的数据处理任务
 
 			【工作流程】
-			1. 意图识别：理解用户需求，匹配下方【已注册的业务工具】中的工具
-			2. 槽位收集：调用 slot_collect 工具，传入正确的 toolCode（必须使用下方列表中的真实 toolCode，禁止自行编造）
+			1. 意图识别：理解用户需求，匹配当前上下文中的可用工具
+			2. 槽位收集：调用 slot_collect 工具，传入真实 toolCode（禁止自行编造）
 			3. 参数确认：槽位全部收集完成后，调用 slot_confirm 展示确认
-			4. 执行操作：确认后由系统自动执行
+			4. 执行操作：用户明确确认后，必须调用对应的 *_execute 业务工具执行，不要只回复文本
 			5. 结果反馈：向用户报告执行结果
 
 			【重要规则】
-			- 调用 slot_collect 时，toolCode 参数必须使用【已注册的业务工具】中列出的 toolCode，不要编造
+			- 调用 slot_collect 时，toolCode 参数必须使用当前可用工具目录中的 toolCode，不要编造
 			- 不要自行构造 slotSchema 或 requestSchema，留空即可，系统会根据 toolCode 自动加载
+			- 确认执行时，调用 *_execute 工具参数里必须携带 confirmed=true
 			- 如果 slot_collect 返回 ERROR，不要重复调用同样的参数，应该向用户说明情况
 			- 如果用户的请求不匹配任何已注册工具，直接用 send_message 回复用户
 
-			%s
 			【核心原则】
 			- 主动引导：根据槽位定义主动询问缺失参数
 			- 智能推断：利用上下文信息自动填充可推断的参数
@@ -99,8 +113,7 @@ public class AssistantAgentFactory {
 			@Autowired(required = false) TenantAwareToolRegistry tenantAwareToolRegistry,
 			@Autowired(required = false) List<ToolCallback> reactToolCallbacks,
 			@Autowired(required = false) List<Interceptor> interceptors,
-			@Autowired(required = false) BaseCheckpointSaver checkpointSaver,
-			@Autowired(required = false) ToolMetaService toolMetaService) {
+			@Autowired(required = false) BaseCheckpointSaver checkpointSaver) {
 
 		logger.info("AssistantAgentFactory#assistantCodeactAgent - reason=创建企业助手 CodeactAgent (migration profile)");
 
@@ -113,28 +126,42 @@ public class AssistantAgentFactory {
 					dynamicTools.size());
 		}
 		logger.info("AssistantAgentFactory#assistantCodeactAgent - reason=CodeactTool总数, count={}", tools.size());
-		ToolCallback[] reactTools = reactToolCallbacks != null ? reactToolCallbacks.toArray(new ToolCallback[0])
-				: new ToolCallback[0];
+		List<CodeactTool> reactAccessibleCodeactTools = collectReactAccessibleCodeactTools(tools, tenantAwareToolRegistry);
+		ToolCallback[] reactTools = mergeReactAndCodeactToolCallbacks(reactToolCallbacks, reactAccessibleCodeactTools);
 		logger.info("AssistantAgentFactory#assistantCodeactAgent - reason=React ToolCallback总数, count={}",
 				reactTools.length);
 		List<Interceptor> effectiveInterceptors =
 				interceptors != null ? new ArrayList<>(interceptors) : new ArrayList<>();
+		effectiveInterceptors = orderInterceptors(effectiveInterceptors);
 		logger.info("AssistantAgentFactory#assistantCodeactAgent - reason=Interceptor总数, count={}",
 				effectiveInterceptors.size());
 
 		Map<AgentPhase, List<Hook>> hooksByPhase = HookPhaseUtils.groupByPhase(allHooks);
-		List<Hook> reactHooks = hooksByPhase.get(AgentPhase.REACT);
+		List<Hook> reactHooks = filterReactHooks(hooksByPhase.get(AgentPhase.REACT));
 		List<Hook> codeactHooks = hooksByPhase.get(AgentPhase.CODEACT);
+
+		HumanInTheLoopHook humanInTheLoopHook = buildHumanInTheLoopHook(reactTools);
+		if (humanInTheLoopHook != null) {
+			reactHooks.add(humanInTheLoopHook);
+			logger.info("AssistantAgentFactory#assistantCodeactAgent - reason=HumanInTheLoopHook已注册");
+		}
 
 		BaseCheckpointSaver saver = checkpointSaver != null ? checkpointSaver : new MemorySaver();
 
-		String toolCatalog = buildToolCatalog(toolMetaService);
-		String systemPrompt = String.format(SYSTEM_PROMPT_TEMPLATE, toolCatalog);
+		// Build CompileConfig with checkpoint saver.
+		// HumanInTheLoopHook implements InterruptableAction — the framework's NodeExecutor
+		// calls interrupt() on ANY node implementing InterruptableAction, regardless of
+		// CompileConfig interruptBefore/After settings. Do NOT add interruptAfter here:
+		// it would cause a double-interrupt on resume (once from interrupt() returning
+		// empty after feedback validation, then again from MainGraphExecutor.shouldInterrupt()).
+		CompileConfig.Builder compileConfigBuilder = CompileConfig.builder()
+				.saverConfig(SaverConfig.builder().register(saver).build())
+				.recursionLimit(Integer.MAX_VALUE);
 
 		CodeactAgent.CodeactAgentBuilder builder = CodeactAgent.builder()
 				.name("AssistantAgent")
 				.description("Enterprise assistant agent with slot-collection workflow")
-				.systemPrompt(systemPrompt)
+				.systemPrompt(SYSTEM_PROMPT_TEMPLATE)
 				.model(chatModel)
 				.codingChatModel(chatModel)
 				.language(Language.PYTHON)
@@ -145,8 +172,9 @@ public class AssistantAgentFactory {
 				.tools(reactTools)
 				.codeactTools(tools)
 				.hooks(reactHooks)
-				.subAgentHooks(codeactHooks)
-				.saver(saver);
+				.subAgentHooks(codeactHooks);
+		builder.compileConfig(compileConfigBuilder.build());
+		builder.stateSerializer(new NullSafeStateSerializer(OverAllState::new));
 		if (tenantAwareToolRegistry != null) {
 			builder.codeactToolRegistry(tenantAwareToolRegistry);
 			logger.info("AssistantAgentFactory#assistantCodeactAgent - reason=启用TenantAwareToolRegistry");
@@ -159,49 +187,129 @@ public class AssistantAgentFactory {
 		return builder.build();
 	}
 
-	/**
-	 * Build a tool catalog section for the system prompt from enabled ToolMeta records.
-	 */
-	private String buildToolCatalog(ToolMetaService toolMetaService) {
-		if (toolMetaService == null) {
-			logger.warn("AssistantAgentFactory#buildToolCatalog - reason=ToolMetaService不可用，跳过工具目录生成");
-			return "";
-		}
-		try {
-			LambdaQueryWrapper<ToolMeta> query = new LambdaQueryWrapper<>();
-			query.and(w -> w.isNull(ToolMeta::getStatus).or().eq(ToolMeta::getStatus, "enabled"));
-			query.orderByAsc(ToolMeta::getId);
-			List<ToolMeta> metas = toolMetaService.list(query);
+	static ToolCallback[] mergeReactAndCodeactToolCallbacks(List<ToolCallback> reactToolCallbacks,
+			List<CodeactTool> codeactTools) {
+		Map<String, ToolCallback> merged = new LinkedHashMap<>();
+		mergeToolCallbacks(merged, reactToolCallbacks);
+		mergeToolCallbacks(merged, codeactTools);
+		return merged.values().toArray(new ToolCallback[0]);
+	}
 
-			if (metas == null || metas.isEmpty()) {
-				logger.warn("AssistantAgentFactory#buildToolCatalog - reason=无可用的ToolMeta记录");
-				return "";
+	static List<CodeactTool> collectReactAccessibleCodeactTools(List<CodeactTool> codeactTools,
+			TenantAwareToolRegistry tenantAwareToolRegistry) {
+		List<CodeactTool> merged = new ArrayList<>();
+		if (codeactTools != null && !codeactTools.isEmpty()) {
+			merged.addAll(codeactTools);
+		}
+		if (tenantAwareToolRegistry != null) {
+			List<CodeactTool> tenantTools = tenantAwareToolRegistry.getAllTools();
+			if (tenantTools != null && !tenantTools.isEmpty()) {
+				merged.addAll(tenantTools);
 			}
+		}
+		return merged;
+	}
 
-			StringBuilder sb = new StringBuilder("【已注册的业务工具】\n");
-			sb.append("调用 slot_collect 时，toolCode 必须使用以下值之一：\n");
-			for (ToolMeta meta : metas) {
-				sb.append("- toolCode=\"").append(meta.getToolCode()).append("\"");
-				if (meta.getToolName() != null) {
-					sb.append(" (").append(meta.getToolName()).append(")");
-				}
-				if (meta.getDescription() != null) {
-					sb.append("：").append(meta.getDescription());
-				}
-				if (meta.getSystemCode() != null) {
-					sb.append(" [systemCode=").append(meta.getSystemCode()).append("]");
-				}
-				sb.append("\n");
+	private static void mergeToolCallbacks(Map<String, ToolCallback> merged, List<? extends ToolCallback> source) {
+		if (source == null || source.isEmpty()) {
+			return;
+		}
+		for (ToolCallback callback : source) {
+			if (callback == null || callback.getToolDefinition() == null) {
+				continue;
 			}
-			sb.append("\n");
+			String toolName = callback.getToolDefinition().name();
+			if (!StringUtils.hasText(toolName)) {
+				continue;
+			}
+			merged.putIfAbsent(toolName, callback);
+		}
+	}
 
-			logger.info("AssistantAgentFactory#buildToolCatalog - reason=工具目录生成完成, toolCount={}", metas.size());
-			return sb.toString();
+	static List<Interceptor> orderInterceptors(List<Interceptor> interceptors) {
+		if (interceptors == null || interceptors.isEmpty()) {
+			return new ArrayList<>();
 		}
-		catch (Exception e) {
-			logger.warn("AssistantAgentFactory#buildToolCatalog - reason=工具目录生成失败, error={}", e.getMessage());
-			return "";
+		List<Interceptor> ordered = new ArrayList<>(interceptors);
+		ordered.sort(Comparator
+				.comparingInt(AssistantAgentFactory::interceptorOrder)
+				.thenComparing(interceptor -> interceptor.getClass().getName()));
+		return ordered;
+	}
+
+	private static int interceptorOrder(Interceptor interceptor) {
+		if (interceptor == null) {
+			return 50;
 		}
+		if (interceptor instanceof PolicyCheckModelInterceptor) {
+			return 0;
+		}
+		if (interceptor instanceof InternalPromptContributionToolInterceptor) {
+			return 5;
+		}
+		if (interceptor instanceof IdentityEnricherToolInterceptor) {
+			return 10;
+		}
+		if (interceptor instanceof PolicyGuardToolInterceptor) {
+			return 20;
+		}
+		if (interceptor instanceof HumanInTheLoopToolInterceptor) {
+			return 30;
+		}
+		if (interceptor instanceof AuditToolInterceptor) {
+			return 90;
+		}
+		return 50;
+	}
+
+	static HumanInTheLoopHook buildHumanInTheLoopHook(ToolCallback[] reactTools) {
+		if (reactTools == null || reactTools.length == 0) {
+			return null;
+		}
+		HumanInTheLoopHook.Builder builder = HumanInTheLoopHook.builder();
+		int count = 0;
+		for (ToolCallback tool : reactTools) {
+			if (tool == null || tool.getToolDefinition() == null) {
+				continue;
+			}
+			String name = tool.getToolDefinition().name();
+			if (!StringUtils.hasText(name)) {
+				continue;
+			}
+			String normalized = name.trim().toLowerCase(Locale.ROOT);
+			if (normalized.endsWith("_execute") || normalized.matches(".*_execute_[0-9]+$")) {
+				builder.approvalOn(name, ToolConfig.builder()
+						.description("需要用户确认后执行")
+						.build());
+				count++;
+				logger.info("AssistantAgentFactory#buildHumanInTheLoopHook - reason=注册execute工具, toolName={}", name);
+			}
+		}
+		if (count == 0) {
+			return null;
+		}
+		return builder.build();
+	}
+
+	static List<Hook> filterReactHooks(List<Hook> hooks) {
+		if (hooks == null || hooks.isEmpty()) {
+			return new ArrayList<>();
+		}
+		List<Hook> source = new ArrayList<>(hooks);
+		boolean containsRuntimeFastIntent = source.stream()
+				.anyMatch(hook -> hook instanceof AssistantFastIntentHook);
+		if (!containsRuntimeFastIntent) {
+			return source;
+		}
+		List<Hook> filtered = new ArrayList<>();
+		for (Hook hook : source) {
+			if (hook instanceof FastIntentReactHook) {
+				logger.info("AssistantAgentFactory#filterReactHooks - reason=skip legacy FastIntentReactHook");
+				continue;
+			}
+			filtered.add(hook);
+		}
+		return filtered;
 	}
 
 }

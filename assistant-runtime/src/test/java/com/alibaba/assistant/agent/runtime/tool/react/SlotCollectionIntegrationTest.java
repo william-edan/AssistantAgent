@@ -32,6 +32,7 @@ import com.alibaba.cloud.ai.graph.agent.tools.ToolContextConstants;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 import org.springframework.ai.chat.model.ToolContext;
+import org.springframework.ai.chat.messages.UserMessage;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -264,6 +265,65 @@ class SlotCollectionIntegrationTest {
 		assertEquals("2026-03-17", updatedResponse.collected.get("end_date"));
 		assertEquals(1L, ((Number) updatedResponse.collected.get("duration")).longValue());
 		assertEquals("家中有事", updatedResponse.collected.get("reason"));
+	}
+
+	@Test
+	void shouldKeepCollectingWhenNoNewUserInputAfterMissingRequiredEndDate() {
+		ObjectMapper objectMapper = new ObjectMapper();
+		SlotSchemaParser parser = new SlotSchemaParser(objectMapper);
+		SlotCollectorService collectorService = new SlotCollectorService();
+		SlotEnricherService enricherService = mock(SlotEnricherService.class);
+		ComputedFieldProcessor computedFieldProcessor = new ComputedFieldProcessor(
+				List.of(new DateDiffFunction(), new ConcatFunction()));
+		FormDisplayConfigService displayConfigService = new FormDisplayConfigService();
+
+		mockEnricher(enricherService);
+
+		SlotCollectTool slotCollectTool = new SlotCollectTool(
+				collectorService,
+				enricherService,
+				computedFieldProcessor,
+				parser,
+				objectMapper);
+		SlotConfirmTool slotConfirmTool = new SlotConfirmTool(
+				parser,
+				enricherService,
+				computedFieldProcessor,
+				displayConfigService,
+				objectMapper);
+
+		OverAllState state = initState();
+		state.updateState(Map.of(
+				"input", "明天有点事情的时候需要请假",
+				"messages", List.of(new UserMessage("明天有点事情的时候需要请假"))));
+		ToolContext toolContext = toolContext(state);
+
+		SlotCollectTool.Request firstTurn = new SlotCollectTool.Request();
+		firstTurn.extractedSlots = Map.of(
+				"types", 2,
+				"start_date", "2026-03-03",
+				"reason", "个人事务");
+		SlotCollectTool.Response firstResponse = slotCollectTool.apply(firstTurn, toolContext);
+		assertEquals("COLLECTING", firstResponse.phase);
+		assertTrue(firstResponse.missing.stream().map(item -> item.name).collect(Collectors.toSet()).contains("end_date"));
+
+		// Simulate model self-filling end_date in the same user turn without any new user input.
+		SlotCollectTool.Request secondTurn = new SlotCollectTool.Request();
+		secondTurn.extractedSlots = Map.of(
+				"types", 2,
+				"start_date", "2026-03-03",
+				"end_date", "2026-03-05",
+				"reason", "个人事务");
+		SlotCollectTool.Response secondResponse = slotCollectTool.apply(secondTurn, toolContext);
+
+		assertEquals("COLLECTING", secondResponse.phase);
+		assertTrue(secondResponse.missing.stream().map(item -> item.name).collect(Collectors.toSet()).contains("end_date"));
+		assertEquals("2026-03-03", secondResponse.collected.get("start_date"));
+		assertNull(secondResponse.collected.get("end_date"));
+
+		// slot_confirm should still build a form from current state, but execution must not be auto-ready.
+		SlotConfirmTool.Response confirmResponse = slotConfirmTool.apply(new SlotConfirmTool.Request(), toolContext);
+		assertEquals("CONFIRMING", confirmResponse.status);
 	}
 
 	private static void mockEnricher(SlotEnricherService enricherService) {

@@ -22,7 +22,7 @@ spring:
       - com.baomidou.mybatisplus.autoconfigure.MybatisPlusAutoConfiguration
 
 server:
-  port: 8080
+  port: 8081
 
 assistant:
   chat:
@@ -38,10 +38,10 @@ assistant:
 # DashScope Configuration
 # ============================================================================
 spring.ai.dashscope:
-  api-key: ${DASHSCOPE_API_KEY:sk-8ae125796fc6476cb1062e2eabe5b43a}
+  api-key: ${DASHSCOPE_API_KEY:sk-4477f24d4d824f4cad979a11ef5806cf}
   chat:
     options:
-      model: qwen-max
+      model: qwen-plus
 
 
 # ============================================================================

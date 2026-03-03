@@ -15,6 +15,7 @@
  */
 package com.alibaba.assistant.agent.start.chat;
 
+import com.alibaba.assistant.agent.runtime.agent.AssistantStateKeys;
 import com.alibaba.cloud.ai.agent.studio.controller.ExecutionController;
 import com.alibaba.cloud.ai.agent.studio.dto.AgentResumeRequest;
 import com.alibaba.cloud.ai.agent.studio.dto.AgentRunRequest;
@@ -44,8 +45,8 @@ import java.util.Map;
 @org.springframework.context.annotation.Profile("!migration")
 public class UnifiedChatController {
 
-    private static final String STATE_KEY_ASSISTANT_UID = "assistantUid";
-    private static final String STATE_KEY_SYSTEM_CODE = "systemCode";
+    private static final String STATE_KEY_ASSISTANT_UID = AssistantStateKeys.ASSISTANT_UID;
+    private static final String STATE_KEY_SYSTEM_CODE = AssistantStateKeys.SYSTEM_CODE;
 
     private final ExecutionController executionController;
     private final String defaultAppName;

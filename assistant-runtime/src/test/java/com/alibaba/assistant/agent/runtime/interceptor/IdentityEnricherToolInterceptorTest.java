@@ -29,6 +29,7 @@ import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
 import java.time.LocalDateTime;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Optional;
 
@@ -80,6 +81,92 @@ class IdentityEnricherToolInterceptorTest {
 		assertTrue(identityContext != null && !identityContext.isEmpty());
 		assertEquals("token-abc", identityContext.get("access_token"));
 		assertTrue(captor.getValue().getContext().containsKey(AssistantStateKeys.IDENTITY_CONTEXT));
+	}
+
+	@Test
+	void shouldInjectIdentityIntoArgumentsWhenStateLacksIdentity() throws Exception {
+		TokenBroker tokenBroker = mock(TokenBroker.class);
+		ObjectMapper objectMapper = new ObjectMapper();
+		IdentityEnricherToolInterceptor interceptor = new IdentityEnricherToolInterceptor(
+				tokenBroker, objectMapper, "assistant-default", "gougu_oa");
+		ToolCallHandler handler = mock(ToolCallHandler.class);
+		when(handler.call(any())).thenReturn(ToolCallResponse.of("leave_execute", "call-2", "{\"ok\":true}"));
+
+		TokenLease lease = new TokenLease(
+				"lease-2",
+				"token-xyz",
+				"gougu_oa",
+				"assistant-default",
+				LocalDateTime.now().plusMinutes(5));
+		when(tokenBroker.acquire("assistant-default", "gougu_oa")).thenReturn(Optional.of(lease));
+
+		OverAllState state = new OverAllState();
+		Map<String, Object> rawArgs = new LinkedHashMap<>();
+		rawArgs.put("reason", "personal matters");
+		ToolCallRequest request = ToolCallRequest.builder()
+				.toolName("leave_execute")
+				.toolCallId("call-2")
+				.arguments(objectMapper.writeValueAsString(rawArgs))
+				.context(Map.of())
+				.executionContext(new ToolCallExecutionContext(
+						RunnableConfig.builder().threadId("thread-2").build(),
+						state))
+				.build();
+
+		interceptor.interceptToolCall(request, handler);
+
+		ArgumentCaptor<ToolCallRequest> captor = ArgumentCaptor.forClass(ToolCallRequest.class);
+		verify(handler, times(1)).call(captor.capture());
+		@SuppressWarnings("unchecked")
+		Map<String, Object> actualArgs = objectMapper.readValue(captor.getValue().getArguments(), Map.class);
+		assertEquals("assistant-default", actualArgs.get("assistant_uid"));
+		assertEquals("gougu_oa", actualArgs.get("system_code"));
+		assertEquals("personal matters", actualArgs.get("reason"));
+	}
+
+	@Test
+	void shouldPreferAssistantUidFromArgsOverDefaultWhenStateMissing() throws Exception {
+		TokenBroker tokenBroker = mock(TokenBroker.class);
+		ObjectMapper objectMapper = new ObjectMapper();
+		IdentityEnricherToolInterceptor interceptor = new IdentityEnricherToolInterceptor(
+				tokenBroker, objectMapper, "assistant-default", "gougu_oa");
+		ToolCallHandler handler = mock(ToolCallHandler.class);
+		when(handler.call(any())).thenReturn(ToolCallResponse.of("leave_execute", "call-3", "{\"ok\":true}"));
+
+		TokenLease lease = new TokenLease(
+				"lease-3",
+				"token-from-args",
+				"gougu_oa",
+				"assistant-from-args",
+				LocalDateTime.now().plusMinutes(5));
+		when(tokenBroker.acquire("assistant-from-args", "gougu_oa")).thenReturn(Optional.of(lease));
+
+		OverAllState state = new OverAllState();
+		Map<String, Object> rawArgs = new LinkedHashMap<>();
+		rawArgs.put("assistant_uid", "assistant-from-args");
+		rawArgs.put("system_code", "gougu_oa");
+		rawArgs.put("reason", "need leave");
+
+		ToolCallRequest request = ToolCallRequest.builder()
+				.toolName("leave_execute")
+				.toolCallId("call-3")
+				.arguments(objectMapper.writeValueAsString(rawArgs))
+				.context(Map.of())
+				.executionContext(new ToolCallExecutionContext(
+						RunnableConfig.builder().threadId("thread-3").build(),
+						state))
+				.build();
+
+		interceptor.interceptToolCall(request, handler);
+
+		verify(tokenBroker, times(1)).acquire("assistant-from-args", "gougu_oa");
+		ArgumentCaptor<ToolCallRequest> captor = ArgumentCaptor.forClass(ToolCallRequest.class);
+		verify(handler, times(1)).call(captor.capture());
+		@SuppressWarnings("unchecked")
+		Map<String, Object> actualArgs = objectMapper.readValue(captor.getValue().getArguments(), Map.class);
+		assertEquals("assistant-from-args", actualArgs.get("assistant_uid"));
+		assertEquals("gougu_oa", actualArgs.get("system_code"));
+		assertEquals("need leave", actualArgs.get("reason"));
 	}
 
 }

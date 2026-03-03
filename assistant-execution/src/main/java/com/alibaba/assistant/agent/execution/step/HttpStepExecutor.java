@@ -25,9 +25,12 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.jayway.jsonpath.JsonPath;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.*;
 import org.springframework.stereotype.Component;
 import org.springframework.util.MultiValueMap;
+import org.springframework.util.StringUtils;
 import org.springframework.web.client.RestTemplate;
 
 import java.util.HashMap;
@@ -59,12 +62,22 @@ public class HttpStepExecutor {
 
 	private final TokenBroker tokenBroker;
 
+	private final boolean allowMockFallback;
+
 	public HttpStepExecutor(ObjectMapper objectMapper, RequestBodySerializer requestSerializer,
 			SystemAccessProfilePort systemAccessProfilePort, TokenBroker tokenBroker) {
+		this(objectMapper, requestSerializer, systemAccessProfilePort, tokenBroker, false);
+	}
+
+	@Autowired
+	public HttpStepExecutor(ObjectMapper objectMapper, RequestBodySerializer requestSerializer,
+			SystemAccessProfilePort systemAccessProfilePort, TokenBroker tokenBroker,
+			@Value("${assistant.execution.http.allow-mock-fallback:false}") boolean allowMockFallback) {
 		this.objectMapper = objectMapper;
 		this.requestSerializer = requestSerializer;
 		this.systemAccessProfilePort = systemAccessProfilePort;
 		this.tokenBroker = tokenBroker;
+		this.allowMockFallback = allowMockFallback;
 		this.restTemplate = new RestTemplate();
 	}
 
@@ -86,9 +99,8 @@ public class HttpStepExecutor {
 							paramName, expression, value);
 				}
 			}
-
-			logger.info("HttpStepExecutor#execute - method={}, endpoint={}, paramCount={}",
-					config.getMethod(), config.getEndpoint(), requestParams.size());
+			logger.info("HttpStepExecutor#execute - method={}, endpoint={}, paramCount={}, params={}",
+					config.getMethod(), config.getEndpoint(), requestParams.size(), requestParams);
 
 			// 2. Execute HTTP request
 			String responseBody = executeHttpRequest(config, requestParams, context);
@@ -133,13 +145,68 @@ public class HttpStepExecutor {
 	}
 
 	private String executeHttpRequest(StepConfig config, Map<String, Object> params, FlowContext context) {
-		if (context.getSystemCode() != null && context.getAssistantUid() != null) {
+		String resolvedSystemCode = firstNonBlank(
+				context.getSystemCode(),
+				readIdentityParam(params, "system_code", "systemCode"));
+		String resolvedAssistantUid = firstNonBlank(
+				context.getAssistantUid(),
+				readIdentityParam(params, "assistant_uid", "assistantUid"));
+
+		if (StringUtils.hasText(resolvedSystemCode)) {
+			context.setSystemCode(resolvedSystemCode);
+		}
+		if (StringUtils.hasText(resolvedAssistantUid)) {
+			context.setAssistantUid(resolvedAssistantUid);
+		}
+
+		if (StringUtils.hasText(context.getSystemCode()) && StringUtils.hasText(context.getAssistantUid())) {
 			return executeViaSystemProfile(config, params, context);
 		}
-		else {
-			logger.debug("HttpStepExecutor#executeHttpRequest - test mode, endpoint={}", config.getEndpoint());
+
+		if (allowMockFallback) {
+			logger.warn("HttpStepExecutor#executeHttpRequest - mock fallback enabled, endpoint={}",
+					config.getEndpoint());
 			return "{\"code\": 0, \"msg\": \"success\", \"data\": {\"return_id\": 12345}}";
 		}
+
+		throw new IllegalStateException("Missing identity context (system_code/assistant_uid), endpoint="
+				+ config.getEndpoint());
+	}
+
+	private String readIdentityParam(Map<String, Object> params, String... keys) {
+		if (params == null || params.isEmpty() || keys == null) {
+			return null;
+		}
+		for (String key : keys) {
+			if (!StringUtils.hasText(key)) {
+				continue;
+			}
+			Object direct = params.get(key);
+			if (direct != null && StringUtils.hasText(String.valueOf(direct))) {
+				return String.valueOf(direct).trim();
+			}
+			for (Map.Entry<String, Object> entry : params.entrySet()) {
+				if (entry.getKey() != null && key.equalsIgnoreCase(entry.getKey()) && entry.getValue() != null) {
+					String text = String.valueOf(entry.getValue()).trim();
+					if (StringUtils.hasText(text)) {
+						return text;
+					}
+				}
+			}
+		}
+		return null;
+	}
+
+	private static String firstNonBlank(String... values) {
+		if (values == null) {
+			return null;
+		}
+		for (String value : values) {
+			if (StringUtils.hasText(value)) {
+				return value;
+			}
+		}
+		return null;
 	}
 
 	private String executeViaSystemProfile(StepConfig config, Map<String, Object> params, FlowContext context) {
@@ -181,14 +248,15 @@ public class HttpStepExecutor {
 				headers.setContentType(MediaType.APPLICATION_FORM_URLENCODED);
 				MultiValueMap<String, String> formData = requestSerializer.toFormUrlEncoded(params);
 				formData.add("_ajax", "1");
-				logger.info("HttpStepExecutor#executeViaSystemProfile - form-urlencoded, paramCount={}",
-						formData.size());
+				logger.info("HttpStepExecutor#executeViaSystemProfile - form-urlencoded, paramCount={}, params={}",
+						formData.size(), formData);
 				entity = new HttpEntity<>(formData, headers);
 			}
 			else {
 				headers.setContentType(MediaType.APPLICATION_JSON);
 				String requestBody = objectMapper.writeValueAsString(params);
-				logger.info("HttpStepExecutor#executeViaSystemProfile - JSON body, length={}", requestBody.length());
+				logger.info("HttpStepExecutor#executeViaSystemProfile - JSON body, length={}, body={}",
+						requestBody.length(), requestBody);
 				entity = new HttpEntity<>(requestBody, headers);
 			}
 

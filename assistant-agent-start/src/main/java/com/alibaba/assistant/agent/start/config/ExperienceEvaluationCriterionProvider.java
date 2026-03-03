@@ -82,22 +82,24 @@ public class ExperienceEvaluationCriterionProvider implements EvaluationCriterio
             .resultType(ResultType.ENUM)
             .options("模糊", "清晰")
             .workingMechanism(
-                "你是一个用户意图清晰度判断专家。请判断用户输入是否明确。\n\n" +
-                "【模糊】的特征：\n" +
-                "- 没有具体指明要做什么操作\n" +
-                "- 使用模糊词汇如'帮我看看'、'处理一下'\n" +
-                "- 请求可能有多种理解方式\n" +
-                "- 缺少必要的参数或信息\n\n" +
-                "【清晰】的特征：\n" +
-                "- 明确提到要查询、搜索、获取某个具体信息\n" +
-                "- 提供了具体的查询关键词或目标\n" +
-                "- 意图明确，执行路径清晰\n\n" +
+                "你是一个用户意图清晰度判断专家。请基于原始输入和增强后的输入进行判断。\n\n" +
+                "关键原则：\n" +
+                "1. 如果用户是在表达明确的操作目标（如请假、报销、审批、创建、修改等），即使缺少参数，也应判为【清晰】。\n" +
+                "2. 缺少槽位参数不等于模糊；参数缺失应由槽位收集流程继续追问。\n" +
+                "3. 只有在无法确定用户到底想做什么（目标/方向不明确）时，才判为【模糊】。\n\n" +
+                "【模糊】的典型特征：\n" +
+                "- 没有可执行的明确目标，仅有泛化诉求（如“帮我处理下”“看看这个”）\n" +
+                "- 存在多种互斥理解，无法进入明确流程\n\n" +
+                "【清晰】的典型特征：\n" +
+                "- 已明确是查询需求，且查询目标可确定\n" +
+                "- 已明确是操作需求（哪怕缺少部分参数）\n\n" +
                 "请直接输出'模糊'或'清晰'，不要添加任何解释。"
             )
             .reasoningPolicy(ReasoningPolicy.NONE)
             .evaluatorType(EvaluatorType.LLM_BASED)
             .evaluatorRef("llm-based")
-            .contextBindings("context.input.userInput")
+            .dependsOn("enhanced_user_input")
+            .contextBindings("context.input.userInput", "dependencies.enhanced_user_input.value")
             .build();
 
         EvaluationCriterion reactExperienceRetrieval = EvaluationCriterionBuilder

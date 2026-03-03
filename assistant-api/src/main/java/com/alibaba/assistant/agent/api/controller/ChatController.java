@@ -115,7 +115,7 @@ public class ChatController {
 	public Flux<ServerSentEvent<String>> runSse(
 			@RequestBody AgentRunRequest request,
 			@RequestParam(value = "appName", required = false) String appName,
-			@RequestParam(value = "assistantUid", required = false) String assistantUid,
+			@RequestParam(value = "assistantUid", required = true,defaultValue = "1") String assistantUid,
 			@RequestParam(value = "systemCode", required = false) String systemCode) {
 		normalizeRunRequest(request, appName, assistantUid, systemCode);
 		return doRunSse(
@@ -133,7 +133,7 @@ public class ChatController {
 	public Flux<ServerSentEvent<String>> resumeSse(
 			@RequestBody AgentResumeRequest request,
 			@RequestParam(value = "appName", required = false) String appName,
-			@RequestParam(value = "assistantUid", required = false) String assistantUid,
+			@RequestParam(value = "assistantUid", required = true,defaultValue = "1") String assistantUid,
 			@RequestParam(value = "systemCode", required = false) String systemCode) {
 		normalizeResumeRequest(request, appName, assistantUid, systemCode);
 		return doResumeSse(request);

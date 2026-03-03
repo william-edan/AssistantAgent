@@ -177,11 +177,15 @@ public class CapabilityBridgeTool extends AbstractDynamicCodeactTool {
 		// Priority: state > tool meta > LLM args (LLM often hallucinates identity values)
 		String systemCode = firstNonBlank(
 				readStateValue(toolContext, AssistantStateKeys.SYSTEM_CODE),
+				readStateValue(toolContext, "systemCode"),
 				toolMeta.getSystemCode(),
+				valueAsString(inputParams.get("systemCode")),
 				valueAsString(inputParams.get("system_code")),
 				valueAsString(inputParams.get(AssistantStateKeys.SYSTEM_CODE)));
 		String assistantUid = firstNonBlank(
 				readStateValue(toolContext, AssistantStateKeys.ASSISTANT_UID),
+				readStateValue(toolContext, "assistantUid"),
+				valueAsString(inputParams.get("assistantUid")),
 				valueAsString(inputParams.get("assistant_uid")),
 				valueAsString(inputParams.get(AssistantStateKeys.ASSISTANT_UID)));
 		String threadId = firstNonBlank(

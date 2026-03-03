@@ -43,15 +43,25 @@ public final class AssistantStateKeys {
 
 	public static final String CONVERSATION_PHASE = "conversation_phase";
 
+	public static final String LAST_COLLECT_USER_INPUT = "last_collect_user_input";
+
 	public static final String ENRICHED_SLOTS = "enriched_slots";
 
 	public static final String SLOT_DEFINITIONS = "slot_definitions";
+
+	public static final String DEPENDENCY_RESULTS = "dependency_results";
 
 	// Identity
 	public static final String IDENTITY_CONTEXT = "identity_context";
 
 	// Execution
 	public static final String EXECUTION_RESULT = "execution_result";
+
+	public static final String EXECUTION_CONFIRM_GRANTED = "execution_confirm_granted";
+
+	public static final String EXECUTION_CONFIRM_TOOL_NAME = "execution_confirm_tool_name";
+
+	public static final String EXECUTION_CONFIRM_USER_INPUT = "execution_confirm_user_input";
 
 	// Audit
 	public static final String AUDIT_TRACE_ID = "audit_trace_id";

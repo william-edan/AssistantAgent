@@ -124,4 +124,44 @@ class CapabilityBridgeToolTest {
 		assertEquals("${reason}", configCaptor.getValue().getInputMapping().get("reason"));
 		verify(dagExecutor, never()).execute(any(FlowDefinition.class), any(FlowContext.class));
 	}
+
+	@Test
+	void shouldUseCamelCaseIdentityFromArgumentsInSimpleMode() throws Exception {
+		ToolMeta meta = new ToolMeta();
+		meta.setId(3L);
+		meta.setToolCode("gougu_oa.leave_simple");
+		meta.setToolName("leave_simple");
+		meta.setApiEndpoint("/home/leaves/add");
+		meta.setHttpMethod("POST");
+		meta.setContentType("application/x-www-form-urlencoded");
+		meta.setParameterSchema("{\"type\":\"object\",\"properties\":{\"reason\":{\"type\":\"string\"}}}");
+
+		FlowDefinitionConverter converter = mock(FlowDefinitionConverter.class);
+		DAGFlowExecutor dagExecutor = mock(DAGFlowExecutor.class);
+		HttpStepExecutor httpStepExecutor = mock(HttpStepExecutor.class);
+		ObjectMapper objectMapper = new ObjectMapper();
+
+		when(httpStepExecutor.execute(any(StepConfig.class), any(FlowContext.class)))
+				.thenReturn(StepResult.success(Map.of("code", 0, "msg", "ok")));
+
+		CapabilityBridgeTool tool = new CapabilityBridgeTool(
+				objectMapper,
+				meta,
+				converter,
+				dagExecutor,
+				httpStepExecutor,
+				"leave_simple_execute",
+				"gougu_oa_tools");
+
+		String raw = tool.call("{\"reason\":\"personal\",\"assistantUid\":\"u1\",\"systemCode\":\"oa\"}");
+		@SuppressWarnings("unchecked")
+		Map<String, Object> payload = objectMapper.readValue(raw, Map.class);
+
+		assertEquals("SIMPLE", payload.get("mode"));
+		assertEquals(Boolean.TRUE, payload.get("success"));
+		ArgumentCaptor<FlowContext> contextCaptor = ArgumentCaptor.forClass(FlowContext.class);
+		verify(httpStepExecutor).execute(any(StepConfig.class), contextCaptor.capture());
+		assertEquals("oa", contextCaptor.getValue().getSystemCode());
+		assertEquals("u1", contextCaptor.getValue().getAssistantUid());
+	}
 }

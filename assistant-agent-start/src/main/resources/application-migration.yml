@@ -35,7 +35,7 @@ mybatis-plus:
 assistant:
   chat:
     default-app-name: assistant_agent
-    default-assistant-uid: ${ASSISTANT_DEFAULT_UID:test_user}
+    default-assistant-uid: ${ASSISTANT_DEFAULT_UID:1}
     default-system-code: ${ASSISTANT_DEFAULT_SYSTEM_CODE:gougu_oa}
   debug:
     http:
@@ -55,6 +55,26 @@ assistant:
       base-url: ${GOUGU_OA_BASE_URL:http://office.ai.devefive.com}
       token-header-name: Authorization
       token-header-prefix: 'Bearer '
+  # Runtime namespace (new): read by AssistantRuntimeProperties
+  # Migration compatibility: legacy spring.ai.alibaba.codeact.extension.* keys still take precedence.
+  runtime:
+    fast-intent:
+      enabled: false
+    prompt:
+      dynamic-enabled: true
+      react-enabled: true
+      codeact-enabled: true
+      max-tools-in-prompt: 20
+    learning:
+      enabled: true
+      async: true
+    search:
+      enabled: true
+    policy-guard:
+      enabled: true
+    budget:
+      max-latency-ms: 12000
+      max-tool-calls: 6
 
 # ============================================================================
 # DashScope Configuration (override model only, api-key inherited)
@@ -62,7 +82,7 @@ assistant:
 spring.ai.dashscope:
   chat:
     options:
-      model: qwen-max
+      model: qwen-plus
 
 
 # ============================================================================

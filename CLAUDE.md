@@ -2,6 +2,12 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Prerequisites
+
+- **Java 17+** (OpenJDK or GraalVM)
+- **Maven 3.8+**
+- Environment variable `DASHSCOPE_API_KEY` for DashScope LLM access
+
 ## Build & Development Commands
 
 ```bash
@@ -127,9 +133,10 @@ Two mutually exclusive API surfaces controlled by Spring profiles:
 
 ### Migration Planning
 
-- Active execution plan: `docs/plans/2026-02-25-execution-plan.md`
-- Migration execution checklist: `docs/plans/2026-02-26-migration-execution-checklist.md`
+- **Architecture design (latest)**: `docs/plans/2026-02-27-assistant-orchestration-design-v2.3.md` — final orchestration design, ReAct-as-planner, control plane at tool boundary
+- **Execution checklist (latest)**: `docs/plans/2026-02-28-assistant-orchestration-v2.3-execution-checklist.md` — Phase 1-4 implementation tasks
 - Architecture decisions: `docs/plans/2026-02-25-assistantagent-migration-conclusions.md`
+- Original execution plan: `docs/plans/2026-02-25-execution-plan.md`
 
 ## Code Conventions
 
@@ -139,4 +146,9 @@ Two mutually exclusive API surfaces controlled by Spring profiles:
 - **License header**: Apache 2.0 on all new Java files (Copyright 2024-2025)
 - **Commits**: Conventional Commits — `feat:`, `fix:`, `hotfix:`, `chore:`, `docs:`, `test:`, `refactor:`
 - **Test names**: behavior-focused — `shouldReturnResultWhenInputValid()`
+- **Javadoc**: All public APIs must have Javadoc with `@param`, `@return`, `@throws`, `@since`
 - **Profile isolation**: Use `@Profile("migration")` / `@Profile("!migration")` to prevent Bean conflicts between demo and enterprise modes. The start module's `MigrationScanConfiguration` handles `@ComponentScan` + `@MapperScan` for all new modules when migration profile is active.
+
+## CI/CD
+
+GitHub Actions workflow (`.github/workflows/build.yml`): triggers on PR and push to `main`/`master`/`develop`. Runs `mvn clean install -B -V` then `mvn test -B` with JDK 17 Temurin. Uploads surefire reports on failure.

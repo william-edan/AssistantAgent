@@ -24,6 +24,26 @@ assistant:
       only-dashscope: true            # true: 仅打印 DashScope 请求
       max-body-chars: 4000            # 请求体最大打印长度
       sanitize-invalid-tool-messages: true  # 发送前清理明显非法的空工具消息
+  # Runtime namespace (new orchestration controls)
+  # Note: In migration stage, legacy spring.ai.alibaba.codeact.extension.* keys may override these values.
+  runtime:
+    fast-intent:
+      enabled: false
+    prompt:
+      dynamic-enabled: true
+      react-enabled: true
+      codeact-enabled: true
+      max-tools-in-prompt: 20
+    learning:
+      enabled: true
+      async: true
+    search:
+      enabled: true
+    policy-guard:
+      enabled: true
+    budget:
+      max-latency-ms: 12000
+      max-tool-calls: 6
 
 # ============================================================================
 # DashScope Configuration (Required)

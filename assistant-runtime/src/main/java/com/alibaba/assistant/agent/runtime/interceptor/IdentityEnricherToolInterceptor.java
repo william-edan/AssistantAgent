@@ -27,6 +27,7 @@ import com.alibaba.cloud.ai.graph.agent.interceptor.ToolInterceptor;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Component;
@@ -58,6 +59,11 @@ public class IdentityEnricherToolInterceptor extends ToolInterceptor {
 
 	private final String defaultSystemCode;
 
+	public IdentityEnricherToolInterceptor(TokenBroker tokenBroker, ObjectMapper objectMapper) {
+		this(tokenBroker, objectMapper, null, null);
+	}
+
+	@Autowired
 	public IdentityEnricherToolInterceptor(TokenBroker tokenBroker, ObjectMapper objectMapper,
 			@Value("${assistant.chat.default-assistant-uid:}") String defaultAssistantUid,
 			@Value("${assistant.chat.default-system-code:}") String defaultSystemCode) {
@@ -70,18 +76,33 @@ public class IdentityEnricherToolInterceptor extends ToolInterceptor {
 	@Override
 	public ToolCallResponse interceptToolCall(ToolCallRequest request, ToolCallHandler handler) {
 		OverAllState state = request.getExecutionContext().map(context -> context.state()).orElse(null);
-		Map<String, Object> args = parseArgs(request.getArguments());
+		Map<String, Object> parsedArgs = parseArgs(request.getArguments());
+		Map<String, Object> effectiveArgs = new LinkedHashMap<>(parsedArgs);
+		Map<String, Object> requestContext = new HashMap<>();
+		if (request.getContext() != null) {
+			requestContext.putAll(request.getContext());
+		}
 
-		// Priority: state > config default > LLM args (LLM often hallucinates identity values)
+		// Priority: state > request args > defaults.
+		// request args may come from trusted gateway context (for example user_id), and should
+		// override static defaults like "test_user".
 		String assistantUid = firstNonBlank(
 				readStateValue(state, AssistantStateKeys.ASSISTANT_UID),
-				defaultAssistantUid,
-				readString(args, "assistant_uid", "assistantUid"),
-				readStateValue(state, CodeactStateKeys.USER_ID));
+				readStateValue(state, "user_id"),
+				readStateValue(state, "userId"),
+				readString(effectiveArgs, "assistant_uid", "assistantUid", "user_id", "userId"),
+				defaultAssistantUid);
 		String systemCode = firstNonBlank(
 				readStateValue(state, AssistantStateKeys.SYSTEM_CODE),
-				defaultSystemCode,
-				readString(args, "system_code", "systemCode"));
+				readString(effectiveArgs, "system_code", "systemCode"),
+				defaultSystemCode);
+
+		if (StringUtils.hasText(assistantUid)) {
+			putIfMissingIdentityKey(effectiveArgs, "assistant_uid", assistantUid);
+		}
+		if (StringUtils.hasText(systemCode)) {
+			putIfMissingIdentityKey(effectiveArgs, "system_code", systemCode);
+		}
 
 		// Write resolved identity back to state so downstream tools can read it
 		if (state != null && StringUtils.hasText(assistantUid) && StringUtils.hasText(systemCode)) {
@@ -91,10 +112,14 @@ public class IdentityEnricherToolInterceptor extends ToolInterceptor {
 			state.updateState(stateUpdate);
 		}
 
+		ToolCallRequest.Builder requestBuilder = ToolCallRequest.builder(request)
+				.arguments(writeArgs(effectiveArgs, request.getArguments()))
+				.context(requestContext);
+
 		if (!StringUtils.hasText(assistantUid) || !StringUtils.hasText(systemCode)) {
 			logger.debug("IdentityEnricherToolInterceptor#interceptToolCall - skip due to missing identity, toolName={}",
 					request.getToolName());
-			return handler.call(request);
+			return handler.call(requestBuilder.build());
 		}
 
 		Optional<TokenLease> leaseOpt = tokenBroker.acquire(assistantUid, systemCode);
@@ -102,7 +127,7 @@ public class IdentityEnricherToolInterceptor extends ToolInterceptor {
 			logger.warn(
 					"IdentityEnricherToolInterceptor#interceptToolCall - no token lease, toolName={}, assistantUid={}, systemCode={}",
 					request.getToolName(), assistantUid, systemCode);
-			return handler.call(request);
+			return handler.call(requestBuilder.build());
 		}
 
 		TokenLease lease = leaseOpt.get();
@@ -110,19 +135,13 @@ public class IdentityEnricherToolInterceptor extends ToolInterceptor {
 		if (state != null) {
 			state.updateState(Map.of(AssistantStateKeys.IDENTITY_CONTEXT, identityContext));
 		}
-
-		Map<String, Object> requestContext = new HashMap<>();
-		if (request.getContext() != null) {
-			requestContext.putAll(request.getContext());
-		}
 		requestContext.put(AssistantStateKeys.IDENTITY_CONTEXT, identityContext);
 
-		ToolCallRequest enrichedRequest = ToolCallRequest.builder(request)
-				.context(requestContext)
-				.build();
+		ToolCallRequest enrichedRequest = requestBuilder.context(requestContext).build();
 
 		logger.debug(
-				"IdentityEnricherToolInterceptor#interceptToolCall - identity injected, toolName={}, assistantUid={}, systemCode={}",
+				"IdentityEnricherToolInterceptor#interceptToolCall - identity injected, "
+						+ "toolName={}, assistantUid={}, systemCode={}",
 				request.getToolName(), assistantUid, systemCode);
 		return handler.call(enrichedRequest);
 	}
@@ -202,6 +221,41 @@ public class IdentityEnricherToolInterceptor extends ToolInterceptor {
 			}
 		}
 		return null;
+	}
+
+	private void putIfMissingIdentityKey(Map<String, Object> args, String key, String value) {
+		if (args == null || !StringUtils.hasText(key) || !StringUtils.hasText(value)) {
+			return;
+		}
+		if (containsKeyIgnoreCase(args, key)) {
+			return;
+		}
+		args.put(key, value);
+	}
+
+	private boolean containsKeyIgnoreCase(Map<String, Object> map, String key) {
+		if (map == null || !StringUtils.hasText(key)) {
+			return false;
+		}
+		for (String existingKey : map.keySet()) {
+			if (existingKey != null && key.equalsIgnoreCase(existingKey)) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	private String writeArgs(Map<String, Object> args, String fallbackRawArguments) {
+		if (args == null) {
+			return fallbackRawArguments;
+		}
+		try {
+			return objectMapper.writeValueAsString(args);
+		}
+		catch (Exception e) {
+			logger.warn("IdentityEnricherToolInterceptor#writeArgs - failed, error={}", e.getMessage());
+			return fallbackRawArguments;
+		}
 	}
 
 }

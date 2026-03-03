@@ -23,6 +23,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.stereotype.Component;
+import org.springframework.util.StringUtils;
 
 /**
  * React 阶段 Prompt 指导提供者
@@ -48,7 +49,17 @@ public class ReactPhasePromptGuidanceProvider extends EvaluationBasedPromptContr
     private static final Logger log = LoggerFactory.getLogger(ReactPhasePromptGuidanceProvider.class);
 
     private static final String CRITERION_IS_FUZZY = "is_fuzzy";
+    private static final String CRITERION_ENHANCED_INPUT = "enhanced_user_input";
     private static final String SUITE_ID = "react-phase-suite";
+
+    private static final String[] OPERATION_HINT_KEYWORDS = new String[] {
+            "申请", "发起", "提交", "创建", "新增", "修改", "更新", "删除", "撤销", "审批",
+            "报销", "请假", "休假", "调休"
+    };
+
+    private static final String[] QUERY_HINT_KEYWORDS = new String[] {
+            "查询", "查一下", "查下", "查看", "看看", "获取", "搜索", "检索", "统计", "多少", "几", "什么", "如何", "怎么"
+    };
 
     public ReactPhasePromptGuidanceProvider() {
         super("ReactPhasePromptGuidanceProvider", SUITE_ID, 10);
@@ -64,13 +75,23 @@ public class ReactPhasePromptGuidanceProvider extends EvaluationBasedPromptContr
     protected PromptContribution generatePrompt(EvaluationResult result, PromptContributorContext context) {
         Object isFuzzyValue = getCriterionValue(result, CRITERION_IS_FUZZY).orElse(null);
         String isFuzzy = isFuzzyValue != null ? isFuzzyValue.toString() : null;
+        String enhancedInput = asText(getCriterionValue(result, CRITERION_ENHANCED_INPUT).orElse(null));
+        boolean operationIntent = isLikelyOperationIntent(enhancedInput);
 
-        log.info("ReactPhasePromptGuidanceProvider#generatePrompt - reason=生成React阶段指导, is_fuzzy={}", isFuzzy);
+        log.info("ReactPhasePromptGuidanceProvider#generatePrompt - reason=生成React阶段指导, is_fuzzy={}, operationIntent={}",
+                isFuzzy, operationIntent);
 
         StringBuilder sb = new StringBuilder();
         sb.append("\n【React阶段执行指导】\n\n");
 
-        if ("模糊".equals(isFuzzy)) {
+        if ("模糊".equals(isFuzzy) && operationIntent) {
+            sb.append("【操作请求优先槽位收集策略】\n");
+            sb.append("当前输入虽被判定为**模糊**，但已识别为**操作请求**，请按以下策略处理：\n\n");
+            sb.append("1. 不要做泛化澄清（如“您想做什么类型操作”）\n");
+            sb.append("2. 直接进入 slot_collect 流程\n");
+            sb.append("3. 仅针对必填且无法推断的槽位追问\n");
+            sb.append("4. 参数齐全后进入 slot_confirm，再等待用户确认执行\n");
+        } else if ("模糊".equals(isFuzzy)) {
             sb.append("【模糊意图处理策略】\n");
             sb.append("当前用户意图被识别为**模糊**，请按以下策略处理：\n\n");
             sb.append("1. 不要立即执行代码或做出重要决策\n");
@@ -96,5 +117,35 @@ public class ReactPhasePromptGuidanceProvider extends EvaluationBasedPromptContr
         return PromptContribution.builder()
                 .append(new UserMessage(sb.toString()))
                 .build();
+    }
+
+    private boolean isLikelyOperationIntent(String input) {
+        String normalized = asText(input);
+        if (!StringUtils.hasText(normalized)) {
+            return false;
+        }
+        boolean hasOperationHint = containsAny(normalized, OPERATION_HINT_KEYWORDS);
+        boolean hasQueryHint = containsAny(normalized, QUERY_HINT_KEYWORDS);
+        return hasOperationHint && !hasQueryHint;
+    }
+
+    private boolean containsAny(String text, String... keywords) {
+        if (!StringUtils.hasText(text) || keywords == null || keywords.length == 0) {
+            return false;
+        }
+        for (String keyword : keywords) {
+            if (StringUtils.hasText(keyword) && text.contains(keyword)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private String asText(Object value) {
+        if (value == null) {
+            return null;
+        }
+        String text = String.valueOf(value).trim();
+        return StringUtils.hasText(text) ? text : null;
     }
 }
