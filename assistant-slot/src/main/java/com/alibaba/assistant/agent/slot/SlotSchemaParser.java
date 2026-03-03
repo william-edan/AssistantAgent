@@ -178,6 +178,9 @@ public class SlotSchemaParser {
 		if (defaultNode == null) {
 			defaultNode = slotNode.get("default");
 		}
+		if (defaultNode == null) {
+			defaultNode = slotNode.get("defaultValue");
+		}
 		if (defaultNode != null && !defaultNode.isNull()) {
 			slot.setDefaultValue(parseJsonValue(defaultNode));
 		}
@@ -354,6 +357,9 @@ public class SlotSchemaParser {
 		}
 
 		JsonNode defaultValueNode = computedNode.get("default_value");
+		if (defaultValueNode == null) {
+			defaultValueNode = computedNode.get("defaultValue");
+		}
 		if (defaultValueNode != null && !defaultValueNode.isNull()) {
 			config.setDefaultValue(parseJsonValue(defaultValueNode));
 		}
@@ -373,6 +379,12 @@ public class SlotSchemaParser {
 		slot.setPriority(required ? SlotPriority.CORE : SlotPriority.OPTIONAL);
 
 		JsonNode defaultNode = fieldNode.get("default");
+		if (defaultNode == null) {
+			defaultNode = fieldNode.get("default_value");
+		}
+		if (defaultNode == null) {
+			defaultNode = fieldNode.get("defaultValue");
+		}
 		if (defaultNode != null && !defaultNode.isNull()) {
 			slot.setDefaultValue(parseJsonValue(defaultNode));
 		}

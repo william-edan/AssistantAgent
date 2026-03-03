@@ -132,6 +132,29 @@ class SlotSchemaParserTest {
 		assertEquals(6, slots.size());
 	}
 
+	@Test
+	void shouldParseCamelCaseDefaultValue() {
+		String slotSchema = """
+				{
+				  "slots": [
+				    {
+				      "name": "send",
+				      "type": "integer",
+				      "required": false,
+				      "askMode": "FORM_ONLY",
+				      "defaultValue": 0
+				    }
+				  ]
+				}
+				""";
+		ToolMetaSnapshot snapshot = new ToolMetaSnapshot("work_report", slotSchema, null);
+
+		List<SlotDefinition> slots = parser.parse(snapshot);
+
+		assertEquals(1, slots.size());
+		assertEquals(0, slots.get(0).getDefaultValue());
+	}
+
 	private String loadResource(String name) throws Exception {
 		try (InputStream is = getClass().getClassLoader().getResourceAsStream(name)) {
 			assertNotNull(is, "Resource not found: " + name);
