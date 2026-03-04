@@ -38,6 +38,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
 
@@ -64,6 +65,38 @@ class AssistantFastIntentHookTest {
 		Map<String, Object> updates = hook.beforeAgent(new OverAllState(), RunnableConfig.builder().build()).join();
 
 		assertTrue(updates.isEmpty());
+	}
+
+	@Test
+	void shouldForceDisableStreamingInBeforeAgent() {
+		AssistantIntentRouter router = mock(AssistantIntentRouter.class);
+		when(router.route(any(), any(), any())).thenReturn(AssistantIntentRouter.IntentResult.mainFlow());
+
+		AssistantFastIntentHook hook = new AssistantFastIntentHook(router, new ObjectMapper());
+		RunnableConfig config = RunnableConfig.builder()
+				.addMetadata("_stream_", true)
+				.build();
+
+		hook.beforeAgent(new OverAllState(), config).join();
+
+		assertEquals(Boolean.FALSE, config.metadata("_stream_").orElse(null));
+	}
+
+	@Test
+	void shouldResetStaleToolJumpWhenRouteFallsBackToMainFlow() {
+		AssistantIntentRouter router = mock(AssistantIntentRouter.class);
+		when(router.route(any(), any(), any())).thenReturn(AssistantIntentRouter.IntentResult.mainFlow());
+
+		AssistantFastIntentHook hook = new AssistantFastIntentHook(router, new ObjectMapper());
+		OverAllState state = new OverAllState();
+		state.updateState(Map.of(
+				"input", "请帮我看下请假规则",
+				"jump_to", "tool"));
+
+		Map<String, Object> updates = hook.beforeAgent(state, RunnableConfig.builder().build()).join();
+
+		assertTrue(updates.containsKey("jump_to"));
+		assertNull(updates.get("jump_to"));
 	}
 
 	@Test
@@ -138,6 +171,28 @@ class AssistantFastIntentHookTest {
 		Map<String, Object> args = new ObjectMapper().readValue(toolCall.arguments(), Map.class);
 		assertEquals("gougu_oa.leave_application", args.get("toolCode"));
 		verify(router, never()).route(any(), any(), any());
+	}
+
+	@Test
+	void shouldNotPreRouteToSlotCollectWhenCollectingPhaseHasNoNewUserInput() {
+		AssistantIntentRouter router = mock(AssistantIntentRouter.class);
+		when(router.route(any(), any(), any())).thenReturn(AssistantIntentRouter.IntentResult.mainFlow());
+
+		ToolMetaService toolMetaService = mock(ToolMetaService.class);
+
+		AssistantFastIntentHook hook = new AssistantFastIntentHook(router, new ObjectMapper(), toolMetaService);
+		OverAllState state = new OverAllState();
+		state.updateState(Map.of(
+				"input", "发起工作汇报",
+				AssistantStateKeys.LAST_COLLECT_USER_INPUT, "发起工作汇报",
+				AssistantStateKeys.CONVERSATION_PHASE, "COLLECTING",
+				AssistantStateKeys.SYSTEM_CODE, "gougu_oa",
+				CodeactStateKeys.AVAILABLE_TOOL_NAMES, List.of("slot_collect", "slot_confirm")));
+
+		Map<String, Object> updates = hook.beforeAgent(state, RunnableConfig.builder().build()).join();
+
+		assertTrue(updates.isEmpty());
+		verify(toolMetaService, never()).listEnabledByTenantAndSystem(any(), any());
 	}
 
 	@Test

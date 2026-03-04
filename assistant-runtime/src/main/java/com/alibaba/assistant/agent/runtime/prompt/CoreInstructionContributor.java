@@ -77,6 +77,8 @@ public class CoreInstructionContributor implements PromptContributor {
 				7. 对已识别参数、默认值可用字段、计算字段、askMode=AUTO 字段、inferred_from 可推断字段，不要重复追问。
 				8. 当阶段为 CONFIRMING 且用户明确确认时，必须调用对应 *_execute 工具，不要只做文本确认。
 				9. 调用 *_execute 时必须携带 confirmed=true。
+				10. 对 works/reason/title 等自由文本槽位：若当前用户输入未提供内容且已识别参数中不存在该字段，严禁虚构或示例化填写，必须明确追问。
+				11. 当你本轮已向用户发出缺失参数追问后，本轮不得再次调用任何工具；必须等待用户下一条输入再继续。
 				""".formatted(now);
 		return PromptContribution.builder()
 				.append(new UserMessage(text))

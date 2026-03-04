@@ -57,6 +57,7 @@ import org.springframework.util.StringUtils;
 
 import java.time.LocalDate;
 import java.time.format.DateTimeParseException;
+import java.time.temporal.TemporalAdjusters;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
@@ -200,7 +201,36 @@ public class SlotCollectTool implements BiFunction<SlotCollectTool.Request, Tool
             String userInput = resolveUserInput(state);
             boolean suppressModelExtraction = shouldSuppressModelExtraction(state, userInput);
             if (suppressModelExtraction) {
-                logger.info("SlotCollectTool#apply - suppressing model-only extraction in same collecting turn");
+                logger.info("SlotCollectTool#apply - suppressing model-only extraction in same user turn");
+            }
+            if (suppressModelExtraction) {
+                List<EnrichedSlot> enrichedSlots = enrichSlotsSafely(slotDefinitions, systemCode, assistantUid);
+                applyAutoSelect(slotDefinitions, enrichedSlots, collectedSlots);
+                computedFieldProcessor.processComputedFields(slotDefinitions, collectedSlots);
+
+                SlotCollectStatus status = slotCollectorService.checkCollectionStatus(slotDefinitions, collectedSlots);
+                int currentRound = Math.max(1, readIntState(state, AssistantStateKeys.COLLECT_ROUND));
+                CollectBehavior behavior = parseCollectBehavior(snapshot.getBehaviorConfig());
+                List<SlotDefinition> nextSlots = status == SlotCollectStatus.COMPLETE
+                        ? Collections.emptyList()
+                        : slotCollectorService.getNextSlotsToCollect(slotDefinitions, collectedSlots, behavior,
+                        currentRound);
+
+                if (status == SlotCollectStatus.COMPLETE) {
+                    return Response.complete(
+                            slotCollectorService.buildFinalParams(slotDefinitions, collectedSlots),
+                            mapCollected(collectedSlots),
+                            currentRound,
+                            enrichedSlots);
+                }
+                Response waiting = Response.collecting(
+                        mapCollected(collectedSlots),
+                        buildMissingSlots(nextSlots, enrichedSlots),
+                        currentRound,
+                        enrichedSlots,
+                        status.name());
+                waiting.message = "No new user input detected; waiting for user input.";
+                return waiting;
             }
 
             Map<String, Object> extracted = mergeAndInferExtractedSlots(
@@ -209,6 +239,7 @@ public class SlotCollectTool implements BiFunction<SlotCollectTool.Request, Tool
                     state,
                     userInput,
                     suppressModelExtraction);
+            applyWorkReportDateFallback(extracted, slotDefinitions, collectedSlots, snapshot, resolveAnchorDate(state));
             if (!extracted.isEmpty()) {
                 collectedSlots = slotCollectorService.collectFromAgent(extracted, slotDefinitions, collectedSlots);
             }
@@ -283,7 +314,10 @@ public class SlotCollectTool implements BiFunction<SlotCollectTool.Request, Tool
         }
 
         String phase = readStringState(state, AssistantStateKeys.CONVERSATION_PHASE);
-        if (!"COLLECTING".equalsIgnoreCase(phase) && !"BLOCKED".equalsIgnoreCase(phase)) {
+        if (!"COLLECTING".equalsIgnoreCase(phase)
+                && !"BLOCKED".equalsIgnoreCase(phase)
+                && !"READY_TO_CONFIRM".equalsIgnoreCase(phase)
+                && !"CONFIRMING".equalsIgnoreCase(phase)) {
             return false;
         }
 
@@ -376,6 +410,122 @@ public class SlotCollectTool implements BiFunction<SlotCollectTool.Request, Tool
         }
     }
 
+    private void applyWorkReportDateFallback(Map<String, Object> extracted,
+                                             List<SlotDefinition> slotDefinitions,
+                                             Map<String, SlotValue> collectedSlots,
+                                             ToolMetaSnapshot snapshot,
+                                             LocalDate anchorDate) {
+        if (!isWorkReportTool(snapshot) || slotDefinitions == null || slotDefinitions.isEmpty()) {
+            return;
+        }
+
+        String startSlotName = resolveSlotName(slotDefinitions, "start_date", "startDate");
+        String endSlotName = resolveSlotName(slotDefinitions, "end_date", "endDate");
+        if (!StringUtils.hasText(startSlotName) || !StringUtils.hasText(endSlotName)) {
+            return;
+        }
+
+        Object startCandidate = firstNonNull(extracted.get(startSlotName), readCollectedValue(collectedSlots, startSlotName));
+        Object endCandidate = firstNonNull(extracted.get(endSlotName), readCollectedValue(collectedSlots, endSlotName));
+        if (hasTextValue(startCandidate) && hasTextValue(endCandidate)) {
+            return;
+        }
+
+        Integer reportType = resolveWorkReportType(extracted, collectedSlots, slotDefinitions);
+        if (reportType == null) {
+            return;
+        }
+
+        LocalDate safeAnchorDate = anchorDate != null ? anchorDate : LocalDate.now();
+        LocalDate inferredStart;
+        LocalDate inferredEnd;
+        switch (reportType) {
+            case 1:
+                inferredStart = safeAnchorDate;
+                inferredEnd = safeAnchorDate;
+                break;
+            case 2:
+                inferredStart = safeAnchorDate.with(TemporalAdjusters.previousOrSame(java.time.DayOfWeek.MONDAY));
+                inferredEnd = inferredStart.plusDays(6);
+                break;
+            case 3:
+                inferredStart = safeAnchorDate.withDayOfMonth(1);
+                inferredEnd = safeAnchorDate.with(TemporalAdjusters.lastDayOfMonth());
+                break;
+            default:
+                return;
+        }
+
+        if (!hasTextValue(startCandidate)) {
+            extracted.put(startSlotName, inferredStart.toString());
+        }
+        if (!hasTextValue(endCandidate)) {
+            extracted.put(endSlotName, inferredEnd.toString());
+        }
+    }
+
+    private Integer resolveWorkReportType(Map<String, Object> extracted,
+                                          Map<String, SlotValue> collectedSlots,
+                                          List<SlotDefinition> slotDefinitions) {
+        String typeSlotName = resolveSlotName(slotDefinitions, "types", "type");
+        if (!StringUtils.hasText(typeSlotName)) {
+            return null;
+        }
+
+        Object typeValue = firstNonNull(extracted.get(typeSlotName), readCollectedValue(collectedSlots, typeSlotName));
+        if (typeValue == null) {
+            SlotDefinition typeDefinition = findSlotDefinition(slotDefinitions, typeSlotName);
+            if (typeDefinition != null) {
+                typeValue = typeDefinition.getDefaultValue();
+            }
+        }
+        if (typeValue == null) {
+            return null;
+        }
+
+        if (typeValue instanceof Number number) {
+            return number.intValue();
+        }
+
+        String raw = String.valueOf(typeValue).trim();
+        if (!StringUtils.hasText(raw)) {
+            return null;
+        }
+
+        if ("日报".equals(raw)) {
+            return 1;
+        }
+        if ("周报".equals(raw)) {
+            return 2;
+        }
+        if ("月报".equals(raw)) {
+            return 3;
+        }
+
+        try {
+            return Integer.parseInt(raw);
+        }
+        catch (NumberFormatException e) {
+            return null;
+        }
+    }
+
+    private Object readCollectedValue(Map<String, SlotValue> collectedSlots, String slotName) {
+        if (collectedSlots == null || !StringUtils.hasText(slotName)) {
+            return null;
+        }
+        SlotValue slotValue = collectedSlots.get(slotName);
+        return slotValue != null ? slotValue.getResolvedValue() : null;
+    }
+
+    private boolean isWorkReportTool(ToolMetaSnapshot snapshot) {
+        if (snapshot == null || !StringUtils.hasText(snapshot.getToolCode())) {
+            return false;
+        }
+        String toolCode = snapshot.getToolCode().trim().toLowerCase(Locale.ROOT);
+        return toolCode.endsWith("work_report") || toolCode.endsWith(".work_report");
+    }
+
     private String resolveSlotName(List<SlotDefinition> slotDefinitions, String... candidates) {
         if (slotDefinitions == null || slotDefinitions.isEmpty() || candidates == null || candidates.length == 0) {
             return null;
@@ -432,19 +582,29 @@ public class SlotCollectTool implements BiFunction<SlotCollectTool.Request, Tool
             }
             if (item instanceof Map<?, ?> rawMap) {
                 Map<String, Object> map = objectMapper.convertValue(rawMap, Map.class);
-                String type = firstNonEmpty(
+                String role = firstNonEmpty(
                         asText(map.get("messageType")),
-                        asText(map.get("type")));
+                        asText(map.get("type")),
+                        asText(map.get("role")),
+                        asText(map.get("messageRole")),
+                        asText(map.get("message_role")));
                 String text = firstNonEmpty(
                         asText(map.get("text")),
                         asText(map.get("content")));
-                if (StringUtils.hasText(text)
-                        && (!StringUtils.hasText(type) || "USER".equalsIgnoreCase(type))) {
+                if (StringUtils.hasText(text) && isUserRole(role)) {
                     return text;
                 }
             }
         }
         return null;
+    }
+
+    private boolean isUserRole(String role) {
+        if (!StringUtils.hasText(role)) {
+            return false;
+        }
+        String normalized = role.trim().toUpperCase(Locale.ROOT);
+        return "USER".equals(normalized) || "HUMAN".equals(normalized);
     }
 
     private LocalDate resolveAnchorDate(OverAllState state) {
@@ -1102,6 +1262,8 @@ public class SlotCollectTool implements BiFunction<SlotCollectTool.Request, Tool
                 dependencyResults != null ? dependencyResults : Collections.emptyMap());
         updates.put(AssistantStateKeys.CONVERSATION_PHASE,
                 status == SlotCollectStatus.COMPLETE ? "READY_TO_CONFIRM" : status.name());
+        // jump_to is a one-shot routing hint; clear stale value to avoid tool/model self-loop in same turn.
+        updates.put("jump_to", null);
         updates.put(AssistantStateKeys.EXECUTION_CONFIRM_GRANTED, false);
         updates.put(AssistantStateKeys.EXECUTION_CONFIRM_TOOL_NAME, null);
         updates.put(AssistantStateKeys.EXECUTION_CONFIRM_USER_INPUT, null);
@@ -1126,6 +1288,18 @@ public class SlotCollectTool implements BiFunction<SlotCollectTool.Request, Tool
     private String firstNonEmpty(String... values) {
         for (String value : values) {
             if (StringUtils.hasText(value)) {
+                return value;
+            }
+        }
+        return null;
+    }
+
+    private Object firstNonNull(Object... values) {
+        if (values == null) {
+            return null;
+        }
+        for (Object value : values) {
+            if (value != null) {
                 return value;
             }
         }

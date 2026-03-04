@@ -38,10 +38,10 @@ assistant:
 # DashScope Configuration
 # ============================================================================
 spring.ai.dashscope:
-  api-key: ${DASHSCOPE_API_KEY:sk-4477f24d4d824f4cad979a11ef5806cf}
+  api-key: ${DASHSCOPE_API_KEY:sk-434f88b803e348b1b799b34b45360874}
   chat:
     options:
-      model: qwen-plus
+      model: deepseek-v3.2
 
 
 # ============================================================================

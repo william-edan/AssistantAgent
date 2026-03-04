@@ -50,6 +50,7 @@ import reactor.core.publisher.Flux;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * Enterprise assistant chat endpoint.
@@ -227,6 +228,7 @@ public class ChatController {
 		Flux<NodeOutput> agentStream = userMessage != null
 				? agent.stream(userMessage, runnableConfig)
 				: agent.stream("", runnableConfig);
+		ChunkDeduplicator deduplicator = new ChunkDeduplicator();
 
 		return agentStream.map(nodeOutput -> {
 					String node = nodeOutput.node();
@@ -245,12 +247,8 @@ public class ChatController {
 										node, agentName, assistantMessage, tokenUsage, "");
 							}
 							else {
-								// FIX: AGENT_MODEL_FINISHED carries the full accumulated text
-								// that was already streamed token-by-token. Sending it as chunk
-								// again would cause the frontend to append it a second time.
-								boolean isFinished =
-										streamingOutput.getOutputType() == OutputType.AGENT_MODEL_FINISHED;
-								String chunk = isFinished ? "" : assistantMessage.getText();
+								String chunk = deduplicator.nextChunk(
+										streamingOutput.getOutputType(), assistantMessage.getText());
 								agentResponse = new AgentRunResponse(
 										node, agentName, assistantMessage, tokenUsage, chunk);
 							}
@@ -292,6 +290,36 @@ public class ChatController {
 					return Flux.just(ServerSentEvent.<String>builder()
 							.event("error").data(errorJson).build());
 				});
+	}
+
+	static class ChunkDeduplicator {
+
+		private final AtomicReference<String> lastAccumulatedText = new AtomicReference<>("");
+
+		String nextChunk(OutputType outputType, String currentText) {
+			String safeCurrent = currentText != null ? currentText : "";
+			if (safeCurrent.isEmpty()) {
+				return "";
+			}
+			String last = lastAccumulatedText.get();
+			if (safeCurrent.equals(last)) {
+				return "";
+			}
+			if (safeCurrent.startsWith(last)) {
+				lastAccumulatedText.set(safeCurrent);
+				return safeCurrent.substring(last.length());
+			}
+			if (last.startsWith(safeCurrent)) {
+				lastAccumulatedText.set(safeCurrent);
+				return "";
+			}
+			if (outputType == OutputType.AGENT_MODEL_FINISHED) {
+				lastAccumulatedText.set(safeCurrent);
+				return "";
+			}
+			lastAccumulatedText.set(safeCurrent);
+			return safeCurrent;
+		}
 	}
 
 	// ── Request normalisation helpers ───────────────────────────────────

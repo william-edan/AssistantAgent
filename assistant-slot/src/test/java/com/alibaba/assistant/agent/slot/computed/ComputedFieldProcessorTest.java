@@ -137,4 +137,24 @@ class ComputedFieldProcessorTest {
 		assertEquals(1, slotValues.get("leave_type").getResolvedValue());
 	}
 
+	@Test
+	void shouldNotComputeConcatWhenDateDependenciesMissing() {
+		Map<String, SlotValue> slotValues = new HashMap<>();
+
+		SlotDefinition rangeDate = new SlotDefinition();
+		rangeDate.setName("range_date");
+		rangeDate.setType("string");
+
+		ComputedFieldConfig config = new ComputedFieldConfig();
+		config.setEnabled(true);
+		config.setType(ComputedFieldConfig.ComputationType.FUNCTION);
+		config.setFunction("concat");
+		config.setParams(Map.of("fields", List.of("start_date", " ~ ", "end_date")));
+		rangeDate.setComputed(config);
+
+		processor.processComputedFields(List.of(rangeDate), slotValues);
+
+		assertFalse(slotValues.containsKey("range_date"));
+	}
+
 }

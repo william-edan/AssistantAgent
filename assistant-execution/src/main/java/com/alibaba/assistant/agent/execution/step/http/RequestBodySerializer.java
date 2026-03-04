@@ -20,9 +20,12 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
+import org.springframework.util.StringUtils;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 /**
  * Serializes request parameters to form-urlencoded format
@@ -35,6 +38,15 @@ import java.util.Map;
 public class RequestBodySerializer {
 
 	private static final Logger logger = LoggerFactory.getLogger(RequestBodySerializer.class);
+
+	/**
+	 * Gougu OA style uid collections are accepted as comma-separated strings.
+	 */
+	private static final Set<String> COMMA_SEPARATED_ARRAY_KEYS = Set.of(
+			"to_uids",
+			"check_uids",
+			"check_copy_uids",
+			"join_uids");
 
 	private ArraySerializationStrategy arrayStrategy;
 
@@ -66,6 +78,16 @@ public class RequestBodySerializer {
 
 			if (value instanceof List) {
 				List<?> listValue = (List<?>) value;
+				if (shouldSerializeAsCommaSeparated(key)) {
+					String joined = listValue.stream()
+						.filter(item -> item != null && StringUtils.hasText(String.valueOf(item)))
+						.map(String::valueOf)
+						.collect(Collectors.joining(","));
+					if (StringUtils.hasText(joined)) {
+						result.add(key, joined);
+					}
+					continue;
+				}
 				Map<String, List<String>> serialized = arrayStrategy.serialize(key, listValue);
 				result.putAll(serialized);
 			}
@@ -81,6 +103,13 @@ public class RequestBodySerializer {
 
 	public void setArrayStrategy(ArraySerializationStrategy strategy) {
 		this.arrayStrategy = strategy;
+	}
+
+	private boolean shouldSerializeAsCommaSeparated(String key) {
+		if (!StringUtils.hasText(key)) {
+			return false;
+		}
+		return COMMA_SEPARATED_ARRAY_KEYS.contains(key.trim().toLowerCase());
 	}
 
 }

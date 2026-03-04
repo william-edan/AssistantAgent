@@ -15,6 +15,9 @@
  */
 package com.alibaba.assistant.agent.runtime.tool.react;
 
+import com.alibaba.assistant.agent.runtime.agent.AssistantStateKeys;
+import com.alibaba.cloud.ai.graph.OverAllState;
+import com.alibaba.cloud.ai.graph.agent.tools.ToolContextConstants;
 import com.alibaba.assistant.agent.slot.SlotEnricherService;
 import com.alibaba.assistant.agent.slot.SlotSchemaParser;
 import com.alibaba.assistant.agent.slot.computed.ComputedFieldProcessor;
@@ -24,11 +27,14 @@ import com.alibaba.assistant.agent.slot.form.FormDisplayConfigService;
 import com.alibaba.assistant.agent.slot.model.EnrichedSlot;
 import com.alibaba.assistant.agent.slot.model.SlotDefinition;
 import com.alibaba.assistant.agent.slot.model.SlotOption;
+import com.alibaba.assistant.agent.slot.model.SlotValue;
 import com.alibaba.assistant.agent.slot.model.ToolMetaSnapshot;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
+import org.springframework.ai.chat.model.ToolContext;
 
 import java.util.List;
+import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -175,5 +181,49 @@ class SlotConfirmToolTest {
         assertTrue(response.confirmForm.formSummary.getSummaryItems()
                 .stream()
                 .anyMatch(item -> "Annual Leave".equals(item.getValue())));
+    }
+
+    @Test
+    void shouldRejectConfirmWhenRequestInjectsMissingRequiredSlot() {
+        ObjectMapper objectMapper = new ObjectMapper();
+        SlotSchemaParser slotSchemaParser = new SlotSchemaParser(objectMapper);
+        SlotEnricherService slotEnricherService = mock(SlotEnricherService.class);
+        ComputedFieldProcessor computedFieldProcessor = new ComputedFieldProcessor(
+                List.of(new DateDiffFunction(), new ConcatFunction()));
+        FormDisplayConfigService formDisplayConfigService = new FormDisplayConfigService();
+
+        SlotConfirmTool tool = new SlotConfirmTool(
+                slotSchemaParser,
+                slotEnricherService,
+                computedFieldProcessor,
+                formDisplayConfigService,
+                objectMapper);
+
+        String slotSchema = """
+                {
+                  "slots": [
+                    {"name": "types", "type": "integer", "priority": "CORE", "required": true, "ask_mode": "BATCH"},
+                    {"name": "works", "type": "string", "priority": "CORE", "required": true, "ask_mode": "BATCH"}
+                  ]
+                }
+                """;
+        ToolMetaSnapshot snapshot = new ToolMetaSnapshot();
+        snapshot.setToolCode("gougu_oa.work_report");
+        snapshot.setSlotSchema(slotSchema);
+
+        OverAllState state = new OverAllState();
+        state.updateState(Map.of(
+                AssistantStateKeys.MATCHED_TOOL_META, snapshot,
+                AssistantStateKeys.COLLECTED_SLOTS, Map.of("types", SlotValue.fromUser("types", 2))));
+        ToolContext toolContext = new ToolContext(Map.of(ToolContextConstants.AGENT_STATE_CONTEXT_KEY, state));
+
+        SlotConfirmTool.Request request = new SlotConfirmTool.Request();
+        request.collectedSlots.put("works", "本周完成了部署上线");
+
+        SlotConfirmTool.Response response = tool.apply(request, toolContext);
+
+        assertEquals("COLLECTING", response.status);
+        assertEquals("COLLECTING", response.phase);
+        assertTrue(response.message.contains("works"));
     }
 }

@@ -17,6 +17,7 @@ package com.alibaba.assistant.agent.runtime.tool.react;
 
 import com.alibaba.assistant.agent.controlplane.toolregistry.ToolMeta;
 import com.alibaba.assistant.agent.controlplane.toolregistry.ToolMetaService;
+import com.alibaba.assistant.agent.runtime.agent.AssistantStateKeys;
 import com.alibaba.assistant.agent.runtime.planner.DependencyResolver;
 import com.alibaba.assistant.agent.runtime.planner.FieldMappingProcessor;
 import com.alibaba.assistant.agent.runtime.planner.ToolExecutor;
@@ -50,6 +51,7 @@ import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyList;
@@ -58,6 +60,57 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
 class SlotCollectToolTest {
+
+    @Test
+    void shouldClearStaleJumpToAfterPersistingCollectionState() {
+        SlotCollectorService collector = mock(SlotCollectorService.class);
+        SlotEnricherService enricher = mock(SlotEnricherService.class);
+        ComputedFieldProcessor computed = mock(ComputedFieldProcessor.class);
+        SlotSchemaParser parser = mock(SlotSchemaParser.class);
+
+        SlotDefinition works = slot("works", SlotPriority.CORE, SlotAskMode.BATCH, true);
+        List<SlotDefinition> definitions = List.of(works);
+
+        when(parser.parse(any(ToolMetaSnapshot.class))).thenReturn(definitions);
+        when(collector.collectFromAgent(anyMap(), eq(definitions), anyMap())).thenAnswer(invocation -> {
+            @SuppressWarnings("unchecked")
+            Map<String, Object> extraction = invocation.getArgument(0);
+            Map<String, SlotValue> mapped = new LinkedHashMap<>();
+            for (Map.Entry<String, Object> entry : extraction.entrySet()) {
+                Object value = entry.getValue();
+                mapped.put(entry.getKey(), SlotValue.resolved(
+                        entry.getKey(),
+                        String.valueOf(value),
+                        value,
+                        String.valueOf(value)));
+            }
+            return mapped;
+        });
+        when(collector.checkCollectionStatus(anyList(), anyMap())).thenReturn(SlotCollectStatus.COMPLETE);
+        when(collector.buildFinalParams(anyList(), anyMap())).thenAnswer(invocation -> {
+            @SuppressWarnings("unchecked")
+            Map<String, SlotValue> slotValues = invocation.getArgument(1);
+            return toResolvedMap(slotValues);
+        });
+
+        OverAllState state = new OverAllState();
+        state.updateState(Map.of(
+                "input", "本周完成了需求评审",
+                "jump_to", "tool"));
+        ToolContext toolContext = mock(ToolContext.class);
+        when(toolContext.getContext()).thenReturn(Map.of(
+                ToolContextConstants.AGENT_STATE_CONTEXT_KEY, state));
+
+        SlotCollectTool tool = new SlotCollectTool(collector, enricher, computed, parser, new ObjectMapper());
+        SlotCollectTool.Request request = new SlotCollectTool.Request();
+        request.slotSchema = "{\"slots\":[]}";
+        request.extractedSlots = Map.of("works", "完成需求评审");
+
+        SlotCollectTool.Response response = tool.apply(request, toolContext);
+
+        assertEquals(SlotCollectStatus.COMPLETE.name(), response.status);
+        assertTrue(state.value("jump_to", Object.class).isEmpty());
+    }
 
     @Test
     void shouldInferLeaveTypeAndDatesFromMessagesWhenInputMissing() {
@@ -282,6 +335,84 @@ class SlotCollectToolTest {
     }
 
     @Test
+    void shouldNotAdvanceRoundWhenNoNewUserInputInCollectingPhase() {
+        SlotCollectorService collector = mock(SlotCollectorService.class);
+        SlotEnricherService enricher = mock(SlotEnricherService.class);
+        ComputedFieldProcessor computed = mock(ComputedFieldProcessor.class);
+        SlotSchemaParser parser = mock(SlotSchemaParser.class);
+
+        SlotDefinition works = slot("works", SlotPriority.CORE, SlotAskMode.BATCH, true);
+        List<SlotDefinition> definitions = List.of(works);
+
+        when(parser.parse(any(ToolMetaSnapshot.class))).thenReturn(definitions);
+        when(collector.checkCollectionStatus(anyList(), anyMap())).thenReturn(SlotCollectStatus.COLLECTING);
+        when(collector.getNextSlotsToCollect(anyList(), anyMap(), any(CollectBehavior.class), eq(1)))
+                .thenReturn(definitions);
+
+        SlotCollectTool tool = new SlotCollectTool(collector, enricher, computed, parser, new ObjectMapper());
+        SlotCollectTool.Request request = new SlotCollectTool.Request();
+        request.slotSchema = "{\"slots\":[]}";
+        request.extractedSlots = Collections.emptyMap();
+
+        ToolContext toolContext = toolContextWithState(Map.of(
+                "input", "发起工作汇报",
+                AssistantStateKeys.LAST_COLLECT_USER_INPUT, "发起工作汇报",
+                AssistantStateKeys.CONVERSATION_PHASE, "COLLECTING",
+                AssistantStateKeys.COLLECT_ROUND, 1));
+        SlotCollectTool.Response response = tool.apply(request, toolContext);
+
+        assertEquals("COLLECTING", response.phase);
+        assertEquals(1, response.round);
+        assertEquals("No new user input detected; waiting for user input.", response.message);
+        verify(collector, never()).collectFromAgent(anyMap(), anyList(), anyMap());
+        verify(collector).getNextSlotsToCollect(anyList(), anyMap(), any(CollectBehavior.class), eq(1));
+    }
+
+    @Test
+    void shouldIgnoreModelExtractionWhenNoNewUserInputInConfirmingPhase() {
+        SlotCollectorService collector = mock(SlotCollectorService.class);
+        SlotEnricherService enricher = mock(SlotEnricherService.class);
+        ComputedFieldProcessor computed = mock(ComputedFieldProcessor.class);
+        SlotSchemaParser parser = mock(SlotSchemaParser.class);
+
+        SlotDefinition types = slot("types", SlotPriority.CORE, SlotAskMode.BATCH, true);
+        types.setType("integer");
+        SlotDefinition works = slot("works", SlotPriority.CORE, SlotAskMode.BATCH, true);
+        List<SlotDefinition> definitions = List.of(types, works);
+        when(parser.parse(any(ToolMetaSnapshot.class))).thenReturn(definitions);
+        when(collector.checkCollectionStatus(anyList(), anyMap())).thenReturn(SlotCollectStatus.COMPLETE);
+        when(collector.buildFinalParams(anyList(), anyMap())).thenAnswer(invocation -> {
+            @SuppressWarnings("unchecked")
+            Map<String, SlotValue> slotValues = invocation.getArgument(1);
+            return toResolvedMap(slotValues);
+        });
+
+        Map<String, SlotValue> existingCollected = new LinkedHashMap<>();
+        existingCollected.put("types", SlotValue.resolved("types", "2", 2, "2"));
+        existingCollected.put("works", SlotValue.resolved("works", "原始工作内容", "原始工作内容", "原始工作内容"));
+
+        ToolContext toolContext = toolContextWithState(Map.of(
+                "input", "我需要发送日报 当天完成了动作的调试",
+                AssistantStateKeys.LAST_COLLECT_USER_INPUT, "我需要发送日报 当天完成了动作的调试",
+                AssistantStateKeys.CONVERSATION_PHASE, "CONFIRMING",
+                AssistantStateKeys.COLLECTED_SLOTS, existingCollected));
+
+        SlotCollectTool tool = new SlotCollectTool(collector, enricher, computed, parser, new ObjectMapper());
+        SlotCollectTool.Request request = new SlotCollectTool.Request();
+        request.slotSchema = "{\"slots\":[]}";
+        request.extractedSlots = Map.of(
+                "types", 1,
+                "works", "完成了动作的调试");
+
+        SlotCollectTool.Response response = tool.apply(request, toolContext);
+
+        assertEquals("READY_TO_CONFIRM", response.phase);
+        assertEquals(2, response.collected.get("types"));
+        assertEquals("原始工作内容", response.collected.get("works"));
+        verify(collector, never()).collectFromAgent(anyMap(), anyList(), anyMap());
+    }
+
+    @Test
     void shouldAutoSelectFirstOptionForAutoSlotWhenNoExplicitAutoSelectConfig() {
         SlotCollectorService collector = mock(SlotCollectorService.class);
         SlotEnricherService enricher = mock(SlotEnricherService.class);
@@ -388,6 +519,64 @@ class SlotCollectToolTest {
         assertEquals("COLLECTING", response.phase);
         assertEquals("E001", response.collected.get("employeeId"));
         verify(toolExecutor, times(1)).execute(eq("default"), eq("current_user"), anyMap(), any());
+    }
+
+    @Test
+    void shouldAutoFillWorkReportDatesByTypeWhenMissing() {
+        SlotCollectorService collector = mock(SlotCollectorService.class);
+        SlotEnricherService enricher = mock(SlotEnricherService.class);
+        ComputedFieldProcessor computed = mock(ComputedFieldProcessor.class);
+        SlotSchemaParser parser = mock(SlotSchemaParser.class);
+
+        SlotDefinition types = slot("types", SlotPriority.CORE, SlotAskMode.BATCH, true);
+        types.setType("integer");
+        SlotDefinition startDate = slot("start_date", SlotPriority.OPTIONAL, SlotAskMode.AUTO, false);
+        startDate.setType("date");
+        SlotDefinition endDate = slot("end_date", SlotPriority.OPTIONAL, SlotAskMode.AUTO, false);
+        endDate.setType("date");
+        SlotDefinition works = slot("works", SlotPriority.CORE, SlotAskMode.BATCH, true);
+        List<SlotDefinition> definitions = List.of(types, startDate, endDate, works);
+
+        when(parser.parse(any(ToolMetaSnapshot.class))).thenReturn(definitions);
+        when(collector.collectFromAgent(anyMap(), eq(definitions), anyMap())).thenAnswer(invocation -> {
+            @SuppressWarnings("unchecked")
+            Map<String, Object> extraction = invocation.getArgument(0);
+            Map<String, SlotValue> mapped = new LinkedHashMap<>();
+            for (Map.Entry<String, Object> entry : extraction.entrySet()) {
+                Object value = entry.getValue();
+                mapped.put(entry.getKey(), SlotValue.resolved(
+                        entry.getKey(),
+                        String.valueOf(value),
+                        value,
+                        String.valueOf(value)));
+            }
+            return mapped;
+        });
+        when(collector.checkCollectionStatus(anyList(), anyMap())).thenReturn(SlotCollectStatus.COMPLETE);
+        when(collector.buildFinalParams(anyList(), anyMap())).thenAnswer(invocation -> {
+            @SuppressWarnings("unchecked")
+            Map<String, SlotValue> slotValues = invocation.getArgument(1);
+            return toResolvedMap(slotValues);
+        });
+
+        SlotCollectTool tool = new SlotCollectTool(collector, enricher, computed, parser, new ObjectMapper());
+        SlotCollectTool.Request request = new SlotCollectTool.Request();
+        request.toolCode = "gougu_oa.work_report";
+        request.slotSchema = "{\"slots\":[]}";
+        request.extractedSlots = Map.of("types", 1, "works", "完成了需求评审");
+
+        ToolContext toolContext = toolContextWithInput("发起工作汇报");
+        SlotCollectTool.Response response = tool.apply(request, toolContext);
+
+        String today = LocalDate.now().toString();
+        assertEquals(SlotCollectStatus.COMPLETE.name(), response.status);
+        assertEquals(today, response.collected.get("start_date"));
+        assertEquals(today, response.collected.get("end_date"));
+
+        ArgumentCaptor<Map<String, Object>> extractionCaptor = ArgumentCaptor.forClass(Map.class);
+        verify(collector).collectFromAgent(extractionCaptor.capture(), eq(definitions), anyMap());
+        assertEquals(today, extractionCaptor.getValue().get("start_date"));
+        assertEquals(today, extractionCaptor.getValue().get("end_date"));
     }
 
     private static SlotDefinition slot(String name, SlotPriority priority, SlotAskMode askMode, boolean required) {

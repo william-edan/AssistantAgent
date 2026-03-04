@@ -80,6 +80,7 @@ public class AssistantFastIntentHook extends AgentHook implements Prioritized {
 	private static final Set<String> CONFIRMING_PHASES = Set.of("CONFIRMING", "READY_TO_CONFIRM");
 
 	private static final String SLOT_COLLECT_TOOL = "slot_collect";
+	private static final String STREAM_METADATA_KEY = "_stream_";
 
 	private static final String DEFAULT_TENANT = "default";
 
@@ -161,6 +162,7 @@ public class AssistantFastIntentHook extends AgentHook implements Prioritized {
 
 	@Override
 	public CompletableFuture<Map<String, Object>> beforeAgent(OverAllState state, RunnableConfig config) {
+		forceDisableStreaming(config);
 		try {
 			String input = state != null ? state.value("input", String.class).orElse(null) : null;
 			Map<String, Object> confirmationUpdates = tryBuildConfirmationExecutionUpdates(state, input);
@@ -180,17 +182,17 @@ public class AssistantFastIntentHook extends AgentHook implements Prioritized {
 					: Collections.emptyMap();
 			AssistantIntentRouter.IntentResult route = intentRouter.route(resolvedInput, state, metadata);
 			if (route.type() != AssistantIntentType.FAST_INTENT) {
-				return CompletableFuture.completedFuture(Map.of());
+				return CompletableFuture.completedFuture(resetStaleJumpTo(state));
 			}
 
 			Experience experience = route.matchedExperience().orElse(null);
 			if (experience == null) {
-				return CompletableFuture.completedFuture(Map.of());
+				return CompletableFuture.completedFuture(resetStaleJumpTo(state));
 			}
 
 			List<ExperienceArtifact.ToolCallSpec> callSpecs = extractToolCalls(experience);
 			if (callSpecs.isEmpty()) {
-				return CompletableFuture.completedFuture(Map.of());
+				return CompletableFuture.completedFuture(resetStaleJumpTo(state));
 			}
 
 			List<AssistantMessage.ToolCall> toolCalls = new ArrayList<>();
@@ -211,7 +213,7 @@ public class AssistantFastIntentHook extends AgentHook implements Prioritized {
 						toJson(callSpec.getArguments())));
 			}
 			if (toolCalls.isEmpty()) {
-				return CompletableFuture.completedFuture(Map.of());
+				return CompletableFuture.completedFuture(resetStaleJumpTo(state));
 			}
 
 			String assistantText = experience.getArtifact() != null && experience.getArtifact().getReact() != null
@@ -238,8 +240,55 @@ public class AssistantFastIntentHook extends AgentHook implements Prioritized {
 		}
 		catch (Exception ex) {
 			logger.warn("AssistantFastIntentHook#beforeAgent - reason=hook execution failed, error={}", ex.getMessage());
-			return CompletableFuture.completedFuture(Map.of());
+			return CompletableFuture.completedFuture(resetStaleJumpTo(state));
 		}
+	}
+
+	private void forceDisableStreaming(@Nullable RunnableConfig config) {
+		if (config == null) {
+			return;
+		}
+		try {
+			Map<String, Object> metadata = config.metadata().orElse(null);
+			if (metadata == null) {
+				return;
+			}
+			if (!Boolean.FALSE.equals(metadata.get(STREAM_METADATA_KEY))) {
+				metadata.put(STREAM_METADATA_KEY, false);
+			}
+		}
+		catch (Exception ex) {
+			logger.debug("AssistantFastIntentHook#forceDisableStreaming - skip due to error={}", ex.getMessage());
+		}
+	}
+
+	private Map<String, Object> resetStaleJumpTo(OverAllState state) {
+		if (!hasStaleToolJump(state)) {
+			return Map.of();
+		}
+		Map<String, Object> updates = new LinkedHashMap<>();
+		// Clear stale jump flag instead of forcing JumpTo.model.
+		// Forcing JumpTo.model can pin the graph into repeated model turns.
+		updates.put("jump_to", null);
+		return updates;
+	}
+
+	private boolean hasStaleToolJump(OverAllState state) {
+		if (state == null) {
+			return false;
+		}
+		Object jumpToRaw = state.value("jump_to", Object.class).orElse(null);
+		if (jumpToRaw == null) {
+			return false;
+		}
+		if (jumpToRaw instanceof JumpTo jumpTo) {
+			return jumpTo == JumpTo.tool;
+		}
+		if (jumpToRaw instanceof Enum<?> enumValue) {
+			return "tool".equalsIgnoreCase(enumValue.name());
+		}
+		String text = asText(jumpToRaw);
+		return StringUtils.hasText(text) && "tool".equalsIgnoreCase(text);
 	}
 
 	private Map<String, Object> tryBuildConfirmationExecutionUpdates(OverAllState state, String input) {
@@ -318,6 +367,11 @@ public class AssistantFastIntentHook extends AgentHook implements Prioritized {
 
 	private Map<String, Object> tryBuildOperationCollectUpdates(OverAllState state, String input) {
 		if (!StringUtils.hasText(input) || !isLikelyOperationIntent(input)) {
+			return Map.of();
+		}
+		if (!hasNewUserInputForCollection(state, input)) {
+			logger.debug(
+					"AssistantFastIntentHook#tryBuildOperationCollectUpdates - skip duplicate collect in same collecting turn");
 			return Map.of();
 		}
 		if (!isAllowedByNameWhitelist(state, SLOT_COLLECT_TOOL)) {
@@ -903,6 +957,28 @@ public class AssistantFastIntentHook extends AgentHook implements Prioritized {
 		String lastCollectInput = state != null
 				? state.value(AssistantStateKeys.LAST_COLLECT_USER_INPUT, String.class).orElse(null)
 				: null;
+		if (!StringUtils.hasText(lastCollectInput)) {
+			return true;
+		}
+		return !resolvedInput.trim().equalsIgnoreCase(lastCollectInput.trim());
+	}
+
+	private boolean hasNewUserInputForCollection(OverAllState state, String resolvedInput) {
+		if (!StringUtils.hasText(resolvedInput)) {
+			return false;
+		}
+		if (state == null) {
+			return true;
+		}
+		String phase = state.value(AssistantStateKeys.CONVERSATION_PHASE, String.class).orElse(null);
+		if (!StringUtils.hasText(phase)) {
+			return true;
+		}
+		String normalizedPhase = phase.trim().toUpperCase(Locale.ROOT);
+		if (!"COLLECTING".equals(normalizedPhase) && !"BLOCKED".equals(normalizedPhase)) {
+			return true;
+		}
+		String lastCollectInput = state.value(AssistantStateKeys.LAST_COLLECT_USER_INPUT, String.class).orElse(null);
 		if (!StringUtils.hasText(lastCollectInput)) {
 			return true;
 		}

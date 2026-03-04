@@ -34,6 +34,7 @@ import org.springframework.util.StringUtils;
 import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.messages.Message;
 import org.springframework.ai.chat.messages.ToolResponseMessage;
+import org.springframework.ai.chat.messages.UserMessage;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -56,6 +57,8 @@ import java.util.Locale;
 public class PolicyCheckModelInterceptor extends ModelInterceptor {
 
 	private static final Logger logger = LoggerFactory.getLogger(PolicyCheckModelInterceptor.class);
+	private static final String WAITING_FOR_USER_INPUT_MESSAGE = "我已记录当前信息，请先补充缺失的必填内容，我收到你的输入后继续处理。";
+	private static final String WAITING_FOR_CONFIRM_INPUT_MESSAGE = "请先明确回复“确认提交”或“取消”，我再继续执行。";
 
 	@Override
 	public ModelResponse interceptModel(ModelRequest request, ModelCallHandler handler) {
@@ -63,8 +66,15 @@ public class PolicyCheckModelInterceptor extends ModelInterceptor {
 		AllowlistPolicy allowlistPolicy = resolveAllowlistPolicy(state);
 		Set<String> allowlist = allowlistPolicy.allowlist();
 		ExecutionGate executionGate = resolveExecutionGate(state);
-		ModelRequest sanitizedRequest = sanitizeRequest(request, allowlistPolicy, executionGate);
+		StaleInputMode staleInputMode = resolveStaleInputMode(state);
+		if (staleInputMode != StaleInputMode.NONE) {
+			clearStaleToolJump(state);
+		}
+		ModelRequest sanitizedRequest = sanitizeRequest(request, allowlistPolicy, executionGate, staleInputMode);
 		ModelResponse response = handler.call(sanitizedRequest);
+		if (staleInputMode != StaleInputMode.NONE) {
+			response = sanitizeStaleInputResponse(response, staleInputMode);
+		}
 		if (allowlist.isEmpty() && !allowlistPolicy.explicitlyConfigured() && executionGate.isUnrestricted()) {
 			return response;
 		}
@@ -118,20 +128,28 @@ public class PolicyCheckModelInterceptor extends ModelInterceptor {
 	private ModelRequest sanitizeRequest(
 			ModelRequest request,
 			AllowlistPolicy allowlistPolicy,
-			ExecutionGate executionGate) {
+			ExecutionGate executionGate,
+			StaleInputMode staleInputMode) {
 		List<Message> sanitizedMessages = sanitizeMessages(request.getMessages());
-		Map<String, String> filteredToolDescriptions = filterToolDescriptions(
-				request.getToolDescriptions(),
-				allowlistPolicy,
-				executionGate);
-		List<String> filteredTools = filterToolNames(
-				request.getTools(),
-				allowlistPolicy,
-				executionGate);
-		List<ToolCallback> filteredDynamicTools = filterDynamicToolCallbacks(
-				request.getDynamicToolCallbacks(),
-				allowlistPolicy,
-				executionGate);
+		boolean blockTools = staleInputMode != StaleInputMode.NONE;
+		Map<String, String> filteredToolDescriptions = blockTools
+				? Collections.emptyMap()
+				: filterToolDescriptions(
+						request.getToolDescriptions(),
+						allowlistPolicy,
+						executionGate);
+		List<String> filteredTools = blockTools
+				? Collections.emptyList()
+				: filterToolNames(
+						request.getTools(),
+						allowlistPolicy,
+						executionGate);
+		List<ToolCallback> filteredDynamicTools = blockTools
+				? Collections.emptyList()
+				: filterDynamicToolCallbacks(
+						request.getDynamicToolCallbacks(),
+						allowlistPolicy,
+						executionGate);
 
 		return ModelRequest.builder(request)
 				.messages(sanitizedMessages)
@@ -367,6 +385,182 @@ public class PolicyCheckModelInterceptor extends ModelInterceptor {
 		}
 	}
 
+	private ModelResponse sanitizeStaleInputResponse(ModelResponse response, StaleInputMode staleInputMode) {
+		if (response == null || response.getMessage() == null) {
+			return response;
+		}
+		Object messageObject = response.getMessage();
+		if (!(messageObject instanceof AssistantMessage assistantMessage) || !assistantMessage.hasToolCalls()) {
+			return response;
+		}
+		String content = StringUtils.hasText(assistantMessage.getText())
+				? assistantMessage.getText()
+				: staleInputMode.defaultMessage();
+		logger.info(
+				"PolicyCheckModelInterceptor#sanitizeStaleInputResponse - blocked tool calls, mode={}, droppedToolCalls={}",
+				staleInputMode.name(),
+				assistantMessage.getToolCalls().size());
+		return ModelResponse.of(AssistantMessage.builder()
+				.content(content)
+				.build());
+	}
+
+	private StaleInputMode resolveStaleInputMode(OverAllState state) {
+		if (!hasSameInputAsLastCollect(state)) {
+			return StaleInputMode.NONE;
+		}
+		if (isBlockingCollectingPhase(state)) {
+			return StaleInputMode.COLLECTING_OR_BLOCKED;
+		}
+		if (isBlockingConfirmingPhase(state)) {
+			return StaleInputMode.CONFIRMING;
+		}
+		return StaleInputMode.NONE;
+	}
+
+	private boolean hasSameInputAsLastCollect(OverAllState state) {
+		String lastCollectInput = readStateString(state, AssistantStateKeys.LAST_COLLECT_USER_INPUT);
+		String currentInput = resolveCurrentUserInput(state);
+		if (!StringUtils.hasText(lastCollectInput) || !StringUtils.hasText(currentInput)) {
+			return false;
+		}
+		return normalizeForComparison(lastCollectInput).equals(normalizeForComparison(currentInput));
+	}
+
+	private boolean isBlockingCollectingPhase(OverAllState state) {
+		String phase = readStateString(state, AssistantStateKeys.CONVERSATION_PHASE);
+		if (!StringUtils.hasText(phase)) {
+			return false;
+		}
+		String normalized = phase.trim().toUpperCase(Locale.ROOT);
+		return "COLLECTING".equals(normalized) || "BLOCKED".equals(normalized);
+	}
+
+	private boolean isBlockingConfirmingPhase(OverAllState state) {
+		String phase = readStateString(state, AssistantStateKeys.CONVERSATION_PHASE);
+		if (!StringUtils.hasText(phase)) {
+			return false;
+		}
+		String normalized = phase.trim().toUpperCase(Locale.ROOT);
+		return "CONFIRMING".equals(normalized);
+	}
+
+	private String resolveCurrentUserInput(OverAllState state) {
+		return firstNonBlank(
+				readStateString(state, "input"),
+				readStateString(state, "query"),
+				resolveLatestUserMessage(state));
+	}
+
+	@SuppressWarnings("unchecked")
+	private String resolveLatestUserMessage(OverAllState state) {
+		if (state == null) {
+			return null;
+		}
+		Object rawMessages = state.value("messages", Object.class).orElse(null);
+		if (!(rawMessages instanceof List<?> messages) || messages.isEmpty()) {
+			return null;
+		}
+		for (int i = messages.size() - 1; i >= 0; i--) {
+			Object item = messages.get(i);
+			if (item instanceof UserMessage userMessage && StringUtils.hasText(userMessage.getText())) {
+				return userMessage.getText();
+			}
+			if (item instanceof Message message
+					&& message instanceof UserMessage
+					&& StringUtils.hasText(message.getText())) {
+				return message.getText();
+			}
+			if (item instanceof Map<?, ?> rawMap) {
+				String role = asText(readMapValue(rawMap, "messageType", "type", "role", "messageRole", "message_role"));
+				String text = asText(readMapValue(rawMap, "text", "content"));
+				if (StringUtils.hasText(text) && isUserRole(role)) {
+					return text;
+				}
+			}
+		}
+		return null;
+	}
+
+	private Object readMapValue(Map<?, ?> map, String... keys) {
+		if (map == null || map.isEmpty() || keys == null || keys.length == 0) {
+			return null;
+		}
+		for (String key : keys) {
+			if (!StringUtils.hasText(key)) {
+				continue;
+			}
+			if (map.containsKey(key)) {
+				return map.get(key);
+			}
+			for (Map.Entry<?, ?> entry : map.entrySet()) {
+				if (entry.getKey() != null && key.equalsIgnoreCase(String.valueOf(entry.getKey()))) {
+					return entry.getValue();
+				}
+			}
+		}
+		return null;
+	}
+
+	private boolean isUserRole(String role) {
+		if (!StringUtils.hasText(role)) {
+			return false;
+		}
+		String normalized = role.trim().toUpperCase(Locale.ROOT);
+		return "USER".equals(normalized) || "HUMAN".equals(normalized);
+	}
+
+	private String firstNonBlank(String... values) {
+		if (values == null || values.length == 0) {
+			return null;
+		}
+		for (String value : values) {
+			if (StringUtils.hasText(value)) {
+				return value;
+			}
+		}
+		return null;
+	}
+
+	private String asText(Object value) {
+		if (value == null) {
+			return null;
+		}
+		String text = String.valueOf(value).trim();
+		return StringUtils.hasText(text) ? text : null;
+	}
+
+	private String normalizeForComparison(String text) {
+		if (!StringUtils.hasText(text)) {
+			return "";
+		}
+		return text.replaceAll("\\s+", "").trim().toLowerCase(Locale.ROOT);
+	}
+
+	private void clearStaleToolJump(OverAllState state) {
+		if (state == null || !hasToolJump(state)) {
+			return;
+		}
+		Map<String, Object> updates = new LinkedHashMap<>();
+		updates.put("jump_to", null);
+		state.updateState(updates);
+	}
+
+	private boolean hasToolJump(OverAllState state) {
+		if (state == null) {
+			return false;
+		}
+		Object jumpToRaw = state.value("jump_to", Object.class).orElse(null);
+		if (jumpToRaw == null) {
+			return false;
+		}
+		if (jumpToRaw instanceof Enum<?> enumValue) {
+			return "tool".equalsIgnoreCase(enumValue.name());
+		}
+		String text = asText(jumpToRaw);
+		return StringUtils.hasText(text) && "tool".equalsIgnoreCase(text);
+	}
+
 	private boolean isInConfirmingPhase(OverAllState state) {
 		String phase = readStateString(state, AssistantStateKeys.CONVERSATION_PHASE);
 		if (!StringUtils.hasText(phase)) {
@@ -478,6 +672,22 @@ public class PolicyCheckModelInterceptor extends ModelInterceptor {
 		UNRESTRICTED,
 		BLOCK_ALL_EXECUTE,
 		ONLY_GRANTED_EXECUTE
+	}
+
+	private enum StaleInputMode {
+		NONE(""),
+		COLLECTING_OR_BLOCKED(WAITING_FOR_USER_INPUT_MESSAGE),
+		CONFIRMING(WAITING_FOR_CONFIRM_INPUT_MESSAGE);
+
+		private final String defaultMessage;
+
+		StaleInputMode(String defaultMessage) {
+			this.defaultMessage = defaultMessage;
+		}
+
+		private String defaultMessage() {
+			return defaultMessage;
+		}
 	}
 
 }

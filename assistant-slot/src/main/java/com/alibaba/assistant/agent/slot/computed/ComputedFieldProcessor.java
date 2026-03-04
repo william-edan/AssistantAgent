@@ -24,7 +24,6 @@ import org.springframework.stereotype.Service;
 
 import java.util.*;
 import java.util.stream.Collectors;
-import java.util.stream.Collectors;
 
 /**
  * Service for processing computed fields in slot definitions.
@@ -172,20 +171,43 @@ public class ComputedFieldProcessor {
 			}
 
 			for (Object value : params.values()) {
-				if (value instanceof String) {
-					String fieldName = (String) value;
-					// Skip digits, known literals, and non-identifier strings
-					if (fieldName.matches("\\d+") || LITERAL_VALUES.contains(fieldName.toLowerCase())
-							|| !fieldName.matches("[a-zA-Z_][a-zA-Z0-9_]*")) {
-						continue;
-					}
-					if (!context.hasValue(fieldName)) {
-						return false;
-					}
+				if (!isParamDependenciesSatisfied(value, context)) {
+					return false;
 				}
 			}
 		}
 
+		return true;
+	}
+
+	private boolean isParamDependenciesSatisfied(Object value, ComputationContext context) {
+		if (value == null) {
+			return true;
+		}
+		if (value instanceof String) {
+			String fieldName = (String) value;
+			if (fieldName.matches("\\d+") || LITERAL_VALUES.contains(fieldName.toLowerCase())
+					|| !fieldName.matches("[a-zA-Z_][a-zA-Z0-9_]*")) {
+				return true;
+			}
+			return context.hasValue(fieldName);
+		}
+		if (value instanceof List<?>) {
+			for (Object item : (List<?>) value) {
+				if (!isParamDependenciesSatisfied(item, context)) {
+					return false;
+				}
+			}
+			return true;
+		}
+		if (value instanceof Map<?, ?>) {
+			for (Object nested : ((Map<?, ?>) value).values()) {
+				if (!isParamDependenciesSatisfied(nested, context)) {
+					return false;
+				}
+			}
+			return true;
+		}
 		return true;
 	}
 

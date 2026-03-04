@@ -82,7 +82,7 @@ assistant:
 spring.ai.dashscope:
   chat:
     options:
-      model: qwen-plus
+      model: deepseek-v3.2
 
 
 # ============================================================================

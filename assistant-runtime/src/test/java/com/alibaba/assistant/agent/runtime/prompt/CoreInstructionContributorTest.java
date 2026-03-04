@@ -64,6 +64,9 @@ class CoreInstructionContributorTest {
 		assertTrue(text.contains("CONFIRMING"));
 		assertTrue(text.contains("*_execute"));
 		assertTrue(text.contains("confirmed=true"));
+		assertTrue(text.contains("自由文本槽位"));
+		assertTrue(text.contains("严禁虚构"));
+		assertTrue(text.contains("本轮不得再次调用任何工具"));
 	}
 
 	private PromptContributorContext context() {

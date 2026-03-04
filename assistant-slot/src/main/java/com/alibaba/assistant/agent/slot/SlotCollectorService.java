@@ -259,45 +259,46 @@ public class SlotCollectorService {
 	private SlotValue convertToSlotValue(SlotDefinition slotDef, Object extractedValue) {
 		String slotName = slotDef.getName();
 		String slotType = slotDef.getType();
+		Object normalizedValue = normalizeExtractedValueByOptions(slotDef, extractedValue);
 
 		try {
 			if ("date".equalsIgnoreCase(slotType) || "datetime".equalsIgnoreCase(slotType)) {
-				String dateStr = extractedValue.toString();
+				String dateStr = normalizedValue.toString();
 				return SlotValue.resolved(slotName, dateStr, dateStr, dateStr);
 			}
 			else if ("integer".equalsIgnoreCase(slotType)) {
-				if (extractedValue instanceof Number) {
-					int value = ((Number) extractedValue).intValue();
+				if (normalizedValue instanceof Number) {
+					int value = ((Number) normalizedValue).intValue();
 					return SlotValue.resolved(slotName, String.valueOf(value), value, String.valueOf(value));
 				}
 				else {
-					int value = Integer.parseInt(extractedValue.toString());
-					return SlotValue.resolved(slotName, extractedValue.toString(), value, extractedValue.toString());
+					int value = Integer.parseInt(normalizedValue.toString());
+					return SlotValue.resolved(slotName, normalizedValue.toString(), value, normalizedValue.toString());
 				}
 			}
 			else if ("number".equalsIgnoreCase(slotType)) {
-				if (extractedValue instanceof Number) {
-					double value = ((Number) extractedValue).doubleValue();
+				if (normalizedValue instanceof Number) {
+					double value = ((Number) normalizedValue).doubleValue();
 					return SlotValue.resolved(slotName, String.valueOf(value), value, String.valueOf(value));
 				}
 				else {
-					double value = Double.parseDouble(extractedValue.toString());
-					return SlotValue.resolved(slotName, extractedValue.toString(), value, extractedValue.toString());
+					double value = Double.parseDouble(normalizedValue.toString());
+					return SlotValue.resolved(slotName, normalizedValue.toString(), value, normalizedValue.toString());
 				}
 			}
 			else if ("boolean".equalsIgnoreCase(slotType) || "bool".equalsIgnoreCase(slotType)) {
 				boolean value;
-				if (extractedValue instanceof Boolean) {
-					value = (Boolean) extractedValue;
+				if (normalizedValue instanceof Boolean) {
+					value = (Boolean) normalizedValue;
 				}
 				else {
-					value = Boolean.parseBoolean(extractedValue.toString());
+					value = Boolean.parseBoolean(normalizedValue.toString());
 				}
-				return SlotValue.resolved(slotName, extractedValue.toString(), value, extractedValue.toString());
+				return SlotValue.resolved(slotName, normalizedValue.toString(), value, normalizedValue.toString());
 			}
 			else {
-				return SlotValue.resolved(slotName, extractedValue.toString(), extractedValue,
-						extractedValue.toString());
+				return SlotValue.resolved(slotName, normalizedValue.toString(), normalizedValue,
+						normalizedValue.toString());
 			}
 		}
 		catch (Exception e) {
@@ -306,6 +307,33 @@ public class SlotCollectorService {
 					slotName, slotType, e.getMessage());
 			return null;
 		}
+	}
+
+	private Object normalizeExtractedValueByOptions(SlotDefinition slotDef, Object extractedValue) {
+		if (slotDef == null || extractedValue == null || slotDef.getOptions() == null) {
+			return extractedValue;
+		}
+		Map<String, Object> enumMapping = slotDef.getOptions().getEnumMapping();
+		if (enumMapping == null || enumMapping.isEmpty()) {
+			return extractedValue;
+		}
+		if (extractedValue instanceof Number) {
+			return extractedValue;
+		}
+		String rawText = String.valueOf(extractedValue).trim();
+		if (rawText.isEmpty()) {
+			return extractedValue;
+		}
+		if (enumMapping.containsKey(rawText)) {
+			return enumMapping.get(rawText);
+		}
+		for (Map.Entry<String, Object> entry : enumMapping.entrySet()) {
+			String label = entry.getKey();
+			if (label != null && label.trim().equalsIgnoreCase(rawText)) {
+				return entry.getValue();
+			}
+		}
+		return extractedValue;
 	}
 
 	private boolean isCollected(String slotName, Map<String, SlotValue> collectedSlots) {

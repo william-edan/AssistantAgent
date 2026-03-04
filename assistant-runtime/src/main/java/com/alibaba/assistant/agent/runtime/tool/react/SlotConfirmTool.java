@@ -28,6 +28,7 @@ import com.alibaba.assistant.agent.slot.model.SlotAutoSelect;
 import com.alibaba.assistant.agent.slot.model.SlotDefinition;
 import com.alibaba.assistant.agent.slot.model.SlotOption;
 import com.alibaba.assistant.agent.slot.model.SlotOptions;
+import com.alibaba.assistant.agent.slot.model.SlotPriority;
 import com.alibaba.assistant.agent.slot.model.SlotValue;
 import com.alibaba.assistant.agent.slot.model.ToolMetaSnapshot;
 import com.alibaba.cloud.ai.graph.OverAllState;
@@ -111,7 +112,8 @@ public class SlotConfirmTool implements BiFunction<SlotConfirmTool.Request, Tool
             }
 
             Map<String, SlotValue> collectedSlots = readCollectedSlots(state);
-            mergeRequestCollected(effectiveRequest.collectedSlots, collectedSlots);
+            boolean allowNewSlotsFromRequest = collectedSlots.isEmpty();
+            mergeRequestCollected(effectiveRequest.collectedSlots, collectedSlots, allowNewSlotsFromRequest);
 
             // Priority: state > snapshot > LLM args (LLM often hallucinates identity values)
             String systemCode = firstNonEmpty(
@@ -126,6 +128,14 @@ public class SlotConfirmTool implements BiFunction<SlotConfirmTool.Request, Tool
             applyAutoSelect(slotDefinitions, enrichedSlots, collectedSlots);
             computedFieldProcessor.processComputedFields(slotDefinitions, collectedSlots);
             applyDisplayValues(slotDefinitions, enrichedSlots, collectedSlots);
+
+            List<String> missingRequired = findMissingRequiredSlots(slotDefinitions, collectedSlots);
+            if (!missingRequired.isEmpty()) {
+                logger.info("SlotConfirmTool#apply - missing required slots, skip confirming, missing={}",
+                        missingRequired);
+                return Response.collecting(
+                        "Missing required slots before confirmation: " + String.join(", ", missingRequired));
+            }
 
             FormSummary summary = formDisplayConfigService.buildSummary(slotDefinitions, collectedSlots);
             ConfirmFormPayload payload = new ConfirmFormPayload();
@@ -252,7 +262,8 @@ public class SlotConfirmTool implements BiFunction<SlotConfirmTool.Request, Tool
         return result;
     }
 
-    private void mergeRequestCollected(Map<String, Object> requestedSlots, Map<String, SlotValue> collectedSlots) {
+    private void mergeRequestCollected(Map<String, Object> requestedSlots, Map<String, SlotValue> collectedSlots,
+                                       boolean allowNewSlots) {
         if (requestedSlots == null || requestedSlots.isEmpty()) {
             return;
         }
@@ -260,6 +271,10 @@ public class SlotConfirmTool implements BiFunction<SlotConfirmTool.Request, Tool
             String slotName = entry.getKey();
             Object value = entry.getValue();
             if (!StringUtils.hasText(slotName) || value == null) {
+                continue;
+            }
+            if (!allowNewSlots && !collectedSlots.containsKey(slotName)) {
+                logger.info("SlotConfirmTool#mergeRequestCollected - ignore new slot from request, slot={}", slotName);
                 continue;
             }
 
@@ -287,6 +302,41 @@ public class SlotConfirmTool implements BiFunction<SlotConfirmTool.Request, Tool
             slotValue.setDisplayValue(String.valueOf(value));
             collectedSlots.put(slotName, slotValue);
         }
+    }
+
+    private List<String> findMissingRequiredSlots(List<SlotDefinition> slotDefinitions,
+                                                  Map<String, SlotValue> collectedSlots) {
+        if (slotDefinitions == null || slotDefinitions.isEmpty()) {
+            return Collections.emptyList();
+        }
+
+        List<String> missing = new ArrayList<>();
+        for (SlotDefinition definition : slotDefinitions) {
+            if (definition == null || !StringUtils.hasText(definition.getName())) {
+                continue;
+            }
+            if (!isStrongRequired(definition)) {
+                continue;
+            }
+            if (definition.getAskMode() == SlotAskMode.FORM_ONLY) {
+                continue;
+            }
+            if (collectedSlots.containsKey(definition.getName())) {
+                continue;
+            }
+            if (definition.getDefaultValue() != null) {
+                continue;
+            }
+            missing.add(definition.getName());
+        }
+        return missing;
+    }
+
+    private boolean isStrongRequired(SlotDefinition definition) {
+        if (definition == null) {
+            return false;
+        }
+        return definition.isRequired() || definition.getPriority() == SlotPriority.CORE;
     }
 
     private List<EnrichedSlot> resolveEnrichedSlots(OverAllState state, List<SlotDefinition> slotDefinitions,
@@ -623,10 +673,18 @@ public class SlotConfirmTool implements BiFunction<SlotConfirmTool.Request, Tool
             return response;
         }
 
+        public static Response collecting(String message) {
+            Response response = new Response();
+            response.status = "COLLECTING";
+            response.phase = "COLLECTING";
+            response.message = message;
+            return response;
+        }
+
         public static Response error(String message) {
             Response response = new Response();
             response.status = "ERROR";
-            response.phase = "CONFIRMING";
+            response.phase = "COLLECTING";
             response.message = message;
             return response;
         }

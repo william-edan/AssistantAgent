@@ -33,12 +33,93 @@ import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
 
 class PolicyCheckModelInterceptorTest {
+
+	@Test
+	void shouldBlockToolCallsWhenCollectingWithoutNewUserInput() {
+		PolicyCheckModelInterceptor interceptor = new PolicyCheckModelInterceptor();
+		ModelCallHandler handler = mock(ModelCallHandler.class);
+		when(handler.call(any())).thenReturn(ModelResponse.of(assistantMessageWithToolCall("slot_collect")));
+
+		OverAllState state = new OverAllState();
+		state.updateState(Map.of(
+				AssistantStateKeys.CONVERSATION_PHASE, "COLLECTING",
+				AssistantStateKeys.LAST_COLLECT_USER_INPUT, "发起工作汇报",
+				"input", "发起工作汇报",
+				"jump_to", "tool",
+				CodeactStateKeys.AVAILABLE_TOOL_NAMES, List.of("slot_collect", "slot_confirm")));
+
+		ModelRequest request = buildRequest(state, Map.of("slot_collect", "slot collect"));
+		ModelResponse response = interceptor.interceptModel(request, handler);
+
+		ArgumentCaptor<ModelRequest> captor = ArgumentCaptor.forClass(ModelRequest.class);
+		verify(handler, times(1)).call(captor.capture());
+		assertTrue(captor.getValue().getToolDescriptions().isEmpty());
+		assertTrue(captor.getValue().getTools().isEmpty());
+
+		AssistantMessage message = (AssistantMessage) response.getMessage();
+		assertFalse(message.hasToolCalls());
+		assertTrue(message.getText().contains("请先补充缺失的必填内容"));
+		assertTrue(state.value("jump_to", Object.class).isEmpty());
+	}
+
+	@Test
+	void shouldKeepToolCallsWhenCollectingWithNewUserInput() {
+		PolicyCheckModelInterceptor interceptor = new PolicyCheckModelInterceptor();
+		ModelCallHandler handler = mock(ModelCallHandler.class);
+		when(handler.call(any())).thenReturn(ModelResponse.of(assistantMessageWithToolCall("slot_collect")));
+
+		OverAllState state = new OverAllState();
+		state.updateState(Map.of(
+				AssistantStateKeys.CONVERSATION_PHASE, "COLLECTING",
+				AssistantStateKeys.LAST_COLLECT_USER_INPUT, "发起工作汇报",
+				"input", "本周完成了项目A接口开发",
+				CodeactStateKeys.AVAILABLE_TOOL_NAMES, List.of("slot_collect", "slot_confirm")));
+
+		ModelRequest request = buildRequest(state, Map.of("slot_collect", "slot collect"));
+		ModelResponse response = interceptor.interceptModel(request, handler);
+
+		ArgumentCaptor<ModelRequest> captor = ArgumentCaptor.forClass(ModelRequest.class);
+		verify(handler, times(1)).call(captor.capture());
+		assertTrue(captor.getValue().getToolDescriptions().containsKey("slot_collect"));
+
+		AssistantMessage message = (AssistantMessage) response.getMessage();
+		assertTrue(message.hasToolCalls());
+	}
+
+	@Test
+	void shouldBlockToolCallsWhenConfirmingWithoutNewUserInput() {
+		PolicyCheckModelInterceptor interceptor = new PolicyCheckModelInterceptor();
+		ModelCallHandler handler = mock(ModelCallHandler.class);
+		when(handler.call(any())).thenReturn(ModelResponse.of(assistantMessageWithToolCall("slot_collect")));
+
+		OverAllState state = new OverAllState();
+		state.updateState(Map.of(
+				AssistantStateKeys.CONVERSATION_PHASE, "CONFIRMING",
+				AssistantStateKeys.LAST_COLLECT_USER_INPUT, "我需要发送日报 当天完成了动作的调试",
+				"input", "我需要发送日报 当天完成了动作的调试",
+				CodeactStateKeys.AVAILABLE_TOOL_NAMES, List.of("slot_collect", "slot_confirm")));
+
+		ModelRequest request = buildRequest(state, Map.of(
+				"slot_collect", "slot collect",
+				"slot_confirm", "slot confirm"));
+		ModelResponse response = interceptor.interceptModel(request, handler);
+
+		ArgumentCaptor<ModelRequest> captor = ArgumentCaptor.forClass(ModelRequest.class);
+		verify(handler, times(1)).call(captor.capture());
+		assertTrue(captor.getValue().getToolDescriptions().isEmpty());
+		assertTrue(captor.getValue().getTools().isEmpty());
+
+		AssistantMessage message = (AssistantMessage) response.getMessage();
+		assertFalse(message.hasToolCalls());
+		assertTrue(message.getText().contains("确认提交"));
+	}
 
 	@Test
 	void shouldBlockUnauthorizedToolCallsFromModelResponse() {

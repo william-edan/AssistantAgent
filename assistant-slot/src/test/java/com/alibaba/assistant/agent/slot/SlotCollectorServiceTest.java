@@ -86,6 +86,26 @@ class SlotCollectorServiceTest {
 	}
 
 	@Test
+	void shouldMapEnumLabelToIntegerValueWhenCollecting() {
+		SlotDefinition reportType = createSlot("types", "integer");
+		SlotOptions options = new SlotOptions();
+		options.setSource(SlotOptions.SourceType.ENUM);
+		Map<String, Object> enumMapping = new LinkedHashMap<>();
+		enumMapping.put("日报", 1);
+		enumMapping.put("周报", 2);
+		options.setEnumMapping(enumMapping);
+		reportType.setOptions(options);
+
+		Map<String, Object> extraction = new HashMap<>();
+		extraction.put("types", "日报");
+
+		Map<String, SlotValue> result = collectorService.collectFromAgent(extraction, List.of(reportType), null);
+
+		assertTrue(result.containsKey("types"));
+		assertEquals(1, ((Number) result.get("types").getResolvedValue()).intValue());
+	}
+
+	@Test
 	void shouldGetNextSlotsByPriority() {
 		SlotDefinition core1 = createSlot("leave_type", "enum");
 		core1.setPriority(SlotPriority.CORE);
