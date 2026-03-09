@@ -280,7 +280,7 @@ public class CodeactAgentConfig {
 
 		logger.info("CodeactAgentConfig#grayscaleCodeactAgent - reason=创建 CodeactAgent");
 		logger.info("CodeactAgentConfig#grayscaleCodeactAgent - reason=配置 MemorySaver 以支持多轮对话上下文保持");
-		logger.warn("CodeactAgentConfig#grayscaleCodeactAgent - reason=临时禁用 streaming 模式以排查循环问题");
+		logger.info("CodeactAgentConfig#grayscaleCodeactAgent - reason=保留 streaming 模式，必要时可通过 assistant.runtime.fast-intent.force-disable-streaming 回退");
 
 		/*-----------准备工具-----------*/
 		List<CodeactTool> allCodeactTools = new ArrayList<>();
@@ -447,4 +447,5 @@ public class CodeactAgentConfig {
 		return new ArrayList<>();
 	}
 }
+
 

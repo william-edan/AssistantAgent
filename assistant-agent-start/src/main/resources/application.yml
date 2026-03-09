@@ -45,6 +45,7 @@ spring.ai.dashscope:
   chat:
     options:
       model: deepseek-v3.2
+      incremental-output: true
 
 
 # ============================================================================
@@ -149,3 +150,4 @@ spring:
       on-profile: migration
   autoconfigure:
     exclude: []
+

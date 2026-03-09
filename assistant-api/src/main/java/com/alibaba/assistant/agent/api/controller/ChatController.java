@@ -15,12 +15,15 @@
  */
 package com.alibaba.assistant.agent.api.controller;
 
+import com.alibaba.assistant.agent.api.protocol.V3ProtocolAdapter.AssistantEvent;
 import com.alibaba.assistant.agent.api.security.AuthenticatedUserContext;
 import com.alibaba.assistant.agent.runtime.agent.AssistantStateKeys;
 import com.alibaba.cloud.ai.agent.studio.dto.AgentResumeRequest;
 import com.alibaba.cloud.ai.agent.studio.dto.AgentRunRequest;
 import com.alibaba.cloud.ai.agent.studio.dto.messages.AgentRunResponse;
 import com.alibaba.cloud.ai.agent.studio.dto.messages.MessageDTO;
+import com.alibaba.cloud.ai.agent.studio.dto.messages.ToolRequestMessageDTO;
+import com.alibaba.cloud.ai.agent.studio.dto.messages.ToolResponseMessageDTO;
 import com.alibaba.cloud.ai.agent.studio.dto.messages.ToolRequestConfirmMessageDTO;
 import com.alibaba.cloud.ai.agent.studio.dto.messages.UserMessageDTO;
 import com.alibaba.cloud.ai.agent.studio.loader.AgentLoader;
@@ -50,8 +53,10 @@ import org.springframework.web.bind.annotation.*;
 import org.springframework.web.server.ResponseStatusException;
 import reactor.core.publisher.Flux;
 
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -172,7 +177,7 @@ public class ChatController {
 			if (stateDelta != null && !stateDelta.isEmpty()) {
 				configBuilder.addStateUpdate(stateDelta);
 			}
-			return executeAgent(newMessage.toUserMessage(), agent, configBuilder.build());
+			return executeAgent(newMessage.toUserMessage(), agent, configBuilder.build(), "UNDERSTANDING");
 		}
 		catch (Exception e) {
 			logger.error("ChatController#doRunSse - reason=agent执行失败, threadId={}", threadId, e);
@@ -214,7 +219,7 @@ public class ChatController {
 			if (request.stateDelta != null && !request.stateDelta.isEmpty()) {
 				configBuilder.addStateUpdate(request.stateDelta);
 			}
-			return executeAgent(null, agent, configBuilder.build());
+			return executeAgent(null, agent, configBuilder.build(), "EXECUTING");
 		}
 		catch (Exception e) {
 			logger.error("ChatController#doResumeSse - reason=agent恢复失败, threadId={}", request.threadId, e);
@@ -230,61 +235,26 @@ public class ChatController {
 	 * causes the frontend to display the message twice.
 	 */
 	private Flux<ServerSentEvent<String>> executeAgent(
-			UserMessage userMessage, Agent agent, RunnableConfig runnableConfig)
+			UserMessage userMessage, Agent agent, RunnableConfig runnableConfig, String initialStage)
 			throws GraphRunnerException {
 		Flux<NodeOutput> agentStream = userMessage != null
 				? agent.stream(userMessage, runnableConfig)
 				: agent.stream("", runnableConfig);
 		ChunkDeduplicator deduplicator = new ChunkDeduplicator();
+		StageTracker stageTracker = new StageTracker();
+		AssistantEvent initialEvent = stageTracker.emitInitial(
+				initialStage,
+				userMessage != null ? "run_sse" : "resume_sse");
 
-		return agentStream.map(nodeOutput -> {
-					String node = nodeOutput.node();
-					String agentName = nodeOutput.agent();
-					Usage tokenUsage = nodeOutput.tokenUsage();
+		Flux<ServerSentEvent<String>> initialFlux = initialEvent != null
+				? Flux.just(toSse(initialEvent))
+				: Flux.empty();
 
-					AgentRunResponse agentResponse = null;
-					if (nodeOutput instanceof StreamingOutput<?> streamingOutput) {
-						Message message = streamingOutput.message();
-						if (message == null) {
-							return emptySse();
-						}
-						if (message instanceof AssistantMessage assistantMessage) {
-							if (assistantMessage.hasToolCalls()) {
-								agentResponse = new AgentRunResponse(
-										node, agentName, assistantMessage, tokenUsage, "");
-							}
-							else {
-								String chunk = deduplicator.nextChunk(
-										streamingOutput.getOutputType(), assistantMessage.getText());
-								agentResponse = new AgentRunResponse(
-										node, agentName, assistantMessage, tokenUsage, chunk);
-							}
-						}
-						else {
-							agentResponse = new AgentRunResponse(
-									node, agentName, message, tokenUsage, "");
-						}
-					}
-					else if (nodeOutput instanceof InterruptionMetadata interruptionMetadata) {
-						ToolRequestConfirmMessageDTO toolRequestMessage =
-								MessageDTO.MessageDTOFactory.fromInterruptionMetadata(interruptionMetadata);
-						agentResponse = new AgentRunResponse(
-								node, agentName, toolRequestMessage, tokenUsage, "");
-					}
+		Flux<ServerSentEvent<String>> streamFlux = agentStream.concatMap(nodeOutput ->
+				Flux.fromIterable(buildSsePayloads(nodeOutput, deduplicator, stageTracker))
+						.map(this::toSse));
 
-					if (agentResponse != null) {
-						try {
-							return ServerSentEvent.<String>builder()
-									.data(mapper.writeValueAsString(agentResponse))
-									.build();
-						}
-						catch (Exception e) {
-							logger.error("ChatController#executeAgent - reason=JSON序列化失败", e);
-							return errorSse("Failed to serialize response");
-						}
-					}
-					return emptySse();
-				})
+		return initialFlux.concatWith(streamFlux)
 				.onErrorResume(error -> {
 					logger.error("ChatController#executeAgent - reason=agent流执行出错", error);
 					String errorMessage = error.getMessage() != null
@@ -297,6 +267,167 @@ public class ChatController {
 					return Flux.just(ServerSentEvent.<String>builder()
 							.event("error").data(errorJson).build());
 				});
+	}
+
+	private List<Object> buildSsePayloads(
+			NodeOutput nodeOutput,
+			ChunkDeduplicator deduplicator,
+			StageTracker stageTracker) {
+		List<Object> payloads = new ArrayList<>();
+		String node = nodeOutput.node();
+		String agentName = nodeOutput.agent();
+		Usage tokenUsage = nodeOutput.tokenUsage();
+
+		AgentRunResponse agentResponse = null;
+		if (nodeOutput instanceof StreamingOutput<?> streamingOutput) {
+			Message message = streamingOutput.message();
+			if (message == null) {
+				return payloads;
+			}
+			if (message instanceof AssistantMessage assistantMessage) {
+				if (assistantMessage.hasToolCalls()) {
+					agentResponse = new AgentRunResponse(node, agentName, assistantMessage, tokenUsage, "");
+				}
+				else {
+					String chunk = deduplicator.nextChunk(
+							streamingOutput.getOutputType(), assistantMessage.getText());
+					agentResponse = new AgentRunResponse(node, agentName, assistantMessage, tokenUsage, chunk);
+				}
+			}
+			else {
+				agentResponse = new AgentRunResponse(node, agentName, message, tokenUsage, "");
+			}
+		}
+		else if (nodeOutput instanceof InterruptionMetadata interruptionMetadata) {
+			ToolRequestConfirmMessageDTO toolRequestMessage =
+					MessageDTO.MessageDTOFactory.fromInterruptionMetadata(interruptionMetadata);
+			agentResponse = new AgentRunResponse(node, agentName, toolRequestMessage, tokenUsage, "");
+		}
+
+		if (agentResponse != null && agentResponse.getMessage() != null) {
+			AssistantEvent stageEvent = stageTracker.emitForMessage(agentResponse.getMessage(), node);
+			if (stageEvent != null) {
+				payloads.add(stageEvent);
+			}
+			payloads.add(agentResponse);
+		}
+
+		return payloads;
+	}
+
+	private ServerSentEvent<String> toSse(Object payload) {
+		try {
+			return ServerSentEvent.<String>builder()
+					.data(mapper.writeValueAsString(payload))
+					.build();
+		}
+		catch (Exception e) {
+			logger.error("ChatController#toSse - reason=JSON序列化失败", e);
+			return errorSse("Failed to serialize response");
+		}
+	}
+
+	static final class StageTracker {
+
+		private final AtomicReference<String> lastStage = new AtomicReference<>("");
+
+		AssistantEvent emitInitial(String stage, String source) {
+			Map<String, Object> payload = new LinkedHashMap<>();
+			payload.put("source", source);
+			return emit(stage, payload);
+		}
+
+		AssistantEvent emitForMessage(MessageDTO message, String node) {
+			if (message == null) {
+				return null;
+			}
+			Map<String, Object> payload = new LinkedHashMap<>();
+			payload.put("node", node);
+			payload.put("messageType", message.getMessageType());
+			String toolName = resolveToolName(message);
+			if (StringUtils.hasText(toolName)) {
+				payload.put("toolName", toolName);
+			}
+			String stage = resolveStage(message);
+			if (StringUtils.hasText(stage)) {
+				return emit(stage, payload);
+			}
+			if (isTerminalAssistantReply(message)) {
+				return emit("DONE", payload);
+			}
+			return null;
+		}
+
+		private AssistantEvent emit(String stage, Map<String, Object> payload) {
+			if (!StringUtils.hasText(stage)) {
+				return null;
+			}
+			String previous = lastStage.get();
+			if (stage.equals(previous)) {
+				return null;
+			}
+			lastStage.set(stage);
+			return AssistantEvent.stage(stage, payload != null ? payload : Map.of());
+		}
+
+		private String resolveStage(MessageDTO message) {
+			if (message instanceof ToolRequestConfirmMessageDTO) {
+				return "CONFIRMING";
+			}
+			if (message instanceof ToolRequestMessageDTO toolRequestMessage) {
+				return resolveToolStage(firstToolCallName(toolRequestMessage));
+			}
+			if (message instanceof ToolResponseMessageDTO toolResponseMessage) {
+				return resolveToolStage(firstToolResponseName(toolResponseMessage));
+			}
+			return null;
+		}
+
+		private String resolveToolName(MessageDTO message) {
+			if (message instanceof ToolRequestConfirmMessageDTO) {
+				return "slot_confirm";
+			}
+			if (message instanceof ToolRequestMessageDTO toolRequestMessage) {
+				return firstToolCallName(toolRequestMessage);
+			}
+			if (message instanceof ToolResponseMessageDTO toolResponseMessage) {
+				return firstToolResponseName(toolResponseMessage);
+			}
+			return null;
+		}
+
+		private boolean isTerminalAssistantReply(MessageDTO message) {
+			if (!"assistant".equals(message.getMessageType()) || !StringUtils.hasText(message.getContent())) {
+				return false;
+			}
+			String previous = lastStage.get();
+			return "UNDERSTANDING".equals(previous) || "EXECUTING".equals(previous);
+		}
+
+		private String resolveToolStage(String toolName) {
+			if (!StringUtils.hasText(toolName)) {
+				return null;
+			}
+			return switch (toolName) {
+				case "slot_collect" -> "COLLECTING";
+				case "slot_confirm" -> "CONFIRMING";
+				default -> "EXECUTING";
+			};
+		}
+
+		private String firstToolCallName(ToolRequestMessageDTO message) {
+			if (message.getToolCalls() == null || message.getToolCalls().isEmpty()) {
+				return null;
+			}
+			return message.getToolCalls().get(0).getName();
+		}
+
+		private String firstToolResponseName(ToolResponseMessageDTO message) {
+			if (message.getResponses() == null || message.getResponses().isEmpty()) {
+				return null;
+			}
+			return message.getResponses().get(0).getName();
+		}
 	}
 
 	static class ChunkDeduplicator {

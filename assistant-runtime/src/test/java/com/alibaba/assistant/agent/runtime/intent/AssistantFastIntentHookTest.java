@@ -68,11 +68,26 @@ class AssistantFastIntentHookTest {
 	}
 
 	@Test
-	void shouldForceDisableStreamingInBeforeAgent() {
+	void shouldKeepStreamingEnabledInBeforeAgentByDefault() {
 		AssistantIntentRouter router = mock(AssistantIntentRouter.class);
 		when(router.route(any(), any(), any())).thenReturn(AssistantIntentRouter.IntentResult.mainFlow());
 
 		AssistantFastIntentHook hook = new AssistantFastIntentHook(router, new ObjectMapper());
+		RunnableConfig config = RunnableConfig.builder()
+				.addMetadata("_stream_", true)
+				.build();
+
+		hook.beforeAgent(new OverAllState(), config).join();
+
+		assertEquals(Boolean.TRUE, config.metadata("_stream_").orElse(null));
+	}
+
+	@Test
+	void shouldDisableStreamingWhenExplicitlyConfigured() {
+		AssistantIntentRouter router = mock(AssistantIntentRouter.class);
+		when(router.route(any(), any(), any())).thenReturn(AssistantIntentRouter.IntentResult.mainFlow());
+
+		AssistantFastIntentHook hook = new AssistantFastIntentHook(router, new ObjectMapper(), null, true);
 		RunnableConfig config = RunnableConfig.builder()
 				.addMetadata("_stream_", true)
 				.build();
@@ -345,3 +360,4 @@ class AssistantFastIntentHookTest {
 	}
 
 }
+

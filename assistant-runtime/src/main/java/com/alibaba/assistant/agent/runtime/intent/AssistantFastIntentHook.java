@@ -43,6 +43,7 @@ import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.messages.Message;
 import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Profile;
 import org.springframework.lang.Nullable;
 import org.springframework.stereotype.Component;
@@ -125,18 +126,30 @@ public class AssistantFastIntentHook extends AgentHook implements Prioritized {
 	@Nullable
 	private final ToolMetaService toolMetaService;
 
+	private final boolean forceDisableStreaming;
+
 	public AssistantFastIntentHook(AssistantIntentRouter intentRouter, ObjectMapper objectMapper) {
-		this(intentRouter, objectMapper, null);
+		this(intentRouter, objectMapper, null, false);
+	}
+
+	public AssistantFastIntentHook(
+			AssistantIntentRouter intentRouter,
+			ObjectMapper objectMapper,
+			@Nullable ToolMetaService toolMetaService) {
+		this(intentRouter, objectMapper, toolMetaService, false);
 	}
 
 	@Autowired
 	public AssistantFastIntentHook(
 			AssistantIntentRouter intentRouter,
 			ObjectMapper objectMapper,
-			@Nullable ToolMetaService toolMetaService) {
+			@Nullable ToolMetaService toolMetaService,
+			@Value("${assistant.runtime.fast-intent.force-disable-streaming:false}")
+			boolean forceDisableStreaming) {
 		this.intentRouter = intentRouter;
 		this.objectMapper = objectMapper;
 		this.toolMetaService = toolMetaService;
+		this.forceDisableStreaming = forceDisableStreaming;
 	}
 
 	@Override
@@ -162,7 +175,7 @@ public class AssistantFastIntentHook extends AgentHook implements Prioritized {
 
 	@Override
 	public CompletableFuture<Map<String, Object>> beforeAgent(OverAllState state, RunnableConfig config) {
-		forceDisableStreaming(config);
+		applyStreamingOverride(config);
 		try {
 			String input = state != null ? state.value("input", String.class).orElse(null) : null;
 			Map<String, Object> confirmationUpdates = tryBuildConfirmationExecutionUpdates(state, input);
@@ -244,8 +257,8 @@ public class AssistantFastIntentHook extends AgentHook implements Prioritized {
 		}
 	}
 
-	private void forceDisableStreaming(@Nullable RunnableConfig config) {
-		if (config == null) {
+	private void applyStreamingOverride(@Nullable RunnableConfig config) {
+		if (!forceDisableStreaming || config == null) {
 			return;
 		}
 		try {
@@ -258,7 +271,7 @@ public class AssistantFastIntentHook extends AgentHook implements Prioritized {
 			}
 		}
 		catch (Exception ex) {
-			logger.debug("AssistantFastIntentHook#forceDisableStreaming - skip due to error={}", ex.getMessage());
+			logger.debug("AssistantFastIntentHook#applyStreamingOverride - skip due to error={}", ex.getMessage());
 		}
 	}
 
@@ -1058,3 +1071,5 @@ public class AssistantFastIntentHook extends AgentHook implements Prioritized {
 	}
 
 }
+
+
