@@ -15,6 +15,7 @@
  */
 package com.alibaba.assistant.agent.api.controller;
 
+import com.alibaba.assistant.agent.api.security.AuthenticatedUserContext;
 import com.alibaba.assistant.agent.runtime.agent.AssistantStateKeys;
 import com.alibaba.cloud.ai.agent.studio.dto.AgentResumeRequest;
 import com.alibaba.cloud.ai.agent.studio.dto.AgentRunRequest;
@@ -42,6 +43,8 @@ import org.springframework.context.annotation.Profile;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.codec.ServerSentEvent;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.util.StringUtils;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.server.ResponseStatusException;
@@ -60,6 +63,10 @@ import java.util.concurrent.atomic.AtomicReference;
  * @since 1.0.0
  */
 @RestController
+@CrossOrigin(
+		origins = {"http://localhost:5173", "http://127.0.0.1:5173"},
+		allowedHeaders = "*",
+		methods = {RequestMethod.GET, RequestMethod.POST, RequestMethod.OPTIONS})
 @Profile("migration")
 @RequestMapping("/api/chat")
 public class ChatController {
@@ -72,26 +79,24 @@ public class ChatController {
 
 	private final String defaultAppName;
 
-	private final String defaultAssistantUid;
-
 	private final String defaultSystemCode;
 
 	public ChatController(AgentLoader agentLoader,
 			@Value("${assistant.chat.default-app-name:grayscale_agent}") String defaultAppName,
-			@Value("${assistant.chat.default-assistant-uid:}") String defaultAssistantUid,
 			@Value("${assistant.chat.default-system-code:}") String defaultSystemCode) {
 		this.agentLoader = agentLoader;
 		this.defaultAppName = defaultAppName;
-		this.defaultAssistantUid = defaultAssistantUid;
 		this.defaultSystemCode = defaultSystemCode;
 	}
 
 	@PostMapping(value = "/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
 	public Flux<ServerSentEvent<String>> stream(@RequestBody ChatRequest request) {
-		String effectiveSystemCode = StringUtils.hasText(request.getSystemCode())
-				? request.getSystemCode() : defaultSystemCode;
-		String effectiveAssistantUid = StringUtils.hasText(request.getAssistantUid())
-				? request.getAssistantUid() : defaultAssistantUid;
+		if (request == null) {
+			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "request body cannot be null");
+		}
+		AuthenticatedUserContext authenticatedUser = requireAuthenticatedUser();
+		String effectiveSystemCode = resolveSystemCode(authenticatedUser);
+		String effectiveAssistantUid = authenticatedUser.userId();
 
 		Map<String, Object> stateDelta = new HashMap<>();
 		if (StringUtils.hasText(effectiveSystemCode)) {
@@ -103,7 +108,7 @@ public class ChatController {
 
 		return doRunSse(
 				defaultAppName,
-				request.getUserId(),
+				authenticatedUser.userId(),
 				request.getThreadId(),
 				new UserMessageDTO(request.getMessage()),
 				stateDelta.isEmpty() ? null : stateDelta);
@@ -116,9 +121,10 @@ public class ChatController {
 	public Flux<ServerSentEvent<String>> runSse(
 			@RequestBody AgentRunRequest request,
 			@RequestParam(value = "appName", required = false) String appName,
-			@RequestParam(value = "assistantUid", required = true,defaultValue = "1") String assistantUid,
+			@RequestParam(value = "assistantUid", required = false) String assistantUid,
 			@RequestParam(value = "systemCode", required = false) String systemCode) {
-		normalizeRunRequest(request, appName, assistantUid, systemCode);
+		AuthenticatedUserContext authenticatedUser = requireAuthenticatedUser();
+		normalizeRunRequest(request, appName, authenticatedUser);
 		return doRunSse(
 				request.appName,
 				request.userId,
@@ -134,9 +140,10 @@ public class ChatController {
 	public Flux<ServerSentEvent<String>> resumeSse(
 			@RequestBody AgentResumeRequest request,
 			@RequestParam(value = "appName", required = false) String appName,
-			@RequestParam(value = "assistantUid", required = true,defaultValue = "1") String assistantUid,
+			@RequestParam(value = "assistantUid", required = false) String assistantUid,
 			@RequestParam(value = "systemCode", required = false) String systemCode) {
-		normalizeResumeRequest(request, appName, assistantUid, systemCode);
+		AuthenticatedUserContext authenticatedUser = requireAuthenticatedUser();
+		normalizeResumeRequest(request, appName, authenticatedUser);
 		return doResumeSse(request);
 	}
 
@@ -325,36 +332,41 @@ public class ChatController {
 	// ── Request normalisation helpers ───────────────────────────────────
 
 	private void normalizeRunRequest(
-			AgentRunRequest request, String appName, String assistantUid, String systemCode) {
+			AgentRunRequest request, String appName, AuthenticatedUserContext authenticatedUser) {
 		if (request == null) {
 			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "request body cannot be null");
 		}
-		request.appName = resolveAppName(request.appName, appName, assistantUid);
+		request.appName = resolveAppName(request.appName, appName);
 		if (!StringUtils.hasText(request.threadId)) {
 			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "threadId cannot be null or empty");
 		}
 		if (request.newMessage == null) {
 			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "newMessage cannot be null");
 		}
+		String userId = requireAuthenticatedUserId(authenticatedUser);
+		request.userId = userId;
 		request.streaming = true;
-		String effectiveAssistantUid = StringUtils.hasText(assistantUid) ? assistantUid : defaultAssistantUid;
-		String effectiveSystemCode = StringUtils.hasText(systemCode) ? systemCode : defaultSystemCode;
-		request.stateDelta = mergeStateDelta(request.stateDelta, effectiveAssistantUid, effectiveSystemCode);
+		request.stateDelta = mergeStateDelta(
+				request.stateDelta,
+				userId,
+				resolveSystemCode(authenticatedUser));
 	}
 
 	private void normalizeResumeRequest(
-			AgentResumeRequest request, String appName, String assistantUid, String systemCode) {
+			AgentResumeRequest request, String appName, AuthenticatedUserContext authenticatedUser) {
 		if (request == null) {
 			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "request body cannot be null");
 		}
-		request.appName = resolveAppName(request.appName, appName, assistantUid);
+		request.appName = resolveAppName(request.appName, appName);
 		if (!StringUtils.hasText(request.threadId)) {
 			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "threadId cannot be null or empty");
 		}
+		request.userId = requireAuthenticatedUserId(authenticatedUser);
 		request.streaming = true;
-		String effectiveAssistantUid = StringUtils.hasText(assistantUid) ? assistantUid : defaultAssistantUid;
-		String effectiveSystemCode = StringUtils.hasText(systemCode) ? systemCode : defaultSystemCode;
-		request.stateDelta = mergeStateDelta(request.stateDelta, effectiveAssistantUid, effectiveSystemCode);
+		request.stateDelta = mergeStateDelta(
+				request.stateDelta,
+				request.userId,
+				resolveSystemCode(authenticatedUser));
 	}
 
 	private String resolveAppName(String... candidates) {
@@ -376,12 +388,38 @@ public class ChatController {
 			merged.putAll(baseStateDelta);
 		}
 		if (StringUtils.hasText(assistantUid)) {
-			merged.putIfAbsent(AssistantStateKeys.ASSISTANT_UID, assistantUid);
+			merged.put(AssistantStateKeys.ASSISTANT_UID, assistantUid);
 		}
 		if (StringUtils.hasText(systemCode)) {
-			merged.putIfAbsent(AssistantStateKeys.SYSTEM_CODE, systemCode);
+			merged.put(AssistantStateKeys.SYSTEM_CODE, systemCode);
 		}
 		return merged.isEmpty() ? null : merged;
+	}
+
+	private AuthenticatedUserContext requireAuthenticatedUser() {
+		Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+		if (authentication == null || !authentication.isAuthenticated()) {
+			throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Unauthorized");
+		}
+		Object principal = authentication.getPrincipal();
+		if (!(principal instanceof AuthenticatedUserContext authenticatedUser)) {
+			throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Unauthorized");
+		}
+		return authenticatedUser;
+	}
+
+	private String requireAuthenticatedUserId(AuthenticatedUserContext authenticatedUser) {
+		if (authenticatedUser == null || !StringUtils.hasText(authenticatedUser.userId())) {
+			throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Unauthorized");
+		}
+		return authenticatedUser.userId();
+	}
+
+	private String resolveSystemCode(AuthenticatedUserContext authenticatedUser) {
+		if (authenticatedUser != null && StringUtils.hasText(authenticatedUser.systemCode())) {
+			return authenticatedUser.systemCode();
+		}
+		return defaultSystemCode;
 	}
 
 	// ── SSE helpers ─────────────────────────────────────────────────────

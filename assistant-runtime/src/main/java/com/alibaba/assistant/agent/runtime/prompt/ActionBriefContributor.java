@@ -276,7 +276,10 @@ public class ActionBriefContributor implements PromptContributor {
 			if (safeCollected.containsKey(definition.getName())) {
 				continue;
 			}
-			if (isNoFollowUpNeeded(definition, safeCollected)) {
+			if (shouldDeferInferredSlot(definition, slotDefinitions, safeCollected)) {
+				continue;
+			}
+			if (isNoFollowUpNeeded(definition)) {
 				continue;
 			}
 			missing.add(definition);
@@ -298,7 +301,11 @@ public class ActionBriefContributor implements PromptContributor {
 			if (safeCollected.containsKey(definition.getName())) {
 				continue;
 			}
-			if (isNoFollowUpNeeded(definition, safeCollected)) {
+			if (shouldDeferInferredSlot(definition, slotDefinitions, safeCollected)) {
+				autoFillable.add(definition);
+				continue;
+			}
+			if (isNoFollowUpNeeded(definition)) {
 				autoFillable.add(definition);
 			}
 		}
@@ -446,7 +453,7 @@ public class ActionBriefContributor implements PromptContributor {
 		return slot.isRequired() || slot.getPriority() == SlotPriority.CORE;
 	}
 
-	private boolean isNoFollowUpNeeded(SlotDefinition slot, Map<String, Object> collectedSlots) {
+	private boolean isNoFollowUpNeeded(SlotDefinition slot) {
 		if (slot == null) {
 			return false;
 		}
@@ -456,10 +463,32 @@ public class ActionBriefContributor implements PromptContributor {
 		if (slot.getDefaultValue() != null) {
 			return true;
 		}
-		if (slot.getAskMode() == SlotAskMode.AUTO) {
+		return slot.getAskMode() == SlotAskMode.AUTO;
+	}
+
+	private boolean shouldDeferInferredSlot(SlotDefinition slot,
+			List<SlotDefinition> slotDefinitions,
+			Map<String, Object> collectedSlots) {
+		if (!hasInferenceMetadata(slot)) {
+			return false;
+		}
+		if (collectedSlots != null && collectedSlots.containsKey(slot.getName())) {
+			return false;
+		}
+		for (String source : slot.getInferredFrom()) {
+			if (!StringUtils.hasText(source)) {
+				continue;
+			}
+			if (collectedSlots != null && collectedSlots.containsKey(source)) {
+				continue;
+			}
+			SlotDefinition sourceDefinition = findSlotDefinition(slotDefinitions, source);
+			if (sourceDefinition != null && isNoFollowUpNeeded(sourceDefinition)) {
+				continue;
+			}
 			return true;
 		}
-		return hasInferenceMetadata(slot) && areInferenceSourcesCollected(slot, collectedSlots);
+		return false;
 	}
 
 	private boolean hasInferenceMetadata(SlotDefinition slot) {
@@ -482,6 +511,18 @@ public class ActionBriefContributor implements PromptContributor {
 			}
 		}
 		return true;
+	}
+
+	private SlotDefinition findSlotDefinition(List<SlotDefinition> slotDefinitions, String slotName) {
+		if (slotDefinitions == null || slotDefinitions.isEmpty() || !StringUtils.hasText(slotName)) {
+			return null;
+		}
+		for (SlotDefinition definition : slotDefinitions) {
+			if (definition != null && slotName.equals(definition.getName())) {
+				return definition;
+			}
+		}
+		return null;
 	}
 
 	private int priorityOrder(SlotPriority priority) {

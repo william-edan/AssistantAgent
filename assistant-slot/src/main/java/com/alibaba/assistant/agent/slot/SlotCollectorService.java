@@ -64,6 +64,7 @@ public class SlotCollectorService {
 		List<SlotDefinition> pendingSlots = allSlots.stream()
 			.filter(slot -> !isCollected(slot.getName(), collectedSlots))
 			.filter(slot -> areDependenciesSatisfied(slot, collectedSlots))
+			.filter(slot -> areInferenceSourcesReady(slot, allSlots, collectedSlots))
 			.collect(Collectors.toList());
 
 		if (pendingSlots.isEmpty()) {
@@ -352,6 +353,40 @@ public class SlotCollectorService {
 		return dependsOn.stream().allMatch(dep -> isCollected(dep, collectedSlots));
 	}
 
+	private boolean areInferenceSourcesReady(SlotDefinition slot, List<SlotDefinition> allSlots,
+			Map<String, SlotValue> collectedSlots) {
+		List<String> inferredFrom = slot != null ? slot.getInferredFrom() : null;
+		if (inferredFrom == null || inferredFrom.isEmpty()) {
+			return true;
+		}
+		for (String source : inferredFrom) {
+			if (source == null || source.isBlank()) {
+				continue;
+			}
+			SlotDefinition sourceSlot = findSlotDefinition(allSlots, source);
+			if (sourceSlot == null) {
+				if (!isCollected(source, collectedSlots)) {
+					return false;
+				}
+				continue;
+			}
+			if (!isCollected(source, collectedSlots) && !hasDefaultValue(sourceSlot) && !sourceSlot.isComputed()) {
+				return false;
+			}
+		}
+		return true;
+	}
+
+	private SlotDefinition findSlotDefinition(List<SlotDefinition> allSlots, String slotName) {
+		if (allSlots == null || allSlots.isEmpty() || slotName == null || slotName.isBlank()) {
+			return null;
+		}
+		return allSlots.stream()
+				.filter(slot -> slot != null && slotName.equals(slot.getName()))
+				.findFirst()
+				.orElse(null);
+	}
+
 	private boolean hasCyclicDependency(SlotDefinition slot, List<SlotDefinition> allSlots) {
 		Set<String> visited = new HashSet<>();
 		return hasCycle(slot.getName(), allSlots, visited);
@@ -397,3 +432,4 @@ public class SlotCollectorService {
 	}
 
 }
+

@@ -735,20 +735,38 @@ public class SlotCollectTool implements BiFunction<SlotCollectTool.Request, Tool
         if (!StringUtils.hasText(input)) {
             return null;
         }
-        if (input.contains("病假")) {
+
+        String normalizedInput = input.replaceAll("\\s+", "").trim();
+        if (normalizedInput.isEmpty()) {
+            return null;
+        }
+
+        if (containsAny(normalizedInput, "陪产假", "陪产", "陪护生产", "陪老婆生产", "陪老婆生孩子", "陪媳妇生孩子", "陪爱人生孩子")) {
+            return "陪产假";
+        }
+        if (containsAny(normalizedInput, "产假", "待产", "分娩", "生产", "生孩子", "生宝宝", "产后", "保胎")) {
+            return "产假";
+        }
+        if (containsAny(normalizedInput, "婚假", "结婚", "领证", "办婚礼", "婚礼", "办喜酒", "婚宴")) {
+            return "婚假";
+        }
+        if (containsAny(normalizedInput, "丧假", "奔丧", "丧事", "白事", "吊唁", "亲人去世", "家人去世", "老人去世")) {
+            return "丧假";
+        }
+        if (containsAny(normalizedInput, "病假", "发烧", "感冒", "生病", "不舒服", "身体不适", "看病", "就医", "住院", "手术", "复查")) {
             return "病假";
         }
-        if (input.contains("年假")) {
+        if (containsAny(normalizedInput, "年假", "年休", "年休假")) {
             return "年假";
         }
-        if (input.contains("调休")) {
+        if (containsAny(normalizedInput, "调休假", "调休", "补休")) {
             return "调休假";
         }
-        if (input.contains("事假")) {
+        if (normalizedInput.contains("事假")) {
             return "事假";
         }
-        if (containsAny(input, "有事", "私事", "个人原因", "家中有事", "家里有事")
-                || GENERIC_PRIVATE_REASON_PATTERN.matcher(input).find()) {
+        if (containsAny(normalizedInput, "有事", "私事", "个人原因", "家中有事", "家里有事")
+                || GENERIC_PRIVATE_REASON_PATTERN.matcher(normalizedInput).find()) {
             return "事假";
         }
         return null;
@@ -1444,3 +1462,4 @@ public class SlotCollectTool implements BiFunction<SlotCollectTool.Request, Tool
         public String options;
     }
 }
+

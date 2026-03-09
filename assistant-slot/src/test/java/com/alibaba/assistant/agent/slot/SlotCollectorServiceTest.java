@@ -132,6 +132,37 @@ class SlotCollectorServiceTest {
 	}
 
 	@Test
+	void shouldDeferInferredSlotsUntilSourceSlotsAreCollected() {
+		SlotDefinition types = createSlot("types", "integer");
+		types.setPriority(SlotPriority.CORE);
+		types.setRequired(true);
+		types.setInferredFrom(List.of("reason"));
+
+		SlotDefinition start = createSlot("start_date", "date");
+		start.setPriority(SlotPriority.CORE);
+		start.setRequired(true);
+
+		SlotDefinition end = createSlot("end_date", "date");
+		end.setPriority(SlotPriority.CORE);
+		end.setRequired(true);
+
+		SlotDefinition reason = createSlot("reason", "string");
+		reason.setPriority(SlotPriority.CORE);
+		reason.setRequired(true);
+
+		CollectBehavior behavior = new CollectBehavior();
+		behavior.setBatchSize(4);
+
+		List<SlotDefinition> next = collectorService.getNextSlotsToCollect(
+				List.of(types, start, end, reason),
+				new HashMap<>(),
+				behavior,
+				1);
+
+		assertEquals(List.of("start_date", "end_date", "reason"),
+				next.stream().map(SlotDefinition::getName).toList());
+	}
+	@Test
 	void shouldCheckCollectionStatusComplete() {
 		SlotDefinition slot = createSlot("leave_type", "enum");
 		slot.setPriority(SlotPriority.CORE);
@@ -188,3 +219,4 @@ class SlotCollectorServiceTest {
 	}
 
 }
+

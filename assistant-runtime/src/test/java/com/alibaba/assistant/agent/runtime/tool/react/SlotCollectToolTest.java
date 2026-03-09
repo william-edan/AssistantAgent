@@ -216,6 +216,56 @@ class SlotCollectToolTest {
     }
 
     @Test
+    void shouldInferMarriageLeaveTypeForDynamicTypesSlotWithoutAskingAgain() {
+        SlotCollectorService collector = new SlotCollectorService();
+        SlotEnricherService enricher = mock(SlotEnricherService.class);
+        ComputedFieldProcessor computed = mock(ComputedFieldProcessor.class);
+        SlotSchemaParser parser = mock(SlotSchemaParser.class);
+
+        SlotDefinition types = slot("types", SlotPriority.CORE, SlotAskMode.BATCH, true);
+        types.setType("integer");
+        com.alibaba.assistant.agent.slot.model.SlotOptions options =
+                new com.alibaba.assistant.agent.slot.model.SlotOptions();
+        options.setEnumMapping(Map.of(
+                "事假", 1,
+                "年假", 2,
+                "调休", 3,
+                "调休假", 3,
+                "病假", 4,
+                "婚假", 5,
+                "丧假", 6,
+                "产假", 7,
+                "陪产假", 8,
+                "其他", 9));
+        types.setOptions(options);
+        List<SlotDefinition> definitions = List.of(types);
+
+        EnrichedSlot enrichedTypes = new EnrichedSlot(types);
+        enrichedTypes.setOptions(List.of(
+                new SlotOption("事假", 1),
+                new SlotOption("年假", 2),
+                new SlotOption("婚假", 5),
+                new SlotOption("陪产假", 8)));
+
+        when(parser.parse(any(ToolMetaSnapshot.class))).thenReturn(definitions);
+        when(enricher.enrichSlots(eq(definitions), eq("oa"), eq("u1")))
+                .thenReturn(List.of(enrichedTypes));
+
+        SlotCollectTool tool = new SlotCollectTool(collector, enricher, computed, parser, new ObjectMapper());
+        SlotCollectTool.Request request = new SlotCollectTool.Request();
+        request.slotSchema = "{\"slots\":[]}";
+        request.systemCode = "oa";
+        request.assistantUid = "u1";
+        request.extractedSlots = Collections.emptyMap();
+
+        ToolContext toolContext = toolContextWithInput("我下周结婚，想请三天假");
+        SlotCollectTool.Response response = tool.apply(request, toolContext);
+
+        assertEquals(SlotCollectStatus.COMPLETE.name(), response.status);
+        assertEquals(5, response.collected.get("types"));
+        assertTrue(response.missing == null || response.missing.isEmpty());
+    }
+    @Test
     void shouldInferTomorrowDateAndReasonFromUserInputWhenExtractionMissing() {
         SlotCollectorService collector = mock(SlotCollectorService.class);
         SlotEnricherService enricher = mock(SlotEnricherService.class);
@@ -618,3 +668,5 @@ class SlotCollectToolTest {
         return toolContext;
     }
 }
+
+

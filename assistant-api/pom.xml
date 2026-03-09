@@ -19,6 +19,14 @@
             <artifactId>assistant-runtime</artifactId>
         </dependency>
         <dependency>
+            <groupId>com.alibaba.agent.assistant</groupId>
+            <artifactId>assistant-controlplane</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-security</artifactId>
+        </dependency>
+        <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-web</artifactId>
         </dependency>

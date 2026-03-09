@@ -93,7 +93,43 @@ class ActionBriefContributorTest {
 	}
 
 	@Test
-	void shouldExcludeInferredSlotFromFollowUpWhenSourcesCollected() {
+	void shouldDeferInferredSlotUntilSourcesAreCollected() {
+		RuntimeConfigCompatibilityAdapter adapter = mock(RuntimeConfigCompatibilityAdapter.class);
+		SlotSchemaParser parser = mock(SlotSchemaParser.class);
+		when(adapter.promptDynamicEnabled()).thenReturn(true);
+
+		SlotDefinition reason = slot("reason", "请假原因", "请假事由", "如有事可填个人事务", SlotPriority.CORE, true);
+		SlotDefinition leaveType = slot("leave_type", "请假类型", "请假类型", "可根据原因推断", SlotPriority.CORE, true);
+		leaveType.setInferredFrom(List.of("reason"));
+		SlotDefinition startDate = slot("start_date", "开始日期", "请假开始日期", "YYYY-MM-DD", SlotPriority.CORE, true);
+		when(parser.parse(any(ToolMetaSnapshot.class))).thenReturn(List.of(reason, leaveType, startDate));
+
+		ToolMeta matchedToolMeta = new ToolMeta();
+		matchedToolMeta.setToolCode("leave_apply");
+		matchedToolMeta.setToolName("请假申请");
+		matchedToolMeta.setParameterSchema("{\"slots\":[]}");
+
+		ActionBriefContributor contributor = new ActionBriefContributor(adapter, parser, new ObjectMapper());
+		PromptContribution contribution = contributor.contribute(context(Map.of(
+				AssistantStateKeys.MATCHED_TOOL_META, matchedToolMeta,
+				AssistantStateKeys.CONVERSATION_PHASE, "COLLECTING")));
+
+		String text = contribution.messagesToAppend().get(0).getText();
+		assertTrue(text.contains("可自动填充/无需追问字段"));
+		assertTrue(text.contains("leave_type（请假类型） [由前序字段推断]"));
+
+		int missingStart = text.indexOf("仍需补充参数（优先这些）：");
+		int ruleStart = text.indexOf("追问规则：");
+		String missingSection = missingStart >= 0 && ruleStart > missingStart
+				? text.substring(missingStart, ruleStart)
+				: text;
+		assertTrue(missingSection.contains("reason"));
+		assertTrue(missingSection.contains("start_date"));
+		assertFalse(missingSection.contains("leave_type"));
+	}
+
+	@Test
+	void shouldIncludeInferredSlotInFollowUpAfterSourcesAreCollectedButStillMissing() {
 		RuntimeConfigCompatibilityAdapter adapter = mock(RuntimeConfigCompatibilityAdapter.class);
 		SlotSchemaParser parser = mock(SlotSchemaParser.class);
 		when(adapter.promptDynamicEnabled()).thenReturn(true);
@@ -116,17 +152,13 @@ class ActionBriefContributorTest {
 				AssistantStateKeys.CONVERSATION_PHASE, "COLLECTING")));
 
 		String text = contribution.messagesToAppend().get(0).getText();
-		assertTrue(text.contains("可自动填充/无需追问字段"));
-		assertTrue(text.contains("leave_type（请假类型） [可由前序字段推断]"));
-		assertTrue(text.contains("inferred_from 可推断字段"));
-
 		int missingStart = text.indexOf("仍需补充参数（优先这些）：");
 		int ruleStart = text.indexOf("追问规则：");
 		String missingSection = missingStart >= 0 && ruleStart > missingStart
 				? text.substring(missingStart, ruleStart)
 				: text;
 		assertTrue(missingSection.contains("start_date"));
-		assertFalse(missingSection.contains("leave_type"));
+		assertTrue(missingSection.contains("leave_type"));
 	}
 
 	private SlotDefinition slot(String name,

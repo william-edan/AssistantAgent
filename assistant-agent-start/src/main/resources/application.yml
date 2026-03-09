@@ -27,6 +27,9 @@ server:
 assistant:
   chat:
     default-app-name: grayscale_agent
+  auth:
+    current-system:
+      default-system-code: ${CURRENT_SYSTEM_DEFAULT_SYSTEM_CODE:gougu_oa}
   debug:
     http:
       enabled: true
