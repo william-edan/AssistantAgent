@@ -44,13 +44,23 @@ public class MigrationControlPlaneAuthorizationService {
     }
 
     /**
+     * Whether the authenticated user can read connector/action/workflow catalog views under a space.
+     */
+    public boolean canViewSpaceCatalog(
+            AuthenticatedUserContext authenticatedUser,
+            String spaceCode,
+            String environment) {
+        Long localUserId = parseLocalUserId(authenticatedUser == null ? null : authenticatedUser.userId());
+        String normalizedSpaceCode = normalizeRequired(spaceCode);
+        String normalizedEnvironment = normalizeRequired(environment);
+        if (localUserId == null || !StringUtils.hasText(normalizedSpaceCode) || !StringUtils.hasText(normalizedEnvironment)) {
+            return false;
+        }
+        return hasGlobalControlPlaneAdmin(localUserId) || hasSpaceAdmin(localUserId, normalizedSpaceCode);
+    }
+
+    /**
      * Whether the authenticated user can manage the target agent-app publication policy.
-     *
-     * @param authenticatedUser authenticated migration-mode user
-     * @param spaceCode target space code
-     * @param environment target environment
-     * @param agentAppCode target agent app code
-     * @return true when the user has a matching global, space, or app-scoped admin grant
      */
     public boolean canManageAgentAppPublicationPolicy(
             AuthenticatedUserContext authenticatedUser,
@@ -87,23 +97,12 @@ public class MigrationControlPlaneAuthorizationService {
 
     /**
      * Whether the authenticated user can manage local-user control-plane grants in the target space.
-     *
-     * @param authenticatedUser authenticated migration-mode user
-     * @param spaceCode target space code
-     * @param environment target environment
-     * @return true when the user is global admin or space admin for the target space
      */
     public boolean canManageLocalUserControlPlaneAccessPolicy(
             AuthenticatedUserContext authenticatedUser,
             String spaceCode,
             String environment) {
-        Long localUserId = parseLocalUserId(authenticatedUser == null ? null : authenticatedUser.userId());
-        String normalizedSpaceCode = normalizeRequired(spaceCode);
-        String normalizedEnvironment = normalizeRequired(environment);
-        if (localUserId == null || !StringUtils.hasText(normalizedSpaceCode) || !StringUtils.hasText(normalizedEnvironment)) {
-            return false;
-        }
-        return hasGlobalControlPlaneAdmin(localUserId) || hasSpaceAdmin(localUserId, normalizedSpaceCode);
+        return canViewSpaceCatalog(authenticatedUser, spaceCode, environment);
     }
 
     private boolean hasGlobalControlPlaneAdmin(Long localUserId) {
