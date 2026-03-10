@@ -22,6 +22,8 @@ import com.alibaba.assistant.agent.execution.flow.FlowDefinition;
 import com.alibaba.assistant.agent.execution.flow.FlowExecutionResult;
 import com.alibaba.assistant.agent.execution.model.StepResult;
 import com.alibaba.assistant.agent.execution.model.StepStatus;
+import com.alibaba.assistant.agent.execution.persistence.ApprovalRequest;
+import com.alibaba.assistant.agent.execution.persistence.ApprovalRequestService;
 import com.alibaba.assistant.agent.execution.persistence.ExecutionRun;
 import com.alibaba.assistant.agent.execution.persistence.ExecutionRunService;
 import com.alibaba.assistant.agent.execution.persistence.ExecutionStep;
@@ -39,6 +41,7 @@ import java.util.Map;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -52,10 +55,12 @@ class ExecutionRuntimePersistenceRecorderTest {
     void shouldPersistExecutionRunStepsAndAuditTrail() {
         ExecutionRunService executionRunService = mock(ExecutionRunService.class);
         ExecutionStepService executionStepService = mock(ExecutionStepService.class);
+        ApprovalRequestService approvalRequestService = mock(ApprovalRequestService.class);
         AuditEventService auditEventService = mock(AuditEventService.class);
         ExecutionRuntimePersistenceRecorder recorder = new ExecutionRuntimePersistenceRecorder(
                 executionRunService,
                 executionStepService,
+                approvalRequestService,
                 auditEventService,
                 new ObjectMapper());
         when(executionRunService.findLatestByRunId("RUN-1")).thenReturn(Optional.empty());
@@ -89,10 +94,12 @@ class ExecutionRuntimePersistenceRecorderTest {
     void shouldUpdateExistingExecutionRecordsOnFailure() {
         ExecutionRunService executionRunService = mock(ExecutionRunService.class);
         ExecutionStepService executionStepService = mock(ExecutionStepService.class);
+        ApprovalRequestService approvalRequestService = mock(ApprovalRequestService.class);
         AuditEventService auditEventService = mock(AuditEventService.class);
         ExecutionRuntimePersistenceRecorder recorder = new ExecutionRuntimePersistenceRecorder(
                 executionRunService,
                 executionStepService,
+                approvalRequestService,
                 auditEventService,
                 new ObjectMapper());
 
@@ -117,6 +124,38 @@ class ExecutionRuntimePersistenceRecorderTest {
         assertEquals("FAILED", stepCaptor.getValue().getStatus());
         assertEquals("submit failed", stepCaptor.getValue().getErrorMessage());
         verify(executionStepService, never()).save(any());
+    }
+
+    @Test
+    void shouldPersistApprovalRequestWhenExecutionWaitsForApproval() {
+        ExecutionRunService executionRunService = mock(ExecutionRunService.class);
+        ExecutionStepService executionStepService = mock(ExecutionStepService.class);
+        ApprovalRequestService approvalRequestService = mock(ApprovalRequestService.class);
+        AuditEventService auditEventService = mock(AuditEventService.class);
+        ExecutionRuntimePersistenceRecorder recorder = new ExecutionRuntimePersistenceRecorder(
+                executionRunService,
+                executionStepService,
+                approvalRequestService,
+                auditEventService,
+                new ObjectMapper());
+        when(executionRunService.findLatestByRunId("RUN-1")).thenReturn(Optional.empty());
+        when(executionStepService.findByRunIdAndStepId("RUN-1", "submit_approval")).thenReturn(Optional.empty());
+        when(approvalRequestService.findLatestPendingByRunAndStep("RUN-1", "submit_approval")).thenReturn(Optional.empty());
+
+        recorder.record(descriptor(), flowContext(), waitingResult(), waitingEvents());
+
+        ArgumentCaptor<ExecutionRun> runCaptor = ArgumentCaptor.forClass(ExecutionRun.class);
+        verify(executionRunService).save(runCaptor.capture());
+        assertEquals("WAITING_APPROVAL", runCaptor.getValue().getStatus());
+        assertEquals("submit_approval", runCaptor.getValue().getPausedStepId());
+        assertEquals("RUN-1:submit_approval", runCaptor.getValue().getApprovalRequestId());
+        assertTrue(runCaptor.getValue().getContextSnapshotJson().contains("create_leave"));
+
+        ArgumentCaptor<ApprovalRequest> approvalCaptor = ArgumentCaptor.forClass(ApprovalRequest.class);
+        verify(approvalRequestService).save(approvalCaptor.capture());
+        assertEquals("RUN-1:submit_approval", approvalCaptor.getValue().getRequestId());
+        assertEquals("WAITING_APPROVAL", approvalCaptor.getValue().getStatus());
+        assertEquals("submit_approval", approvalCaptor.getValue().getStepId());
     }
 
     private PublishedToolDescriptor descriptor() {
@@ -171,7 +210,7 @@ class ExecutionRuntimePersistenceRecorderTest {
                 null,
                 null,
                 null,
-                null,
+                "{\"enabled\":true,\"channel\":\"controlplane\"}",
                 null,
                 null,
                 2,
@@ -211,12 +250,14 @@ class ExecutionRuntimePersistenceRecorderTest {
         context.setAssistantUid("u1");
         context.setThreadId("T-1");
         context.setSystemCode("gougu_oa");
+        context.restoreStepOutput("create_leave", Map.of("leave_id", "L-1"));
         return context;
     }
 
     private FlowExecutionResult successfulResult() {
         FlowExecutionResult result = new FlowExecutionResult();
         result.setSuccess(true);
+        result.setLifecycleStatus("COMPLETED");
         LinkedHashMap<String, StepStatus> stepStatuses = new LinkedHashMap<>();
         stepStatuses.put("create_leave", StepStatus.COMPLETED);
         stepStatuses.put("submit_approval", StepStatus.COMPLETED);
@@ -232,6 +273,7 @@ class ExecutionRuntimePersistenceRecorderTest {
     private FlowExecutionResult failedResult() {
         FlowExecutionResult result = new FlowExecutionResult();
         result.setSuccess(false);
+        result.setLifecycleStatus("FAILED");
         LinkedHashMap<String, StepStatus> stepStatuses = new LinkedHashMap<>();
         stepStatuses.put("submit_approval", StepStatus.FAILED);
         result.setStepStatuses(stepStatuses);
@@ -240,6 +282,40 @@ class ExecutionRuntimePersistenceRecorderTest {
         result.setStepResults(stepResults);
         result.setErrorMessage("submit failed");
         return result;
+    }
+
+    private FlowExecutionResult waitingResult() {
+        FlowExecutionResult result = new FlowExecutionResult();
+        result.setSuccess(false);
+        result.setLifecycleStatus("WAITING_APPROVAL");
+        result.setPausedStepId("submit_approval");
+        result.setApprovalRequestId("RUN-1:submit_approval");
+        LinkedHashMap<String, StepStatus> stepStatuses = new LinkedHashMap<>();
+        stepStatuses.put("create_leave", StepStatus.COMPLETED);
+        stepStatuses.put("submit_approval", StepStatus.WAITING_APPROVAL);
+        result.setStepStatuses(stepStatuses);
+        LinkedHashMap<String, StepResult> stepResults = new LinkedHashMap<>();
+        stepResults.put("create_leave", StepResult.success(Map.of("leave_id", "L-1")));
+        StepResult waiting = new StepResult();
+        waiting.setSuccess(false);
+        waiting.setOutputs(Map.of("waitingApproval", true));
+        stepResults.put("submit_approval", waiting);
+        result.setStepResults(stepResults);
+        result.setFinalOutputs(Map.of("create_leave.leave_id", "L-1"));
+        return result;
+    }
+
+    private List<ExecutionEvent> waitingEvents() {
+        Instant base = Instant.parse("2026-03-10T10:00:00Z");
+        return List.of(
+                new ExecutionEvent("RUN-1", "oa.leave.apply", "WORKFLOW", null, 1L,
+                        ExecutionEventType.RUN_STARTED, ExecutionLifecycleStatus.RUNNING, base, Map.of("source", "artifact-runtime")),
+                new ExecutionEvent("RUN-1", "oa.leave.apply", "WORKFLOW", "create_leave", 2L,
+                        ExecutionEventType.STEP_STARTED, ExecutionLifecycleStatus.RUNNING, base.plusSeconds(1), Map.of("stepName", "创建请假记录")),
+                new ExecutionEvent("RUN-1", "oa.leave.apply", "WORKFLOW", "create_leave", 3L,
+                        ExecutionEventType.STEP_COMPLETED, ExecutionLifecycleStatus.COMPLETED, base.plusSeconds(2), Map.of("stepName", "创建请假记录")),
+                new ExecutionEvent("RUN-1", "oa.leave.apply", "WORKFLOW", "submit_approval", 4L,
+                        ExecutionEventType.STEP_WAITING_APPROVAL, ExecutionLifecycleStatus.WAITING_APPROVAL, base.plusSeconds(3), Map.of("stepName", "提交审批", "approvalRequestId", "RUN-1:submit_approval")));
     }
 
     private List<ExecutionEvent> successfulEvents() {
@@ -272,4 +348,3 @@ class ExecutionRuntimePersistenceRecorderTest {
                         ExecutionEventType.RUN_FAILED, ExecutionLifecycleStatus.FAILED, base.plusSeconds(3), Map.of("error", "submit failed")));
     }
 }
-

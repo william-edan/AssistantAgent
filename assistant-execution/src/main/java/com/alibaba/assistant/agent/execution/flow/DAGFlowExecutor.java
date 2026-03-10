@@ -32,7 +32,6 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
-import java.util.Objects;
 import java.util.Set;
 
 /**
@@ -65,12 +64,19 @@ public class DAGFlowExecutor {
 	 */
 	public FlowExecutionResult execute(FlowDefinition flow, FlowContext context) {
 		long startTime = System.currentTimeMillis();
-		Map<String, StepStatus> stepStatuses = new LinkedHashMap<>();
-		Map<String, StepResult> stepResults = new LinkedHashMap<>();
+		Map<String, StepStatus> stepStatuses = new LinkedHashMap<>(context.getRestoredStepStatuses());
+		Map<String, StepResult> stepResults = buildRestoredStepResults(context, stepStatuses);
 
 		try {
 			List<String> candidates = orderedCandidates(flow);
-			Set<String> remaining = new LinkedHashSet<>(candidates);
+			Set<String> remaining = new LinkedHashSet<>();
+			for (String candidate : candidates) {
+				StepStatus restored = stepStatuses.get(candidate);
+				if (restored == StepStatus.COMPLETED || restored == StepStatus.SKIPPED || restored == StepStatus.CANCELLED) {
+					continue;
+				}
+				remaining.add(candidate);
+			}
 			while (!remaining.isEmpty()) {
 				boolean progressed = false;
 				for (String stepId : candidates) {
@@ -157,6 +163,18 @@ public class DAGFlowExecutor {
 			logger.error("DAGFlowExecutor#execute - flow execution error", e);
 			return failedResult(stepStatuses, stepResults, context, "Flow execution error: " + e.getMessage(), startTime);
 		}
+	}
+
+	private Map<String, StepResult> buildRestoredStepResults(FlowContext context, Map<String, StepStatus> stepStatuses) {
+		Map<String, StepResult> restored = new LinkedHashMap<>();
+		Map<String, Map<String, Object>> stepOutputs = context.getStepOutputsSnapshot();
+		for (Map.Entry<String, StepStatus> entry : stepStatuses.entrySet()) {
+			StepStatus status = entry.getValue();
+			if (status == StepStatus.COMPLETED || status == StepStatus.SKIPPED) {
+				restored.put(entry.getKey(), StepResult.success(stepOutputs.getOrDefault(entry.getKey(), Map.of())));
+			}
+		}
+		return restored;
 	}
 
 	private List<String> orderedCandidates(FlowDefinition flow) {

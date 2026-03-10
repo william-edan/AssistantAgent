@@ -304,6 +304,10 @@ public class RuntimeArtifactCompiler {
 			if (conditions != null) {
 				config.setConditions(conditions);
 			}
+			Object approvalGate = readJsonObject(step.getApprovalGateJson());
+			if (approvalGate != null) {
+				config.setApprovalGate(approvalGate);
+			}
 		}
 		else {
 			config.setInputMapping(parseStringMap(readString(binding, "inputMapping")));
@@ -455,6 +459,7 @@ public class RuntimeArtifactCompiler {
 	}
 
 }
+
 
 
 

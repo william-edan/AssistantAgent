@@ -103,22 +103,52 @@ public class ArtifactRuntimeExecutor {
         if (descriptor == null || descriptor.artifact() == null) {
             return Map.of("success", false, "error", "Published artifact descriptor is missing");
         }
-
         String runId = UUID.randomUUID().toString();
         FlowContext flowContext = buildFlowContext(descriptor, arguments, toolContext, runId);
+        return executeInternal(descriptor, flowContext, false);
+    }
+
+    /**
+     * Resume a paused published artifact with a pre-hydrated runtime context.
+     */
+    public Map<String, Object> resume(PublishedToolDescriptor descriptor, FlowContext flowContext) {
+        if (descriptor == null || descriptor.artifact() == null || flowContext == null) {
+            return Map.of("success", false, "error", "Published artifact descriptor is missing");
+        }
+        if (!StringUtils.hasText(flowContext.getRunId())) {
+            flowContext.setRunId(UUID.randomUUID().toString());
+        }
+        return executeInternal(descriptor, flowContext, true);
+    }
+
+    private Map<String, Object> executeInternal(
+            PublishedToolDescriptor descriptor,
+            FlowContext flowContext,
+            boolean resumed) {
+        String runId = flowContext.getRunId();
         RuntimeExecutionEventCollector executionEventCollector = new RuntimeExecutionEventCollector(
                 runId,
                 descriptor,
                 flowContext.getThreadId(),
                 executionEventStreamRegistry);
-        executionEventCollector.recordRunStarted();
+        if (resumed) {
+            executionEventCollector.recordRunResumed();
+        }
+        else {
+            executionEventCollector.recordRunStarted();
+        }
         flowContext.addExecutionListener(executionEventCollector);
         resolveStepCredentials(descriptor, flowContext);
         FlowExecutionResult flowResult = dagFlowExecutor.execute(descriptor.artifact().getFlowDefinition(), flowContext);
+        if ("WAITING_APPROVAL".equalsIgnoreCase(flowResult.getLifecycleStatus())
+                && !StringUtils.hasText(flowResult.getApprovalRequestId())
+                && StringUtils.hasText(flowResult.getPausedStepId())) {
+            flowResult.setApprovalRequestId(runId + ":" + flowResult.getPausedStepId());
+        }
         executionEventCollector.recordRunTerminal(flowResult);
         List<ExecutionEvent> executionEvents = executionEventCollector.hasStepEvents()
                 ? executionEventCollector.events()
-                : buildExecutionEvents(runId, descriptor, flowResult);
+                : buildExecutionEvents(runId, descriptor, flowResult, resumed);
         if (persistenceRecorder != null) {
             persistenceRecorder.record(descriptor, flowContext, flowResult, executionEvents);
         }
@@ -128,6 +158,9 @@ public class ArtifactRuntimeExecutor {
         payload.put("runId", runId);
         payload.put("artifactCode", descriptor.artifact().getArtifactCode());
         payload.put("artifactType", descriptor.artifact().getArtifactType().name());
+        payload.put("lifecycleStatus", flowResult.getLifecycleStatus());
+        payload.put("pausedStepId", flowResult.getPausedStepId());
+        payload.put("approvalRequestId", flowResult.getApprovalRequestId());
         payload.put("finalOutputs", flowResult.getFinalOutputs());
         payload.put("stepStatuses", flowResult.getStepStatuses());
         payload.put("stepResults", flowResult.getStepResults());
@@ -240,7 +273,8 @@ public class ArtifactRuntimeExecutor {
     private List<ExecutionEvent> buildExecutionEvents(
             String runId,
             PublishedToolDescriptor descriptor,
-            FlowExecutionResult flowResult) {
+            FlowExecutionResult flowResult,
+            boolean resumed) {
         if (descriptor == null || descriptor.artifact() == null || flowResult == null) {
             return List.of();
         }
@@ -252,7 +286,7 @@ public class ArtifactRuntimeExecutor {
                 descriptor.artifact().getArtifactType().name(),
                 null,
                 sequence++,
-                ExecutionEventType.RUN_STARTED,
+                resumed ? ExecutionEventType.RUN_RESUMED : ExecutionEventType.RUN_STARTED,
                 ExecutionLifecycleStatus.RUNNING,
                 Instant.now(),
                 Map.of("source", "artifact-runtime")));
@@ -267,6 +301,31 @@ public class ArtifactRuntimeExecutor {
             String stepId = entry.getKey();
             StepResult stepResult = entry.getValue();
             String stepName = resolveStepName(descriptor, stepId);
+            StepStatus stepStatus = stepStatuses.get(stepId);
+            if (stepStatus == null) {
+                continue;
+            }
+            if (stepStatus == StepStatus.WAITING_APPROVAL) {
+                Map<String, Object> waitingPayload = new LinkedHashMap<>();
+                if (StringUtils.hasText(stepName)) {
+                    waitingPayload.put("stepName", stepName);
+                }
+                if (StringUtils.hasText(flowResult.getApprovalRequestId())) {
+                    waitingPayload.put("approvalRequestId", flowResult.getApprovalRequestId());
+                }
+                events.add(new ExecutionEvent(
+                        runId,
+                        descriptor.artifact().getArtifactCode(),
+                        descriptor.artifact().getArtifactType().name(),
+                        stepId,
+                        sequence++,
+                        ExecutionEventType.STEP_WAITING_APPROVAL,
+                        ExecutionLifecycleStatus.WAITING_APPROVAL,
+                        Instant.now(),
+                        waitingPayload));
+                continue;
+            }
+
             Map<String, Object> startedPayload = new LinkedHashMap<>();
             if (StringUtils.hasText(stepName)) {
                 startedPayload.put("stepName", stepName);
@@ -282,13 +341,12 @@ public class ArtifactRuntimeExecutor {
                     Instant.now(),
                     startedPayload));
 
-            StepStatus stepStatus = stepStatuses.get(stepId);
-            if (stepStatus == StepStatus.COMPLETED && stepResult != null && stepResult.isSuccess()) {
+            if (stepStatus == StepStatus.COMPLETED || stepStatus == StepStatus.SKIPPED) {
                 Map<String, Object> completedPayload = new LinkedHashMap<>();
                 if (StringUtils.hasText(stepName)) {
                     completedPayload.put("stepName", stepName);
                 }
-                if (stepResult.getOutputs() != null && !stepResult.getOutputs().isEmpty()) {
+                if (stepResult != null && stepResult.getOutputs() != null && !stepResult.getOutputs().isEmpty()) {
                     completedPayload.put("outputs", stepResult.getOutputs());
                 }
                 events.add(new ExecutionEvent(
@@ -298,7 +356,7 @@ public class ArtifactRuntimeExecutor {
                         stepId,
                         sequence++,
                         ExecutionEventType.STEP_COMPLETED,
-                        ExecutionLifecycleStatus.COMPLETED,
+                        stepStatus == StepStatus.SKIPPED ? ExecutionLifecycleStatus.SKIPPED : ExecutionLifecycleStatus.COMPLETED,
                         Instant.now(),
                         completedPayload));
             }
@@ -323,23 +381,25 @@ public class ArtifactRuntimeExecutor {
             }
         }
 
-        Map<String, Object> terminalPayload = new LinkedHashMap<>();
-        if (flowResult.getFinalOutputs() != null && !flowResult.getFinalOutputs().isEmpty()) {
-            terminalPayload.put("finalOutputs", flowResult.getFinalOutputs());
+        if (!"WAITING_APPROVAL".equalsIgnoreCase(flowResult.getLifecycleStatus())) {
+            Map<String, Object> terminalPayload = new LinkedHashMap<>();
+            if (flowResult.getFinalOutputs() != null && !flowResult.getFinalOutputs().isEmpty()) {
+                terminalPayload.put("finalOutputs", flowResult.getFinalOutputs());
+            }
+            if (StringUtils.hasText(flowResult.getErrorMessage())) {
+                terminalPayload.put("error", flowResult.getErrorMessage());
+            }
+            events.add(new ExecutionEvent(
+                    runId,
+                    descriptor.artifact().getArtifactCode(),
+                    descriptor.artifact().getArtifactType().name(),
+                    null,
+                    sequence,
+                    flowResult.isSuccess() ? ExecutionEventType.RUN_COMPLETED : ExecutionEventType.RUN_FAILED,
+                    flowResult.isSuccess() ? ExecutionLifecycleStatus.COMPLETED : ExecutionLifecycleStatus.FAILED,
+                    Instant.now(),
+                    terminalPayload));
         }
-        if (StringUtils.hasText(flowResult.getErrorMessage())) {
-            terminalPayload.put("error", flowResult.getErrorMessage());
-        }
-        events.add(new ExecutionEvent(
-                runId,
-                descriptor.artifact().getArtifactCode(),
-                descriptor.artifact().getArtifactType().name(),
-                null,
-                sequence,
-                flowResult.isSuccess() ? ExecutionEventType.RUN_COMPLETED : ExecutionEventType.RUN_FAILED,
-                flowResult.isSuccess() ? ExecutionLifecycleStatus.COMPLETED : ExecutionLifecycleStatus.FAILED,
-                Instant.now(),
-                terminalPayload));
         return List.copyOf(events);
     }
 
@@ -434,7 +494,23 @@ public class ArtifactRuntimeExecutor {
                     Map.of("source", "artifact-runtime")));
         }
 
+        void recordRunResumed() {
+            record(new ExecutionEvent(
+                    runId,
+                    descriptor.artifact().getArtifactCode(),
+                    descriptor.artifact().getArtifactType().name(),
+                    null,
+                    sequence++,
+                    ExecutionEventType.RUN_RESUMED,
+                    ExecutionLifecycleStatus.RUNNING,
+                    Instant.now(),
+                    Map.of("source", "artifact-runtime")));
+        }
+
         void recordRunTerminal(FlowExecutionResult flowResult) {
+            if ("WAITING_APPROVAL".equalsIgnoreCase(flowResult.getLifecycleStatus())) {
+                return;
+            }
             Map<String, Object> terminalPayload = new LinkedHashMap<>();
             if (flowResult.getFinalOutputs() != null && !flowResult.getFinalOutputs().isEmpty()) {
                 terminalPayload.put("finalOutputs", flowResult.getFinalOutputs());
@@ -455,7 +531,7 @@ public class ArtifactRuntimeExecutor {
         }
 
         boolean hasStepEvents() {
-            return events.size() > 2;
+            return events.size() > 1;
         }
 
         List<ExecutionEvent> events() {
@@ -518,6 +594,46 @@ public class ArtifactRuntimeExecutor {
                     sequence++,
                     ExecutionEventType.STEP_FAILED,
                     ExecutionLifecycleStatus.FAILED,
+                    Instant.now(),
+                    payload));
+        }
+
+        @Override
+        public void onStepSkipped(StepDefinition step, StepResult result, FlowContext context) {
+            Map<String, Object> payload = new LinkedHashMap<>();
+            if (StringUtils.hasText(step.getName())) {
+                payload.put("stepName", step.getName());
+            }
+            if (result.getOutputs() != null && !result.getOutputs().isEmpty()) {
+                payload.put("outputs", result.getOutputs());
+            }
+            record(new ExecutionEvent(
+                    runId,
+                    descriptor.artifact().getArtifactCode(),
+                    descriptor.artifact().getArtifactType().name(),
+                    step.getStepId(),
+                    sequence++,
+                    ExecutionEventType.STEP_COMPLETED,
+                    ExecutionLifecycleStatus.SKIPPED,
+                    Instant.now(),
+                    payload));
+        }
+
+        @Override
+        public void onStepWaitingApproval(StepDefinition step, FlowContext context) {
+            Map<String, Object> payload = new LinkedHashMap<>();
+            if (StringUtils.hasText(step.getName())) {
+                payload.put("stepName", step.getName());
+            }
+            payload.put("approvalRequestId", runId + ":" + step.getStepId());
+            record(new ExecutionEvent(
+                    runId,
+                    descriptor.artifact().getArtifactCode(),
+                    descriptor.artifact().getArtifactType().name(),
+                    step.getStepId(),
+                    sequence++,
+                    ExecutionEventType.STEP_WAITING_APPROVAL,
+                    ExecutionLifecycleStatus.WAITING_APPROVAL,
                     Instant.now(),
                     payload));
         }

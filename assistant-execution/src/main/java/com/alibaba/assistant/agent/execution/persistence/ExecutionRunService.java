@@ -38,4 +38,14 @@ public class ExecutionRunService extends ServiceImpl<ExecutionRunMapper, Executi
         query.orderByDesc(ExecutionRun::getId);
         return Optional.ofNullable(getOne(query, false));
     }
+
+    public Optional<ExecutionRun> findLatestByApprovalRequestId(String approvalRequestId) {
+        if (!StringUtils.hasText(approvalRequestId)) {
+            return Optional.empty();
+        }
+        LambdaQueryWrapper<ExecutionRun> query = new LambdaQueryWrapper<>();
+        query.eq(ExecutionRun::getApprovalRequestId, approvalRequestId.trim());
+        query.orderByDesc(ExecutionRun::getId);
+        return Optional.ofNullable(getOne(query, false));
+    }
 }

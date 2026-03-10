@@ -42,4 +42,14 @@ public class ApprovalRequestService extends ServiceImpl<ApprovalRequestMapper, A
         query.orderByDesc(ApprovalRequest::getId);
         return Optional.ofNullable(getOne(query, false));
     }
+
+    public Optional<ApprovalRequest> findLatestByRequestId(String requestId) {
+        if (!StringUtils.hasText(requestId)) {
+            return Optional.empty();
+        }
+        LambdaQueryWrapper<ApprovalRequest> query = new LambdaQueryWrapper<>();
+        query.eq(ApprovalRequest::getRequestId, requestId.trim());
+        query.orderByDesc(ApprovalRequest::getId);
+        return Optional.ofNullable(getOne(query, false));
+    }
 }

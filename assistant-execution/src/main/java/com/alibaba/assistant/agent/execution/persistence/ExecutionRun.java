@@ -42,7 +42,13 @@ public class ExecutionRun {
 
     private String threadId;
 
+    private String contextSnapshotJson;
+
     private String status;
+
+    private String pausedStepId;
+
+    private String approvalRequestId;
 
     private LocalDateTime startedAt;
 
@@ -66,8 +72,14 @@ public class ExecutionRun {
     public void setPlatformPrincipalId(String platformPrincipalId) { this.platformPrincipalId = platformPrincipalId; }
     public String getThreadId() { return threadId; }
     public void setThreadId(String threadId) { this.threadId = threadId; }
+    public String getContextSnapshotJson() { return contextSnapshotJson; }
+    public void setContextSnapshotJson(String contextSnapshotJson) { this.contextSnapshotJson = contextSnapshotJson; }
     public String getStatus() { return status; }
     public void setStatus(String status) { this.status = status; }
+    public String getPausedStepId() { return pausedStepId; }
+    public void setPausedStepId(String pausedStepId) { this.pausedStepId = pausedStepId; }
+    public String getApprovalRequestId() { return approvalRequestId; }
+    public void setApprovalRequestId(String approvalRequestId) { this.approvalRequestId = approvalRequestId; }
     public LocalDateTime getStartedAt() { return startedAt; }
     public void setStartedAt(LocalDateTime startedAt) { this.startedAt = startedAt; }
     public LocalDateTime getCompletedAt() { return completedAt; }

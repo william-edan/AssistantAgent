@@ -15,6 +15,7 @@
  */
 package com.alibaba.assistant.agent.execution.flow;
 
+import com.alibaba.assistant.agent.execution.model.StepStatus;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -48,6 +49,8 @@ public class FlowContext {
 	private final List<FlowExecutionListener> executionListeners = new CopyOnWriteArrayList<>();
 
 	private final Set<String> approvedSteps = ConcurrentHashMap.newKeySet();
+
+	private final Map<String, StepStatus> restoredStepStatuses = new ConcurrentHashMap<>();
 
 	private String systemCode;
 
@@ -101,6 +104,33 @@ public class FlowContext {
 
 	public void setCurrentStepId(String currentStepId) {
 		this.currentStepId = currentStepId;
+	}
+
+	public Map<String, Object> getInitialInputs() {
+		return Map.copyOf(initialInputs);
+	}
+
+	public Map<String, Map<String, Object>> getStepOutputsSnapshot() {
+		Map<String, Map<String, Object>> snapshot = new LinkedHashMap<>();
+		for (Map.Entry<String, Map<String, Object>> entry : stepOutputs.entrySet()) {
+			snapshot.put(entry.getKey(), entry.getValue() != null ? Map.copyOf(entry.getValue()) : Map.of());
+		}
+		return Map.copyOf(snapshot);
+	}
+
+	public Map<String, StepStatus> getRestoredStepStatuses() {
+		return Map.copyOf(restoredStepStatuses);
+	}
+
+	public void restoreStepOutput(String stepId, Map<String, Object> outputs) {
+		putStepOutput(stepId, outputs);
+	}
+
+	public void restoreStepStatus(String stepId, StepStatus status) {
+		if (stepId == null || status == null) {
+			return;
+		}
+		restoredStepStatuses.put(stepId, status);
 	}
 
 	public void putStepOutput(String stepId, Map<String, Object> outputs) {

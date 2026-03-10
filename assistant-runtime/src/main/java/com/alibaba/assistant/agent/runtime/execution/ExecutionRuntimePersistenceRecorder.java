@@ -19,6 +19,9 @@ import com.alibaba.assistant.agent.controlplane.audit.AuditEvent;
 import com.alibaba.assistant.agent.controlplane.audit.AuditEventService;
 import com.alibaba.assistant.agent.execution.flow.FlowContext;
 import com.alibaba.assistant.agent.execution.flow.FlowExecutionResult;
+import com.alibaba.assistant.agent.execution.model.StepStatus;
+import com.alibaba.assistant.agent.execution.persistence.ApprovalRequest;
+import com.alibaba.assistant.agent.execution.persistence.ApprovalRequestService;
 import com.alibaba.assistant.agent.execution.persistence.ExecutionRun;
 import com.alibaba.assistant.agent.execution.persistence.ExecutionRunService;
 import com.alibaba.assistant.agent.execution.persistence.ExecutionStep;
@@ -39,13 +42,14 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Persists artifact execution results into execution run/step and audit records.
+ * Persists artifact execution results into execution run/step, approval, and audit records.
  */
 @Service
 public class ExecutionRuntimePersistenceRecorder {
 
     private final ExecutionRunService executionRunService;
     private final ExecutionStepService executionStepService;
+    private final ApprovalRequestService approvalRequestService;
     private final AuditEventService auditEventService;
     private final ObjectMapper objectMapper;
 
@@ -53,10 +57,12 @@ public class ExecutionRuntimePersistenceRecorder {
     public ExecutionRuntimePersistenceRecorder(
             ExecutionRunService executionRunService,
             ExecutionStepService executionStepService,
+            ApprovalRequestService approvalRequestService,
             AuditEventService auditEventService,
             ObjectMapper objectMapper) {
         this.executionRunService = executionRunService;
         this.executionStepService = executionStepService;
+        this.approvalRequestService = approvalRequestService;
         this.auditEventService = auditEventService;
         this.objectMapper = objectMapper;
     }
@@ -73,9 +79,15 @@ public class ExecutionRuntimePersistenceRecorder {
         if (!StringUtils.hasText(runId)) {
             return;
         }
+        if ("WAITING_APPROVAL".equalsIgnoreCase(flowResult.getLifecycleStatus())
+                && !StringUtils.hasText(flowResult.getApprovalRequestId())
+                && StringUtils.hasText(flowResult.getPausedStepId())) {
+            flowResult.setApprovalRequestId(runId + ":" + flowResult.getPausedStepId());
+        }
         List<ExecutionEvent> safeEvents = executionEvents != null ? executionEvents : List.of();
         upsertRun(descriptor, flowContext, safeEvents, flowResult);
         upsertSteps(descriptor, runId, safeEvents);
+        upsertApprovalRequest(descriptor, flowResult, safeEvents);
         persistAuditEvents(descriptor, flowContext, runId, safeEvents);
     }
 
@@ -92,8 +104,11 @@ public class ExecutionRuntimePersistenceRecorder {
         run.setPlatformPrincipalId(normalize(flowContext.getAssistantUid()));
         run.setThreadId(normalize(flowContext.getThreadId()));
         run.setStatus(resolveRunStatus(executionEvents, flowResult));
-        run.setStartedAt(resolveRunTimestamp(executionEvents, ExecutionEventType.RUN_STARTED));
-        run.setCompletedAt(resolveRunCompletedAt(executionEvents));
+        run.setPausedStepId(normalize(flowResult.getPausedStepId()));
+        run.setApprovalRequestId(normalize(flowResult.getApprovalRequestId()));
+        run.setContextSnapshotJson(serializeSnapshot(flowContext, flowResult));
+        run.setStartedAt(resolveRunTimestamp(executionEvents, ExecutionEventType.RUN_STARTED, ExecutionEventType.RUN_RESUMED));
+        run.setCompletedAt(resolveRunCompletedAt(executionEvents, flowResult));
         saveOrUpdateRun(run);
     }
 
@@ -128,6 +143,27 @@ public class ExecutionRuntimePersistenceRecorder {
             step.setErrorMessage(aggregate.errorMessage);
             saveOrUpdateStep(step);
         }
+    }
+
+    private void upsertApprovalRequest(
+            PublishedToolDescriptor descriptor,
+            FlowExecutionResult flowResult,
+            List<ExecutionEvent> executionEvents) {
+        if (!"WAITING_APPROVAL".equalsIgnoreCase(flowResult.getLifecycleStatus())
+                || !StringUtils.hasText(flowResult.getPausedStepId())
+                || !StringUtils.hasText(flowResult.getApprovalRequestId())) {
+            return;
+        }
+        ApprovalRequest approvalRequest = approvalRequestService
+                .findLatestPendingByRunAndStep(extractRunId(flowResult.getApprovalRequestId()), flowResult.getPausedStepId())
+                .orElseGet(ApprovalRequest::new);
+        approvalRequest.setRequestId(flowResult.getApprovalRequestId());
+        approvalRequest.setRunId(extractRunId(flowResult.getApprovalRequestId()));
+        approvalRequest.setStepId(flowResult.getPausedStepId());
+        approvalRequest.setApprovalChannel(resolveApprovalChannel(descriptor, flowResult.getPausedStepId()));
+        approvalRequest.setStatus("WAITING_APPROVAL");
+        approvalRequest.setRequestedAt(resolveStepWaitingApprovalAt(executionEvents, flowResult.getPausedStepId()));
+        saveOrUpdateApprovalRequest(approvalRequest);
     }
 
     private void persistAuditEvents(
@@ -174,7 +210,19 @@ public class ExecutionRuntimePersistenceRecorder {
         }
     }
 
+    private void saveOrUpdateApprovalRequest(ApprovalRequest approvalRequest) {
+        if (approvalRequest.getId() == null) {
+            approvalRequestService.save(approvalRequest);
+        }
+        else {
+            approvalRequestService.updateById(approvalRequest);
+        }
+    }
+
     private String resolveRunStatus(List<ExecutionEvent> executionEvents, FlowExecutionResult flowResult) {
+        if (StringUtils.hasText(flowResult.getLifecycleStatus())) {
+            return flowResult.getLifecycleStatus().trim();
+        }
         for (int i = executionEvents.size() - 1; i >= 0; i--) {
             ExecutionEvent event = executionEvents.get(i);
             if (event.eventType() == ExecutionEventType.RUN_COMPLETED
@@ -187,16 +235,21 @@ public class ExecutionRuntimePersistenceRecorder {
                 : ExecutionLifecycleStatus.FAILED.name();
     }
 
-    private LocalDateTime resolveRunTimestamp(List<ExecutionEvent> executionEvents, ExecutionEventType type) {
+    private LocalDateTime resolveRunTimestamp(List<ExecutionEvent> executionEvents, ExecutionEventType... types) {
         for (ExecutionEvent event : executionEvents) {
-            if (event.eventType() == type) {
-                return asLocalDateTime(event.occurredAt());
+            for (ExecutionEventType type : types) {
+                if (event.eventType() == type) {
+                    return asLocalDateTime(event.occurredAt());
+                }
             }
         }
         return null;
     }
 
-    private LocalDateTime resolveRunCompletedAt(List<ExecutionEvent> executionEvents) {
+    private LocalDateTime resolveRunCompletedAt(List<ExecutionEvent> executionEvents, FlowExecutionResult flowResult) {
+        if ("WAITING_APPROVAL".equalsIgnoreCase(flowResult.getLifecycleStatus())) {
+            return null;
+        }
         for (int i = executionEvents.size() - 1; i >= 0; i--) {
             ExecutionEvent event = executionEvents.get(i);
             if (event.eventType() == ExecutionEventType.RUN_COMPLETED
@@ -206,6 +259,35 @@ public class ExecutionRuntimePersistenceRecorder {
         }
         return null;
     }
+
+    private LocalDateTime resolveStepWaitingApprovalAt(List<ExecutionEvent> executionEvents, String stepId) {
+        for (ExecutionEvent event : executionEvents) {
+            if (event.eventType() == ExecutionEventType.STEP_WAITING_APPROVAL
+                    && stepId.equals(event.stepId())) {
+                return asLocalDateTime(event.occurredAt());
+            }
+        }
+        return LocalDateTime.now();
+    }
+
+    private String resolveApprovalChannel(PublishedToolDescriptor descriptor, String stepId) {
+        if (descriptor == null || descriptor.artifact() == null || !StringUtils.hasText(stepId)) {
+            return null;
+        }
+        RuntimeArtifact.StepBinding stepBinding = descriptor.artifact().getSteps().get(stepId);
+        if (stepBinding == null || !StringUtils.hasText(stepBinding.approvalGateJson())) {
+            return null;
+        }
+        try {
+            Map<String, Object> json = objectMapper.readValue(stepBinding.approvalGateJson(), Map.class);
+            Object channel = json.get("channel");
+            return channel != null ? normalize(String.valueOf(channel)) : null;
+        }
+        catch (Exception ignored) {
+            return null;
+        }
+    }
+
     private String resolveAuthProfileCode(RuntimeArtifact.StepBinding stepBinding) {
         if (stepBinding == null) {
             return null;
@@ -214,6 +296,33 @@ public class ExecutionRuntimePersistenceRecorder {
             return stepBinding.action().defaultAuthProfileCode().trim();
         }
         return null;
+    }
+
+    private String serializeSnapshot(FlowContext flowContext, FlowExecutionResult flowResult) {
+        if (flowContext == null || flowResult == null) {
+            return null;
+        }
+        if (!"WAITING_APPROVAL".equalsIgnoreCase(flowResult.getLifecycleStatus())) {
+            return null;
+        }
+        Map<String, String> stepStatuses = new LinkedHashMap<>();
+        if (flowResult.getStepStatuses() != null) {
+            for (Map.Entry<String, StepStatus> entry : flowResult.getStepStatuses().entrySet()) {
+                if (entry.getValue() != null) {
+                    stepStatuses.put(entry.getKey(), entry.getValue().name());
+                }
+            }
+        }
+        ExecutionContextSnapshot snapshot = new ExecutionContextSnapshot(
+                flowContext.getInitialInputs(),
+                flowContext.getStepOutputsSnapshot(),
+                stepStatuses);
+        try {
+            return objectMapper.writeValueAsString(snapshot);
+        }
+        catch (JsonProcessingException ignored) {
+            return null;
+        }
     }
 
     private String extractError(Map<String, Object> payload) {
@@ -241,6 +350,13 @@ public class ExecutionRuntimePersistenceRecorder {
             return null;
         }
         return LocalDateTime.ofInstant(instant, ZoneId.systemDefault());
+    }
+
+    private String extractRunId(String requestId) {
+        if (!StringUtils.hasText(requestId) || !requestId.contains(":")) {
+            return normalize(requestId);
+        }
+        return normalize(requestId.substring(0, requestId.indexOf(':')));
     }
 
     private String normalize(String value) {
