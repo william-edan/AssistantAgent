@@ -18,6 +18,8 @@ package com.alibaba.assistant.agent.api.controller;
 import com.alibaba.assistant.agent.api.protocol.V3ProtocolAdapter.AssistantEvent;
 import com.alibaba.assistant.agent.api.security.AuthenticatedUserContext;
 import com.alibaba.assistant.agent.runtime.agent.AssistantStateKeys;
+import com.alibaba.assistant.agent.runtime.execution.ExecutionEvent;
+import com.alibaba.assistant.agent.runtime.execution.ExecutionEventStreamRegistry;
 import com.alibaba.cloud.ai.agent.studio.dto.AgentResumeRequest;
 import com.alibaba.cloud.ai.agent.studio.dto.AgentRunRequest;
 import com.alibaba.cloud.ai.agent.studio.dto.messages.AgentRunResponse;
@@ -42,6 +44,7 @@ import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.messages.Message;
 import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.ai.chat.metadata.Usage;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Profile;
 import org.springframework.http.HttpStatus;
@@ -50,6 +53,7 @@ import org.springframework.http.codec.ServerSentEvent;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.util.StringUtils;
+import org.springframework.lang.Nullable;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.server.ResponseStatusException;
 import reactor.core.publisher.Flux;
@@ -59,6 +63,8 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
@@ -87,14 +93,24 @@ public class ChatController {
 
 	private final String defaultSystemCode;
 
+	private final ExecutionEventStreamRegistry executionEventStreamRegistry;
+
 	public ChatController(AgentLoader agentLoader,
 			@Value("${assistant.chat.default-app-name:grayscale_agent}") String defaultAppName,
 			@Value("${assistant.chat.default-system-code:}") String defaultSystemCode) {
+		this(agentLoader, defaultAppName, defaultSystemCode, null);
+	}
+
+	@Autowired
+	public ChatController(AgentLoader agentLoader,
+			@Value("${assistant.chat.default-app-name:grayscale_agent}") String defaultAppName,
+			@Value("${assistant.chat.default-system-code:}") String defaultSystemCode,
+			@Nullable ExecutionEventStreamRegistry executionEventStreamRegistry) {
 		this.agentLoader = agentLoader;
 		this.defaultAppName = defaultAppName;
 		this.defaultSystemCode = defaultSystemCode;
+		this.executionEventStreamRegistry = executionEventStreamRegistry;
 	}
-
 	@PostMapping(value = "/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
 	public Flux<ServerSentEvent<String>> stream(@RequestBody ChatRequest request) {
 		if (request == null) {
@@ -181,7 +197,7 @@ public class ChatController {
 			if (stateDelta != null && !stateDelta.isEmpty()) {
 				configBuilder.addStateUpdate(stateDelta);
 			}
-			return executeAgent(newMessage.toUserMessage(), agent, configBuilder.build(), "UNDERSTANDING");
+			return executeAgent(newMessage.toUserMessage(), agent, configBuilder.build(), threadId, "UNDERSTANDING");
 		}
 		catch (Exception e) {
 			logger.error("ChatController#doRunSse - reason=agent执行失败, threadId={}", threadId, e);
@@ -223,7 +239,7 @@ public class ChatController {
 			if (request.stateDelta != null && !request.stateDelta.isEmpty()) {
 				configBuilder.addStateUpdate(request.stateDelta);
 			}
-			return executeAgent(null, agent, configBuilder.build(), "EXECUTING");
+			return executeAgent(null, agent, configBuilder.build(), request.threadId, "EXECUTING");
 		}
 		catch (Exception e) {
 			logger.error("ChatController#doResumeSse - reason=agent恢复失败, threadId={}", request.threadId, e);
@@ -239,13 +255,18 @@ public class ChatController {
 	 * causes the frontend to display the message twice.
 	 */
 	private Flux<ServerSentEvent<String>> executeAgent(
-			UserMessage userMessage, Agent agent, RunnableConfig runnableConfig, String initialStage)
+			UserMessage userMessage,
+			Agent agent,
+			RunnableConfig runnableConfig,
+			String threadId,
+			String initialStage)
 			throws GraphRunnerException {
 		Flux<NodeOutput> agentStream = userMessage != null
 				? agent.stream(userMessage, runnableConfig)
 				: agent.stream("", runnableConfig);
 		ChunkDeduplicator deduplicator = new ChunkDeduplicator();
 		StageTracker stageTracker = new StageTracker();
+		ExecutionEventDeduplicator executionEventDeduplicator = new ExecutionEventDeduplicator();
 		AssistantEvent initialEvent = stageTracker.emitInitial(
 				initialStage,
 				userMessage != null ? "run_sse" : "resume_sse");
@@ -254,11 +275,14 @@ public class ChatController {
 				? Flux.just(toSse(initialEvent))
 				: Flux.empty();
 
+		Flux<ServerSentEvent<String>> liveExecutionFlux = liveExecutionProgressFlux(threadId, executionEventDeduplicator)
+				.map(this::toSse);
+
 		Flux<ServerSentEvent<String>> streamFlux = agentStream.concatMap(nodeOutput ->
-				Flux.fromIterable(buildSsePayloads(nodeOutput, deduplicator, stageTracker))
+				Flux.fromIterable(buildSsePayloads(nodeOutput, deduplicator, stageTracker, executionEventDeduplicator))
 						.map(this::toSse));
 
-		return initialFlux.concatWith(streamFlux)
+		return initialFlux.concatWith(Flux.merge(liveExecutionFlux, streamFlux))
 				.onErrorResume(error -> {
 					logger.error("ChatController#executeAgent - reason=agent流执行出错", error);
 					String errorMessage = error.getMessage() != null
@@ -276,7 +300,8 @@ public class ChatController {
 	private List<Object> buildSsePayloads(
 			NodeOutput nodeOutput,
 			ChunkDeduplicator deduplicator,
-			StageTracker stageTracker) {
+			StageTracker stageTracker,
+			ExecutionEventDeduplicator executionEventDeduplicator) {
 		List<Object> payloads = new ArrayList<>();
 		String node = nodeOutput.node();
 		String agentName = nodeOutput.agent();
@@ -313,13 +338,21 @@ public class ChatController {
 			if (stageEvent != null) {
 				payloads.add(stageEvent);
 			}
+			if (agentResponse.getMessage() instanceof ToolResponseMessageDTO toolResponseMessage) {
+				payloads.addAll(extractArtifactExecutionEvents(toolResponseMessage, executionEventDeduplicator));
+			}
 			payloads.add(agentResponse);
 		}
 
 		return payloads;
 	}
-
 	List<AssistantEvent> extractArtifactExecutionEvents(ToolResponseMessageDTO message) {
+		return extractArtifactExecutionEvents(message, null);
+	}
+
+	List<AssistantEvent> extractArtifactExecutionEvents(
+			ToolResponseMessageDTO message,
+			@Nullable ExecutionEventDeduplicator executionEventDeduplicator) {
 		if (message == null || message.getResponses() == null || message.getResponses().isEmpty()) {
 			return List.of();
 		}
@@ -344,7 +377,9 @@ public class ChatController {
 							&& StringUtils.hasText(response.getName())) {
 						eventPayload.put("toolName", response.getName());
 					}
-					events.add(AssistantEvent.executionProgress(eventPayload));
+					if (executionEventDeduplicator == null || executionEventDeduplicator.shouldEmit(eventPayload)) {
+						events.add(AssistantEvent.executionProgress(eventPayload));
+					}
 				}
 			}
 			catch (Exception e) {
@@ -354,6 +389,32 @@ public class ChatController {
 		return events;
 	}
 
+	Flux<AssistantEvent> liveExecutionProgressFlux(
+			String threadId,
+			ExecutionEventDeduplicator executionEventDeduplicator) {
+		if (executionEventStreamRegistry == null || !StringUtils.hasText(threadId)) {
+			return Flux.empty();
+		}
+		ExecutionEventStreamRegistry.ExecutionEventSubscription subscription = executionEventStreamRegistry.open(threadId);
+		return subscription.flux()
+				.filter(executionEventDeduplicator::shouldEmit)
+				.map(this::toExecutionProgressEvent)
+				.doFinally(signalType -> subscription.close());
+	}
+
+	AssistantEvent toExecutionProgressEvent(ExecutionEvent event) {
+		Map<String, Object> payload = new LinkedHashMap<>();
+		payload.put("runId", event.runId());
+		payload.put("artifactCode", event.artifactCode());
+		payload.put("artifactType", event.artifactType());
+		payload.put("stepId", event.stepId());
+		payload.put("sequence", event.sequence());
+		payload.put("eventType", event.eventType() != null ? event.eventType().name() : null);
+		payload.put("lifecycleStatus", event.lifecycleStatus() != null ? event.lifecycleStatus().name() : null);
+		payload.put("occurredAt", event.occurredAt() != null ? event.occurredAt().toString() : null);
+		payload.put("payload", event.payload());
+		return AssistantEvent.executionProgress(payload);
+	}
 	private ServerSentEvent<String> toSse(Object payload) {
 		try {
 			return ServerSentEvent.<String>builder()
@@ -499,6 +560,52 @@ public class ChatController {
 		}
 	}
 
+	static final class ExecutionEventDeduplicator {
+
+		private final Set<String> seenEventKeys = ConcurrentHashMap.newKeySet();
+
+		boolean shouldEmit(ExecutionEvent event) {
+			if (event == null) {
+				return false;
+			}
+			return seenEventKeys.add(buildKey(
+					event.runId(),
+					event.sequence(),
+					event.eventType() != null ? event.eventType().name() : null,
+					event.stepId()));
+		}
+
+		boolean shouldEmit(Map<String, Object> eventPayload) {
+			if (eventPayload == null || eventPayload.isEmpty()) {
+				return false;
+			}
+			return seenEventKeys.add(buildKey(
+					asText(eventPayload.get("runId")),
+					eventPayload.get("sequence"),
+					asText(eventPayload.get("eventType")),
+					asText(eventPayload.get("stepId"))));
+		}
+
+		private String buildKey(String runId, Object sequence, String eventType, String stepId) {
+			return String.join(":",
+					normalize(runId),
+					normalize(sequence != null ? String.valueOf(sequence) : null),
+					normalize(eventType),
+					normalize(stepId));
+		}
+
+		private String normalize(String value) {
+			return StringUtils.hasText(value) ? value.trim() : "_";
+		}
+
+		private String asText(Object value) {
+			if (value == null) {
+				return null;
+			}
+			String text = String.valueOf(value).trim();
+			return StringUtils.hasText(text) ? text : null;
+		}
+	}
 	// ── Request normalisation helpers ───────────────────────────────────
 
 	private void normalizeRunRequest(
@@ -609,6 +716,12 @@ public class ChatController {
 	}
 
 }
+
+
+
+
+
+
 
 
 
