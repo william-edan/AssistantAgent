@@ -34,6 +34,7 @@ import com.alibaba.cloud.ai.graph.agent.Agent;
 import com.alibaba.cloud.ai.graph.exception.GraphRunnerException;
 import com.alibaba.cloud.ai.graph.streaming.OutputType;
 import com.alibaba.cloud.ai.graph.streaming.StreamingOutput;
+import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -318,6 +319,41 @@ public class ChatController {
 		return payloads;
 	}
 
+	List<AssistantEvent> extractArtifactExecutionEvents(ToolResponseMessageDTO message) {
+		if (message == null || message.getResponses() == null || message.getResponses().isEmpty()) {
+			return List.of();
+		}
+		List<AssistantEvent> events = new ArrayList<>();
+		for (ToolResponseMessageDTO.ToolResponseDTO response : message.getResponses()) {
+			if (response == null || !StringUtils.hasText(response.getResponseData())) {
+				continue;
+			}
+			try {
+				Map<String, Object> responsePayload = mapper.readValue(
+						response.getResponseData(), new TypeReference<Map<String, Object>>() {
+						});
+				Object rawExecutionEvents = responsePayload.get("executionEvents");
+				if (!(rawExecutionEvents instanceof List<?> rawEvents) || rawEvents.isEmpty()) {
+					continue;
+				}
+				for (Object rawEvent : rawEvents) {
+					Map<String, Object> eventPayload = mapper.convertValue(
+							rawEvent, new TypeReference<LinkedHashMap<String, Object>>() {
+							});
+					if (!StringUtils.hasText((String) eventPayload.get("toolName"))
+							&& StringUtils.hasText(response.getName())) {
+						eventPayload.put("toolName", response.getName());
+					}
+					events.add(AssistantEvent.executionProgress(eventPayload));
+				}
+			}
+			catch (Exception e) {
+				logger.debug("ChatController#extractArtifactExecutionEvents - skip invalid tool response payload", e);
+			}
+		}
+		return events;
+	}
+
 	private ServerSentEvent<String> toSse(Object payload) {
 		try {
 			return ServerSentEvent.<String>builder()
@@ -573,4 +609,6 @@ public class ChatController {
 	}
 
 }
+
+
 
