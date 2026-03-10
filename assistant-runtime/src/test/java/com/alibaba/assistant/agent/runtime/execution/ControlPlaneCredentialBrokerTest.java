@@ -54,6 +54,7 @@ class ControlPlaneCredentialBrokerTest {
         connector.setSpaceId(1L);
         connector.setSystemCode("gougu_oa");
         connector.setStatus("active");
+        connector.setBaseUrl("http://oa.internal");
         when(connectorService.getById(10L)).thenReturn(connector);
 
         AuthProfile authProfile = new AuthProfile();
@@ -94,6 +95,7 @@ class ControlPlaneCredentialBrokerTest {
         assertEquals("BEARER", lease.credentialType());
         assertEquals("Bearer token-123", lease.headers().get("Authorization"));
         assertEquals("gougu_oa", lease.compatibilitySystemCode());
+        assertEquals("http://oa.internal", lease.baseUrl());
         assertTrue(lease.expiresAt().isAfter(Instant.now()));
     }
 
@@ -113,6 +115,7 @@ class ControlPlaneCredentialBrokerTest {
         connector.setId(20L);
         connector.setSpaceId(1L);
         connector.setStatus("active");
+        connector.setBaseUrl("http://erp.internal");
         when(connectorService.getById(20L)).thenReturn(connector);
 
         AuthProfile authProfile = new AuthProfile();
@@ -144,5 +147,6 @@ class ControlPlaneCredentialBrokerTest {
         assertEquals("erp-service", lease.authProfileCode());
         assertEquals("vault://erp/service-account", lease.headers().get("X-API-Key"));
         assertEquals("API_KEY", lease.credentialType());
+        assertEquals("http://erp.internal", lease.baseUrl());
     }
 }

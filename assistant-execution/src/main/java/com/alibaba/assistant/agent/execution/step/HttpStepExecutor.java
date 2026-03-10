@@ -34,6 +34,7 @@ import org.springframework.util.StringUtils;
 import org.springframework.web.client.RestTemplate;
 
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Optional;
 
@@ -86,7 +87,6 @@ public class HttpStepExecutor {
 	 */
 	public StepResult execute(StepConfig config, FlowContext context) {
 		try {
-			// 1. Variable replacement, build request params
 			Map<String, Object> requestParams = new HashMap<>();
 			if (config.getInputMapping() != null) {
 				logger.info("HttpStepExecutor#execute - resolving inputMapping={}", config.getInputMapping());
@@ -102,13 +102,10 @@ public class HttpStepExecutor {
 			logger.info("HttpStepExecutor#execute - method={}, endpoint={}, paramCount={}, params={}",
 					config.getMethod(), config.getEndpoint(), requestParams.size(), requestParams);
 
-			// 2. Execute HTTP request
 			String responseBody = executeHttpRequest(config, requestParams, context);
-
 			logger.info("HttpStepExecutor#execute - responseLength={}",
 					responseBody != null ? responseBody.length() : 0);
 
-			// 3. Check success condition
 			if (config.getSuccessCondition() != null) {
 				boolean success = evaluateCondition(config.getSuccessCondition(), responseBody);
 				if (!success) {
@@ -117,7 +114,6 @@ public class HttpStepExecutor {
 				}
 			}
 
-			// 4. Extract outputs
 			Map<String, Object> outputs = new HashMap<>();
 			if (config.getOutputMapping() != null) {
 				for (Map.Entry<String, String> entry : config.getOutputMapping().entrySet()) {
@@ -145,6 +141,13 @@ public class HttpStepExecutor {
 	}
 
 	private String executeHttpRequest(StepConfig config, Map<String, Object> params, FlowContext context) {
+		String currentStepId = context.getCurrentStepId();
+		String resolvedBaseUrl = context.getStepBaseUrl(currentStepId);
+		Map<String, String> resolvedHeaders = context.getStepRequestHeaders(currentStepId);
+		if (StringUtils.hasText(resolvedBaseUrl)) {
+			return executeResolvedStepRequest(config, params, resolvedBaseUrl, resolvedHeaders, currentStepId);
+		}
+
 		String resolvedSystemCode = firstNonBlank(
 				context.getSystemCode(),
 				readIdentityParam(params, "system_code", "systemCode"));
@@ -171,6 +174,34 @@ public class HttpStepExecutor {
 
 		throw new IllegalStateException("Missing identity context (system_code/assistant_uid), endpoint="
 				+ config.getEndpoint());
+	}
+
+	private String executeResolvedStepRequest(
+			StepConfig config,
+			Map<String, Object> params,
+			String baseUrl,
+			Map<String, String> resolvedHeaders,
+			String stepId) {
+		try {
+			String url = buildUrl(baseUrl, config.getEndpoint());
+			logger.info("HttpStepExecutor#executeResolvedStepRequest - stepId={}, method={}, url={}",
+					stepId, config.getMethod(), url);
+			HttpHeaders headers = createDefaultHeaders();
+			if (resolvedHeaders != null) {
+				for (Map.Entry<String, String> header : resolvedHeaders.entrySet()) {
+					if (StringUtils.hasText(header.getKey()) && header.getValue() != null) {
+						headers.set(header.getKey(), header.getValue());
+					}
+				}
+			}
+			HttpEntity<?> entity = buildRequestEntity(config, params, headers);
+			return exchange(config, url, entity);
+		}
+		catch (Exception e) {
+			logger.error("HttpStepExecutor#executeResolvedStepRequest - failed, stepId={}, error={}", stepId,
+					e.getMessage(), e);
+			throw new RuntimeException("HTTP request failed: " + e.getMessage(), e);
+		}
 	}
 
 	private String readIdentityParam(Map<String, Object> params, String... keys) {
@@ -211,24 +242,17 @@ public class HttpStepExecutor {
 
 	private String executeViaSystemProfile(StepConfig config, Map<String, Object> params, FlowContext context) {
 		try {
-			// 1. Get system base URL
 			String baseUrl = systemAccessProfilePort.getBaseUrl(context.getSystemCode());
 			if (baseUrl == null) {
 				throw new IllegalArgumentException("System not found: " + context.getSystemCode());
 			}
 
-			// 2. Get token
 			Optional<TokenLease> leaseOpt = tokenBroker.acquire(context.getAssistantUid(), context.getSystemCode());
 			String token = leaseOpt.map(TokenLease::accessToken).orElse(null);
-
-			// 3. Build full URL
-			String url = baseUrl + config.getEndpoint();
+			String url = buildUrl(baseUrl, config.getEndpoint());
 			logger.info("HttpStepExecutor#executeViaSystemProfile - method={}, url={}", config.getMethod(), url);
 
-			// 4. Build headers
-			HttpHeaders headers = new HttpHeaders();
-			headers.set("X-Requested-With", "XMLHttpRequest");
-			headers.set("Accept", "*/*");
+			HttpHeaders headers = createDefaultHeaders();
 			if (token != null) {
 				String headerName = systemAccessProfilePort.getTokenHeaderName(context.getSystemCode());
 				String headerPrefix = systemAccessProfilePort.getTokenHeaderPrefix(context.getSystemCode());
@@ -240,47 +264,64 @@ public class HttpStepExecutor {
 						context.getSystemCode(), context.getAssistantUid());
 			}
 
-			// 5. Build request body
-			HttpEntity<?> entity;
-			String contentType = config.getContentType();
-
-			if (MediaType.APPLICATION_FORM_URLENCODED_VALUE.equals(contentType)) {
-				headers.setContentType(MediaType.APPLICATION_FORM_URLENCODED);
-				MultiValueMap<String, String> formData = requestSerializer.toFormUrlEncoded(params);
-				formData.add("_ajax", "1");
-				logger.info("HttpStepExecutor#executeViaSystemProfile - form-urlencoded, paramCount={}, params={}",
-						formData.size(), formData);
-				entity = new HttpEntity<>(formData, headers);
-			}
-			else {
-				headers.setContentType(MediaType.APPLICATION_JSON);
-				String requestBody = objectMapper.writeValueAsString(params);
-				logger.info("HttpStepExecutor#executeViaSystemProfile - JSON body, length={}, body={}",
-						requestBody.length(), requestBody);
-				entity = new HttpEntity<>(requestBody, headers);
-			}
-
-			// 6. Execute request
-			ResponseEntity<String> response = restTemplate.exchange(url,
-					HttpMethod.valueOf(config.getMethod()), entity, String.class);
-
-			logger.info("HttpStepExecutor#executeViaSystemProfile - statusCode={}", response.getStatusCode());
-
-			if (response.getStatusCode().is2xxSuccessful() || response.getStatusCode().is3xxRedirection()) {
-				if (response.getStatusCode().is3xxRedirection()) {
-					String location = response.getHeaders().getFirst("Location");
-					logger.warn("HttpStepExecutor#executeViaSystemProfile - redirect, location={}", location);
-				}
-				return response.getBody() != null ? response.getBody() : "{}";
-			}
-			else {
-				throw new RuntimeException("HTTP error: " + response.getStatusCode());
-			}
+			HttpEntity<?> entity = buildRequestEntity(config, params, headers);
+			return exchange(config, url, entity);
 		}
 		catch (Exception e) {
 			logger.error("HttpStepExecutor#executeViaSystemProfile - failed, error={}", e.getMessage(), e);
 			throw new RuntimeException("HTTP request failed: " + e.getMessage(), e);
 		}
+	}
+
+	private HttpHeaders createDefaultHeaders() {
+		HttpHeaders headers = new HttpHeaders();
+		headers.set("X-Requested-With", "XMLHttpRequest");
+		headers.set("Accept", "*/*");
+		return headers;
+	}
+
+	private HttpEntity<?> buildRequestEntity(StepConfig config, Map<String, Object> params, HttpHeaders headers)
+			throws Exception {
+		String contentType = config.getContentType();
+		if (MediaType.APPLICATION_FORM_URLENCODED_VALUE.equals(contentType)) {
+			headers.setContentType(MediaType.APPLICATION_FORM_URLENCODED);
+			MultiValueMap<String, String> formData = requestSerializer.toFormUrlEncoded(params);
+			formData.add("_ajax", "1");
+			logger.info("HttpStepExecutor#buildRequestEntity - form-urlencoded, paramCount={}, params={}",
+					formData.size(), formData);
+			return new HttpEntity<>(formData, headers);
+		}
+		headers.setContentType(MediaType.APPLICATION_JSON);
+		String requestBody = objectMapper.writeValueAsString(params);
+		logger.info("HttpStepExecutor#buildRequestEntity - JSON body, length={}, body={}",
+				requestBody.length(), requestBody);
+		return new HttpEntity<>(requestBody, headers);
+	}
+
+	private String exchange(StepConfig config, String url, HttpEntity<?> entity) {
+		ResponseEntity<String> response = restTemplate.exchange(url,
+				HttpMethod.valueOf(config.getMethod()), entity, String.class);
+		logger.info("HttpStepExecutor#exchange - statusCode={}", response.getStatusCode());
+		if (response.getStatusCode().is2xxSuccessful() || response.getStatusCode().is3xxRedirection()) {
+			if (response.getStatusCode().is3xxRedirection()) {
+				String location = response.getHeaders().getFirst("Location");
+				logger.warn("HttpStepExecutor#exchange - redirect, location={}", location);
+			}
+			return response.getBody() != null ? response.getBody() : "{}";
+		}
+		throw new RuntimeException("HTTP error: " + response.getStatusCode());
+	}
+
+	private String buildUrl(String baseUrl, String endpoint) {
+		String normalizedBase = baseUrl != null ? baseUrl.trim() : "";
+		String normalizedEndpoint = endpoint != null ? endpoint.trim() : "";
+		if (normalizedBase.endsWith("/") && normalizedEndpoint.startsWith("/")) {
+			return normalizedBase.substring(0, normalizedBase.length() - 1) + normalizedEndpoint;
+		}
+		if (!normalizedBase.endsWith("/") && !normalizedEndpoint.startsWith("/")) {
+			return normalizedBase + "/" + normalizedEndpoint;
+		}
+		return normalizedBase + normalizedEndpoint;
 	}
 
 	private boolean evaluateCondition(String condition, String responseBody) {

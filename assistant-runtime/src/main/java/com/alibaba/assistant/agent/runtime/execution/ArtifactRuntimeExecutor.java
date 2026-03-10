@@ -15,17 +15,21 @@
  */
 package com.alibaba.assistant.agent.runtime.execution;
 
-import com.alibaba.assistant.agent.runtime.agent.AssistantStateKeys;
-import com.alibaba.assistant.agent.runtime.registry.PublishedToolDescriptor;
-import com.alibaba.cloud.ai.graph.OverAllState;
-import com.alibaba.cloud.ai.graph.agent.tools.ToolContextConstants;
 import com.alibaba.assistant.agent.execution.flow.DAGFlowExecutor;
 import com.alibaba.assistant.agent.execution.flow.FlowContext;
 import com.alibaba.assistant.agent.execution.flow.FlowExecutionResult;
 import com.alibaba.assistant.agent.execution.model.StepDefinition;
 import com.alibaba.assistant.agent.execution.model.StepResult;
 import com.alibaba.assistant.agent.execution.model.StepStatus;
+import com.alibaba.assistant.agent.runtime.agent.AssistantStateKeys;
+import com.alibaba.assistant.agent.runtime.compiler.RuntimeArtifact;
+import com.alibaba.assistant.agent.runtime.registry.PublishedToolDescriptor;
+import com.alibaba.cloud.ai.graph.OverAllState;
+import com.alibaba.cloud.ai.graph.agent.tools.ToolContextConstants;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.ai.chat.model.ToolContext;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.lang.Nullable;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
@@ -33,8 +37,10 @@ import org.springframework.util.StringUtils;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -45,8 +51,22 @@ public class ArtifactRuntimeExecutor {
 
     private final DAGFlowExecutor dagFlowExecutor;
 
+    private final CredentialBroker credentialBroker;
+
+    private final ObjectMapper objectMapper;
+
     public ArtifactRuntimeExecutor(DAGFlowExecutor dagFlowExecutor) {
+        this(dagFlowExecutor, null, new ObjectMapper());
+    }
+
+    @Autowired
+    public ArtifactRuntimeExecutor(
+            DAGFlowExecutor dagFlowExecutor,
+            @Nullable CredentialBroker credentialBroker,
+            ObjectMapper objectMapper) {
         this.dagFlowExecutor = dagFlowExecutor;
+        this.credentialBroker = credentialBroker;
+        this.objectMapper = objectMapper;
     }
 
     /**
@@ -61,7 +81,8 @@ public class ArtifactRuntimeExecutor {
         }
 
         String runId = UUID.randomUUID().toString();
-        FlowContext flowContext = buildFlowContext(descriptor, arguments, toolContext);
+        FlowContext flowContext = buildFlowContext(descriptor, arguments, toolContext, runId);
+        resolveStepCredentials(descriptor, flowContext);
         FlowExecutionResult flowResult = dagFlowExecutor.execute(descriptor.artifact().getFlowDefinition(), flowContext);
         List<ExecutionEvent> executionEvents = buildExecutionEvents(runId, descriptor, flowResult);
 
@@ -82,9 +103,11 @@ public class ArtifactRuntimeExecutor {
     private FlowContext buildFlowContext(
             PublishedToolDescriptor descriptor,
             Map<String, Object> arguments,
-            @Nullable ToolContext toolContext) {
+            @Nullable ToolContext toolContext,
+            String runId) {
         Map<String, Object> safeArguments = arguments != null ? new LinkedHashMap<>(arguments) : new LinkedHashMap<>();
         FlowContext flowContext = new FlowContext(safeArguments);
+        flowContext.setRunId(runId);
         flowContext.setSystemCode(firstNonBlank(
                 descriptor.executionSystemCode(),
                 readContextText(toolContext, AssistantStateKeys.SYSTEM_CODE),
@@ -102,6 +125,79 @@ public class ArtifactRuntimeExecutor {
                 asText(safeArguments.get(AssistantStateKeys.THREAD_ID)),
                 asText(safeArguments.get("thread_id"))));
         return flowContext;
+    }
+
+    private void resolveStepCredentials(PublishedToolDescriptor descriptor, FlowContext flowContext) {
+        if (credentialBroker == null || descriptor == null || descriptor.artifact() == null) {
+            return;
+        }
+        RuntimeArtifact artifact = descriptor.artifact();
+        if (artifact.getSteps().isEmpty() || !StringUtils.hasText(flowContext.getAssistantUid())) {
+            return;
+        }
+        for (Map.Entry<String, RuntimeArtifact.StepBinding> entry : artifact.getSteps().entrySet()) {
+            String stepId = entry.getKey();
+            RuntimeArtifact.StepBinding stepBinding = entry.getValue();
+            if (stepBinding == null) {
+                continue;
+            }
+            Long connectorId = stepBinding.connectorId() != null
+                    ? stepBinding.connectorId()
+                    : stepBinding.action() != null ? stepBinding.action().connectorId() : null;
+            if (connectorId == null) {
+                continue;
+            }
+            ResolvedCredentialLease lease = credentialBroker.resolve(new CredentialResolutionRequest(
+                    artifact.getSpaceId(),
+                    connectorId,
+                    resolveCandidateAuthProfileCodes(stepBinding),
+                    flowContext.getAssistantUid(),
+                    "local_user",
+                    List.of(),
+                    flowContext.getRunId(),
+                    stepId,
+                    descriptor.executionSystemCode()));
+            flowContext.putStepRequestHeaders(stepId, lease.headers());
+            if (StringUtils.hasText(lease.baseUrl())) {
+                flowContext.putStepBaseUrl(stepId, lease.baseUrl());
+            }
+            if (!StringUtils.hasText(flowContext.getSystemCode()) && StringUtils.hasText(lease.compatibilitySystemCode())) {
+                flowContext.setSystemCode(lease.compatibilitySystemCode());
+            }
+        }
+    }
+
+    private List<String> resolveCandidateAuthProfileCodes(RuntimeArtifact.StepBinding stepBinding) {
+        Set<String> codes = new LinkedHashSet<>();
+        addJsonArrayValues(codes, stepBinding.allowedAuthProfilesJson());
+        if (stepBinding.action() != null) {
+            addJsonArrayValues(codes, stepBinding.action().allowedAuthProfilesJson());
+            if (StringUtils.hasText(stepBinding.action().defaultAuthProfileCode())) {
+                codes.add(stepBinding.action().defaultAuthProfileCode().trim());
+            }
+        }
+        return List.copyOf(codes);
+    }
+
+    private void addJsonArrayValues(Set<String> target, String jsonArrayText) {
+        if (target == null || !StringUtils.hasText(jsonArrayText)) {
+            return;
+        }
+        try {
+            List<String> values = objectMapper.readValue(jsonArrayText, new TypeReference<List<String>>() {
+            });
+            if (values == null) {
+                return;
+            }
+            for (String value : values) {
+                if (StringUtils.hasText(value)) {
+                    target.add(value.trim());
+                }
+            }
+        }
+        catch (Exception ignored) {
+            // keep compatibility with legacy payloads that may omit structured auth lists
+        }
     }
 
     private List<ExecutionEvent> buildExecutionEvents(

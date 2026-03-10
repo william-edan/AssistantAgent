@@ -83,7 +83,8 @@ public class ControlPlaneCredentialBroker implements CredentialBroker {
                 normalizeCredentialType(authProfile.getAuthType()),
                 headers,
                 optionalCredential.expiresAt(),
-                compatibilitySystemCode);
+                compatibilitySystemCode,
+                normalize(connector.getBaseUrl()));
     }
 
     private Connector requireConnector(CredentialResolutionRequest request) {

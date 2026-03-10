@@ -30,7 +30,8 @@ public record ResolvedCredentialLease(
 		String credentialType,
 		Map<String, String> headers,
 		Instant expiresAt,
-		String compatibilitySystemCode) {
+		String compatibilitySystemCode,
+		String baseUrl) {
 
 	public ResolvedCredentialLease {
 		headers = Map.copyOf(headers != null ? new LinkedHashMap<>(headers) : Map.of());

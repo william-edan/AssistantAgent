@@ -19,6 +19,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -37,11 +38,19 @@ public class FlowContext {
 
 	private final Map<String, Map<String, Object>> stepOutputs = new ConcurrentHashMap<>();
 
+	private final Map<String, String> stepBaseUrls = new ConcurrentHashMap<>();
+
+	private final Map<String, Map<String, String>> stepRequestHeaders = new ConcurrentHashMap<>();
+
 	private String systemCode;
 
 	private String assistantUid;
 
 	private String threadId;
+
+	private String runId;
+
+	private String currentStepId;
 
 	public FlowContext(Map<String, Object> initialInputs) {
 		this.initialInputs = new HashMap<>(initialInputs);
@@ -71,8 +80,50 @@ public class FlowContext {
 		this.threadId = threadId;
 	}
 
+	public String getRunId() {
+		return runId;
+	}
+
+	public void setRunId(String runId) {
+		this.runId = runId;
+	}
+
+	public String getCurrentStepId() {
+		return currentStepId;
+	}
+
+	public void setCurrentStepId(String currentStepId) {
+		this.currentStepId = currentStepId;
+	}
+
 	public void putStepOutput(String stepId, Map<String, Object> outputs) {
 		stepOutputs.put(stepId, outputs);
+	}
+
+	public void putStepBaseUrl(String stepId, String baseUrl) {
+		if (stepId == null || baseUrl == null) {
+			return;
+		}
+		stepBaseUrls.put(stepId, baseUrl);
+	}
+
+	public String getStepBaseUrl(String stepId) {
+		return stepId != null ? stepBaseUrls.get(stepId) : null;
+	}
+
+	public void putStepRequestHeaders(String stepId, Map<String, String> headers) {
+		if (stepId == null || headers == null || headers.isEmpty()) {
+			return;
+		}
+		stepRequestHeaders.put(stepId, new LinkedHashMap<>(headers));
+	}
+
+	public Map<String, String> getStepRequestHeaders(String stepId) {
+		if (stepId == null) {
+			return Map.of();
+		}
+		Map<String, String> headers = stepRequestHeaders.get(stepId);
+		return headers != null ? Map.copyOf(headers) : Map.of();
 	}
 
 	/**
