@@ -17,6 +17,7 @@ package com.alibaba.assistant.agent.runtime.execution;
 
 import com.alibaba.assistant.agent.execution.flow.DAGFlowExecutor;
 import com.alibaba.assistant.agent.execution.flow.FlowContext;
+import com.alibaba.assistant.agent.execution.flow.FlowExecutionListener;
 import com.alibaba.assistant.agent.execution.flow.FlowExecutionResult;
 import com.alibaba.assistant.agent.execution.model.StepDefinition;
 import com.alibaba.assistant.agent.execution.model.StepResult;
@@ -82,9 +83,15 @@ public class ArtifactRuntimeExecutor {
 
         String runId = UUID.randomUUID().toString();
         FlowContext flowContext = buildFlowContext(descriptor, arguments, toolContext, runId);
+        RuntimeExecutionEventCollector executionEventCollector = new RuntimeExecutionEventCollector(runId, descriptor);
+        executionEventCollector.recordRunStarted();
+        flowContext.addExecutionListener(executionEventCollector);
         resolveStepCredentials(descriptor, flowContext);
         FlowExecutionResult flowResult = dagFlowExecutor.execute(descriptor.artifact().getFlowDefinition(), flowContext);
-        List<ExecutionEvent> executionEvents = buildExecutionEvents(runId, descriptor, flowResult);
+        executionEventCollector.recordRunTerminal(flowResult);
+        List<ExecutionEvent> executionEvents = executionEventCollector.hasStepEvents()
+                ? executionEventCollector.events()
+                : buildExecutionEvents(runId, descriptor, flowResult);
 
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("success", flowResult.isSuccess());
@@ -357,5 +364,122 @@ public class ArtifactRuntimeExecutor {
             }
         }
         return null;
+    }
+
+    private static final class RuntimeExecutionEventCollector implements FlowExecutionListener {
+
+        private final String runId;
+
+        private final PublishedToolDescriptor descriptor;
+
+        private final List<ExecutionEvent> events = new ArrayList<>();
+
+        private long sequence = 1L;
+
+        private RuntimeExecutionEventCollector(String runId, PublishedToolDescriptor descriptor) {
+            this.runId = runId;
+            this.descriptor = descriptor;
+        }
+
+        void recordRunStarted() {
+            events.add(new ExecutionEvent(
+                    runId,
+                    descriptor.artifact().getArtifactCode(),
+                    descriptor.artifact().getArtifactType().name(),
+                    null,
+                    sequence++,
+                    ExecutionEventType.RUN_STARTED,
+                    ExecutionLifecycleStatus.RUNNING,
+                    Instant.now(),
+                    Map.of("source", "artifact-runtime")));
+        }
+
+        void recordRunTerminal(FlowExecutionResult flowResult) {
+            Map<String, Object> terminalPayload = new LinkedHashMap<>();
+            if (flowResult.getFinalOutputs() != null && !flowResult.getFinalOutputs().isEmpty()) {
+                terminalPayload.put("finalOutputs", flowResult.getFinalOutputs());
+            }
+            if (StringUtils.hasText(flowResult.getErrorMessage())) {
+                terminalPayload.put("error", flowResult.getErrorMessage());
+            }
+            events.add(new ExecutionEvent(
+                    runId,
+                    descriptor.artifact().getArtifactCode(),
+                    descriptor.artifact().getArtifactType().name(),
+                    null,
+                    sequence++,
+                    flowResult.isSuccess() ? ExecutionEventType.RUN_COMPLETED : ExecutionEventType.RUN_FAILED,
+                    flowResult.isSuccess() ? ExecutionLifecycleStatus.COMPLETED : ExecutionLifecycleStatus.FAILED,
+                    Instant.now(),
+                    terminalPayload));
+        }
+
+        boolean hasStepEvents() {
+            return events.size() > 2;
+        }
+
+        List<ExecutionEvent> events() {
+            return List.copyOf(events);
+        }
+
+        @Override
+        public void onStepStarted(StepDefinition step, FlowContext context) {
+            Map<String, Object> payload = new LinkedHashMap<>();
+            if (StringUtils.hasText(step.getName())) {
+                payload.put("stepName", step.getName());
+            }
+            events.add(new ExecutionEvent(
+                    runId,
+                    descriptor.artifact().getArtifactCode(),
+                    descriptor.artifact().getArtifactType().name(),
+                    step.getStepId(),
+                    sequence++,
+                    ExecutionEventType.STEP_STARTED,
+                    ExecutionLifecycleStatus.RUNNING,
+                    Instant.now(),
+                    payload));
+        }
+
+        @Override
+        public void onStepCompleted(StepDefinition step, StepResult result, FlowContext context) {
+            Map<String, Object> payload = new LinkedHashMap<>();
+            if (StringUtils.hasText(step.getName())) {
+                payload.put("stepName", step.getName());
+            }
+            if (result.getOutputs() != null && !result.getOutputs().isEmpty()) {
+                payload.put("outputs", result.getOutputs());
+            }
+            events.add(new ExecutionEvent(
+                    runId,
+                    descriptor.artifact().getArtifactCode(),
+                    descriptor.artifact().getArtifactType().name(),
+                    step.getStepId(),
+                    sequence++,
+                    ExecutionEventType.STEP_COMPLETED,
+                    ExecutionLifecycleStatus.COMPLETED,
+                    Instant.now(),
+                    payload));
+        }
+
+        @Override
+        public void onStepFailed(StepDefinition step, StepResult result, FlowContext context) {
+            Map<String, Object> payload = new LinkedHashMap<>();
+            if (StringUtils.hasText(step.getName())) {
+                payload.put("stepName", step.getName());
+            }
+            if (StringUtils.hasText(result.getErrorMessage())) {
+                payload.put("error", result.getErrorMessage());
+            }
+            events.add(new ExecutionEvent(
+                    runId,
+                    descriptor.artifact().getArtifactCode(),
+                    descriptor.artifact().getArtifactType().name(),
+                    step.getStepId(),
+                    sequence++,
+                    ExecutionEventType.STEP_FAILED,
+                    ExecutionLifecycleStatus.FAILED,
+                    Instant.now(),
+                    payload));
+        }
     }
 }

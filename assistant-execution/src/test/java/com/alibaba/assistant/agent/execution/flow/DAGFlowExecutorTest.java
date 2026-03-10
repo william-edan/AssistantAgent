@@ -18,6 +18,7 @@ package com.alibaba.assistant.agent.execution.flow;
 import com.alibaba.assistant.agent.controlplane.identity.TokenBroker;
 import com.alibaba.assistant.agent.controlplane.identity.TokenLease;
 import com.alibaba.assistant.agent.controlplane.toolregistry.ToolMeta;
+import com.alibaba.assistant.agent.execution.model.StepResult;
 import com.alibaba.assistant.agent.execution.model.StepStatus;
 import com.alibaba.assistant.agent.execution.step.HttpStepExecutor;
 import com.alibaba.assistant.agent.execution.step.http.RequestBodySerializer;
@@ -33,6 +34,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -130,6 +132,38 @@ class DAGFlowExecutorTest {
         assertNotNull(first);
         assertEquals("POST", first.getMethod());
         assertTrue(first.getBody().readUtf8().contains("_ajax=1"));
+    }
+
+    @Test
+    void shouldNotifyExecutionListenersWithOrderedStepLifecycle() {
+        mockWebServer.enqueue(jsonResponse("{\"code\":0,\"msg\":\"success\",\"data\":{\"return_id\":12345}}"));
+        mockWebServer.enqueue(jsonResponse("{\"code\":0,\"msg\":\"审批提交成功\"}"));
+
+        FlowContext context = createFlowContext(baseInputs());
+        List<String> lifecycleEvents = new ArrayList<>();
+        context.addExecutionListener(new FlowExecutionListener() {
+            @Override
+            public void onStepStarted(com.alibaba.assistant.agent.execution.model.StepDefinition step, FlowContext flowContext) {
+                lifecycleEvents.add("start:" + step.getStepId());
+            }
+
+            @Override
+            public void onStepCompleted(
+                    com.alibaba.assistant.agent.execution.model.StepDefinition step,
+                    StepResult result,
+                    FlowContext flowContext) {
+                lifecycleEvents.add("complete:" + step.getStepId());
+            }
+        });
+
+        FlowExecutionResult result = dagFlowExecutor.execute(loadFlowDefinition(), context);
+
+        assertTrue(result.isSuccess());
+        assertEquals(List.of(
+                "start:create_leave",
+                "complete:create_leave",
+                "start:submit_approval",
+                "complete:submit_approval"), lifecycleEvents);
     }
 
     private MockResponse jsonResponse(String body) {

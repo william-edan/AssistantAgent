@@ -20,8 +20,10 @@ import org.slf4j.LoggerFactory;
 
 import java.util.HashMap;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CopyOnWriteArrayList;
 
 /**
  * Runtime execution context holding initial inputs, step outputs,
@@ -41,6 +43,8 @@ public class FlowContext {
 	private final Map<String, String> stepBaseUrls = new ConcurrentHashMap<>();
 
 	private final Map<String, Map<String, String>> stepRequestHeaders = new ConcurrentHashMap<>();
+
+	private final List<FlowExecutionListener> executionListeners = new CopyOnWriteArrayList<>();
 
 	private String systemCode;
 
@@ -124,6 +128,17 @@ public class FlowContext {
 		}
 		Map<String, String> headers = stepRequestHeaders.get(stepId);
 		return headers != null ? Map.copyOf(headers) : Map.of();
+	}
+
+	public void addExecutionListener(FlowExecutionListener listener) {
+		if (listener == null) {
+			return;
+		}
+		executionListeners.add(listener);
+	}
+
+	public List<FlowExecutionListener> getExecutionListeners() {
+		return List.copyOf(executionListeners);
 	}
 
 	/**

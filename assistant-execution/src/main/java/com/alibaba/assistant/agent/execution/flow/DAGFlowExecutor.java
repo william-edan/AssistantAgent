@@ -70,6 +70,8 @@ public class DAGFlowExecutor {
 
 				logger.info("DAGFlowExecutor#execute - executing step, stepId={}, name={}", stepId, step.getName());
 				stepStatuses.put(stepId, StepStatus.RUNNING);
+				context.setCurrentStepId(stepId);
+				notifyStepStarted(step, context);
 
 				StepResult result = executeStep(step, context);
 				stepResults.put(stepId, result);
@@ -77,12 +79,15 @@ public class DAGFlowExecutor {
 				if (result.isSuccess()) {
 					stepStatuses.put(stepId, StepStatus.COMPLETED);
 					context.putStepOutput(stepId, result.getOutputs());
+					notifyStepCompleted(step, result, context);
 					logger.info("DAGFlowExecutor#execute - step completed, stepId={}", stepId);
 				}
 				else {
 					stepStatuses.put(stepId, StepStatus.FAILED);
+					notifyStepFailed(step, result, context);
 					logger.error("DAGFlowExecutor#execute - step failed, stepId={}, error={}",
 							stepId, result.getErrorMessage());
+					context.setCurrentStepId(null);
 
 					FlowExecutionResult failResult = new FlowExecutionResult();
 					failResult.setSuccess(false);
@@ -92,6 +97,7 @@ public class DAGFlowExecutor {
 					failResult.setDurationMs(System.currentTimeMillis() - startTime);
 					return failResult;
 				}
+				context.setCurrentStepId(null);
 			}
 
 			FlowExecutionResult successResult = new FlowExecutionResult();
@@ -162,5 +168,22 @@ public class DAGFlowExecutor {
 		return StepResult.failure("Unsupported step type: " + step.getType());
 	}
 
-}
+	private void notifyStepStarted(StepDefinition step, FlowContext context) {
+		for (FlowExecutionListener listener : context.getExecutionListeners()) {
+			listener.onStepStarted(step, context);
+		}
+	}
 
+	private void notifyStepCompleted(StepDefinition step, StepResult result, FlowContext context) {
+		for (FlowExecutionListener listener : context.getExecutionListeners()) {
+			listener.onStepCompleted(step, result, context);
+		}
+	}
+
+	private void notifyStepFailed(StepDefinition step, StepResult result, FlowContext context) {
+		for (FlowExecutionListener listener : context.getExecutionListeners()) {
+			listener.onStepFailed(step, result, context);
+		}
+	}
+
+}
