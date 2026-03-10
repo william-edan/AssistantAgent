@@ -118,6 +118,11 @@ public class PublicationScopeResolver {
                 readStateTextList(state, "disabledToolSourceIds"),
                 readTextList(context, "disabled_tool_source_ids", "disabledToolSourceIds", "blockedSourceIds"),
                 List.of());
+        Boolean explicitLegacyFallback = firstNonNull(
+                readStateBoolean(state, "allow_legacy_fallback"),
+                readStateBoolean(state, "allowLegacyFallback"),
+                asBoolean(readValue(context, "allow_legacy_fallback", "allowLegacyFallback",
+                        "legacy_fallback_enabled", "legacyFallbackEnabled")));
         boolean hasExplicitSourceSelection = StringUtils.hasText(explicitSourceSelectionMode)
                 || !explicitRequestedSourceIds.isEmpty()
                 || !explicitBlockedSourceIds.isEmpty();
@@ -125,17 +130,27 @@ public class PublicationScopeResolver {
         if (!hasExplicitSourceSelection && agentAppPublicationPolicyResolver != null) {
             appDefaultPolicy = agentAppPublicationPolicyResolver.resolve(spaceId, agentAppCode).orElse(null);
         }
+        boolean scopedAgentAppCall = spaceId != null && StringUtils.hasText(agentAppCode);
+        boolean allowLegacyFallback = Boolean.TRUE.equals(explicitLegacyFallback);
         ToolPublicationProvider.SourceSelectionMode sourceSelectionMode = hasExplicitSourceSelection
                 ? ToolPublicationProvider.SourceSelectionMode.fromValue(explicitSourceSelectionMode)
                 : appDefaultPolicy != null
                         ? appDefaultPolicy.sourceSelectionMode()
-                        : ToolPublicationProvider.SourceSelectionMode.MERGE;
+                        : scopedAgentAppCall && !allowLegacyFallback
+                                ? ToolPublicationProvider.SourceSelectionMode.EXCLUSIVE
+                                : ToolPublicationProvider.SourceSelectionMode.MERGE;
         List<String> requestedSourceIds = hasExplicitSourceSelection
                 ? explicitRequestedSourceIds
-                : appDefaultPolicy != null ? appDefaultPolicy.requestedSourceIds() : List.of();
+                : appDefaultPolicy != null
+                        ? appDefaultPolicy.requestedSourceIds()
+                        : scopedAgentAppCall ? List.of("artifact-catalog") : List.of();
         List<String> blockedSourceIds = hasExplicitSourceSelection
                 ? explicitBlockedSourceIds
-                : appDefaultPolicy != null ? appDefaultPolicy.blockedSourceIds() : List.of();
+                : appDefaultPolicy != null
+                        ? appDefaultPolicy.blockedSourceIds()
+                        : scopedAgentAppCall && !allowLegacyFallback
+                                ? List.of("legacy-bridge")
+                                : List.of();
 
         return new ToolPublicationProvider.PublicationScope(
                 tenantId,
@@ -176,6 +191,14 @@ public class PublicationScopeResolver {
         return asLong(value);
     }
 
+
+    private Boolean readStateBoolean(@Nullable OverAllState state, String key) {
+        if (state == null || !StringUtils.hasText(key)) {
+            return null;
+        }
+        Object value = state.value(key, Object.class).orElse(null);
+        return asBoolean(value);
+    }
     private String readText(Map<String, Object> source, String... keys) {
         return asText(readValue(source, keys));
     }
@@ -262,6 +285,26 @@ public class PublicationScopeResolver {
         }
     }
 
+
+    private Boolean asBoolean(Object value) {
+        if (value == null) {
+            return null;
+        }
+        if (value instanceof Boolean bool) {
+            return bool;
+        }
+        String text = asText(value);
+        if (!StringUtils.hasText(text)) {
+            return null;
+        }
+        if ("true".equalsIgnoreCase(text) || "1".equals(text) || "yes".equalsIgnoreCase(text)) {
+            return true;
+        }
+        if ("false".equalsIgnoreCase(text) || "0".equals(text) || "no".equalsIgnoreCase(text)) {
+            return false;
+        }
+        return null;
+    }
     @SafeVarargs
     private <T> T firstNonNull(T... values) {
         if (values == null) {

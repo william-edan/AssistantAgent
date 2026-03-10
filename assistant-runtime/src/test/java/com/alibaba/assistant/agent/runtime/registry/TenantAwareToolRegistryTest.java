@@ -258,6 +258,58 @@ class TenantAwareToolRegistryTest {
         verify(artifactProvider).listPublishedTools(scope);
         verify(legacyProvider, never()).listPublishedTools(scope);
     }
+    @Test
+    void shouldDefaultToArtifactOnlyForScopedRegistryWithoutExplicitPolicy() {
+        ToolPublicationProvider artifactProvider = mock(ToolPublicationProvider.class);
+        ToolPublicationProvider legacyProvider = mock(ToolPublicationProvider.class);
+        when(artifactProvider.providerId()).thenReturn("artifact-catalog");
+        when(legacyProvider.providerId()).thenReturn("legacy-bridge");
+        ToolPublicationProviderSelector selector = new ToolPublicationProviderSelector();
+        ToolPublicationMaterializer materializer = new ToolPublicationMaterializer(new ArtifactToolFactory(new ObjectMapper()));
+        PlatformSpaceService platformSpaceService = mock(PlatformSpaceService.class);
+        PublicationScopeResolver publicationScopeResolver = new PublicationScopeResolver(platformSpaceService);
+        RuntimeArtifact artifact = new RuntimeArtifact(
+                9L,
+                "oa.leave.apply",
+                RuntimeArtifact.ArtifactType.WORKFLOW,
+                "请假申请",
+                1,
+                null,
+                null,
+                null,
+                null,
+                null,
+                new FlowDefinition(),
+                Map.of(),
+                Map.of());
+        ToolPublicationProvider.PublicationScope scope = new ToolPublicationProvider.PublicationScope(
+                "default",
+                9L,
+                "prod",
+                "finance-agent",
+                ToolPublicationProvider.SourceSelectionMode.EXCLUSIVE,
+                List.of("artifact-catalog"),
+                List.of("legacy-bridge"));
+        when(artifactProvider.listPublishedTools(scope)).thenReturn(List.of(new PublishedToolDescriptor(
+                "artifact-catalog",
+                "workflow:oa.leave.apply",
+                "请假申请",
+                "oa_tools",
+                "OA workflow tools",
+                false,
+                null,
+                artifact)));
+
+        TenantAwareToolRegistry registry = new TenantAwareToolRegistry(
+                List.of(legacyProvider, artifactProvider), materializer, publicationScopeResolver, selector);
+        OverAllState state = new OverAllState();
+        state.updateState(Map.of("agent_app_code", "finance-agent", "space_id", 9L));
+        ToolContext toolContext = new ToolContext(Map.of(ToolContextConstants.AGENT_STATE_CONTEXT_KEY, state));
+
+        assertTrue(registry.scope(toolContext).getTool("oa_leave_apply_execute").isPresent());
+        verify(artifactProvider).listPublishedTools(scope);
+        verify(legacyProvider, never()).listPublishedTools(scope);
+    }
 
     private static CodeactTool mockCodeactTool(String name) {
         CodeactTool tool = mock(CodeactTool.class);
@@ -281,3 +333,4 @@ class TenantAwareToolRegistryTest {
         return tool;
     }
 }
+
