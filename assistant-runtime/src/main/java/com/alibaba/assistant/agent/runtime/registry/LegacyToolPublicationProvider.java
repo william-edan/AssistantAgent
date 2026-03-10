@@ -18,6 +18,8 @@ package com.alibaba.assistant.agent.runtime.registry;
 import com.alibaba.assistant.agent.common.tools.CodeactTool;
 import com.alibaba.assistant.agent.common.tools.CodeactToolMetadata;
 import com.alibaba.assistant.agent.runtime.tool.codeact.CapabilityBridgeToolFactory;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
@@ -31,6 +33,8 @@ import java.util.List;
 @Component
 @Profile("migration")
 public class LegacyToolPublicationProvider implements ToolPublicationProvider {
+
+    private static final Logger logger = LoggerFactory.getLogger(LegacyToolPublicationProvider.class);
 
     private final CapabilityBridgeToolFactory capabilityBridgeToolFactory;
 
@@ -47,6 +51,7 @@ public class LegacyToolPublicationProvider implements ToolPublicationProvider {
     public List<PublishedToolDescriptor> listPublishedTools(PublicationScope scope) {
         String tenantId = scope != null && StringUtils.hasText(scope.tenantId()) ? scope.tenantId() : "default";
         List<CodeactTool> tools = capabilityBridgeToolFactory.createToolsForTenant(tenantId);
+        logCompatibilitySelection(scope, tools.size());
         List<PublishedToolDescriptor> descriptors = new ArrayList<>(tools.size());
         for (CodeactTool tool : tools) {
             if (tool == null || tool.getToolDefinition() == null || !StringUtils.hasText(tool.getToolDefinition().name())) {
@@ -61,4 +66,53 @@ public class LegacyToolPublicationProvider implements ToolPublicationProvider {
         }
         return List.copyOf(descriptors);
     }
+
+    static CompatibilityMode compatibilityMode(PublicationScope scope) {
+        if (scope == null || scope.spaceId() == null || !StringUtils.hasText(scope.agentAppCode())) {
+            return CompatibilityMode.UNSCOPED;
+        }
+        if (scope.requestedSourceIds().contains(providerIdValue())) {
+            return CompatibilityMode.EXPLICIT_REQUEST;
+        }
+        if (scope.sourceSelectionMode() == SourceSelectionMode.MERGE
+                && scope.requestedSourceIds().contains("artifact-catalog")
+                && !scope.blockedSourceIds().contains(providerIdValue())) {
+            return CompatibilityMode.FALLBACK;
+        }
+        return CompatibilityMode.SCOPED_COMPATIBILITY;
+    }
+
+    private void logCompatibilitySelection(PublicationScope scope, int toolCount) {
+        if (toolCount <= 0) {
+            return;
+        }
+        CompatibilityMode mode = compatibilityMode(scope);
+        if (mode == CompatibilityMode.UNSCOPED) {
+            logger.info("LegacyToolPublicationProvider#listPublishedTools - mode={} tenantId={} toolCount={}",
+                    mode.name().toLowerCase(),
+                    scope != null ? scope.tenantId() : "default",
+                    toolCount);
+            return;
+        }
+        logger.warn(
+                "LegacyToolPublicationProvider#listPublishedTools - mode={} tenantId={} spaceId={} agentAppCode={} toolCount={}",
+                mode.name().toLowerCase(),
+                scope != null ? scope.tenantId() : "default",
+                scope != null ? scope.spaceId() : null,
+                scope != null ? scope.agentAppCode() : null,
+                toolCount);
+    }
+
+    private static String providerIdValue() {
+        return "legacy-bridge";
+    }
+
+    enum CompatibilityMode {
+        UNSCOPED,
+        EXPLICIT_REQUEST,
+        FALLBACK,
+        SCOPED_COMPATIBILITY
+    }
 }
+
+

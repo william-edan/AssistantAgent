@@ -53,6 +53,36 @@ class LegacyToolPublicationProviderTest {
 		assertSame(tool, descriptors.get(0).directTool());
 	}
 
+	@Test
+	void shouldClassifyScopedArtifactMergeAsFallbackCompatibility() {
+		ToolPublicationProvider.PublicationScope scope = new ToolPublicationProvider.PublicationScope(
+				"default",
+				9L,
+				"prod",
+				"finance-agent",
+				ToolPublicationProvider.SourceSelectionMode.MERGE,
+				List.of("artifact-catalog"),
+				List.of());
+
+		assertEquals(LegacyToolPublicationProvider.CompatibilityMode.FALLBACK,
+				LegacyToolPublicationProvider.compatibilityMode(scope));
+	}
+
+	@Test
+	void shouldClassifyExplicitLegacyRequestSeparately() {
+		ToolPublicationProvider.PublicationScope scope = new ToolPublicationProvider.PublicationScope(
+				"default",
+				9L,
+				"prod",
+				"finance-agent",
+				ToolPublicationProvider.SourceSelectionMode.EXCLUSIVE,
+				List.of("legacy-bridge"),
+				List.of());
+
+		assertEquals(LegacyToolPublicationProvider.CompatibilityMode.EXPLICIT_REQUEST,
+				LegacyToolPublicationProvider.compatibilityMode(scope));
+	}
+
 	private static CodeactTool mockCodeactTool(String name, String description) {
 		CodeactTool tool = mock(CodeactTool.class);
 		ToolDefinition definition = DefaultToolDefinition.builder()
@@ -77,3 +107,4 @@ class LegacyToolPublicationProviderTest {
 	}
 
 }
+
