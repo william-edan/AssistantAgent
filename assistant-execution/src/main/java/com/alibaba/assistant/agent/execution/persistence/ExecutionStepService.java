@@ -22,6 +22,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
 import java.util.List;
+import java.util.Optional;
 
 /**
  * Service for execution-step persistence lookups.
@@ -37,5 +38,16 @@ public class ExecutionStepService extends ServiceImpl<ExecutionStepMapper, Execu
         query.eq(ExecutionStep::getRunId, runId.trim());
         query.orderByAsc(ExecutionStep::getId);
         return list(query);
+    }
+
+    public Optional<ExecutionStep> findByRunIdAndStepId(String runId, String stepId) {
+        if (!StringUtils.hasText(runId) || !StringUtils.hasText(stepId)) {
+            return Optional.empty();
+        }
+        LambdaQueryWrapper<ExecutionStep> query = new LambdaQueryWrapper<>();
+        query.eq(ExecutionStep::getRunId, runId.trim());
+        query.eq(ExecutionStep::getStepId, stepId.trim());
+        query.orderByDesc(ExecutionStep::getId);
+        return Optional.ofNullable(getOne(query, false));
     }
 }

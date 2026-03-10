@@ -32,153 +32,58 @@ public class AuditEvent {
 
 	@TableId(type = IdType.AUTO)
 	private Long id;
-
 	private String eventId;
-
 	private String traceId;
-
 	private String executionId;
-
+	private String runId;
+	private String stepId;
+	private String eventType;
 	private String threadId;
-
 	private String assistantUid;
-
 	private String systemCode;
-
 	private String toolName;
-
 	private String agentPhase;
-
 	private String toolInput;
-
 	private String toolOutput;
-
 	private Long durationMs;
-
 	private String status;
-
 	private String errorMessage;
-
 	private LocalDateTime createdAt;
 
-	public Long getId() {
-		return id;
-	}
-
-	public void setId(Long id) {
-		this.id = id;
-	}
-
-	public String getEventId() {
-		return eventId;
-	}
-
-	public void setEventId(String eventId) {
-		this.eventId = eventId;
-	}
-
-	public String getTraceId() {
-		return traceId;
-	}
-
-	public void setTraceId(String traceId) {
-		this.traceId = traceId;
-	}
-
-	public String getExecutionId() {
-		return executionId;
-	}
-
-	public void setExecutionId(String executionId) {
-		this.executionId = executionId;
-	}
-
-	public String getThreadId() {
-		return threadId;
-	}
-
-	public void setThreadId(String threadId) {
-		this.threadId = threadId;
-	}
-
-	public String getAssistantUid() {
-		return assistantUid;
-	}
-
-	public void setAssistantUid(String assistantUid) {
-		this.assistantUid = assistantUid;
-	}
-
-	public String getSystemCode() {
-		return systemCode;
-	}
-
-	public void setSystemCode(String systemCode) {
-		this.systemCode = systemCode;
-	}
-
-	public String getToolName() {
-		return toolName;
-	}
-
-	public void setToolName(String toolName) {
-		this.toolName = toolName;
-	}
-
-	public String getAgentPhase() {
-		return agentPhase;
-	}
-
-	public void setAgentPhase(String agentPhase) {
-		this.agentPhase = agentPhase;
-	}
-
-	public String getToolInput() {
-		return toolInput;
-	}
-
-	public void setToolInput(String toolInput) {
-		this.toolInput = toolInput;
-	}
-
-	public String getToolOutput() {
-		return toolOutput;
-	}
-
-	public void setToolOutput(String toolOutput) {
-		this.toolOutput = toolOutput;
-	}
-
-	public Long getDurationMs() {
-		return durationMs;
-	}
-
-	public void setDurationMs(Long durationMs) {
-		this.durationMs = durationMs;
-	}
-
-	public String getStatus() {
-		return status;
-	}
-
-	public void setStatus(String status) {
-		this.status = status;
-	}
-
-	public String getErrorMessage() {
-		return errorMessage;
-	}
-
-	public void setErrorMessage(String errorMessage) {
-		this.errorMessage = errorMessage;
-	}
-
-	public LocalDateTime getCreatedAt() {
-		return createdAt;
-	}
-
-	public void setCreatedAt(LocalDateTime createdAt) {
-		this.createdAt = createdAt;
-	}
-
+	public Long getId() { return id; }
+	public void setId(Long id) { this.id = id; }
+	public String getEventId() { return eventId; }
+	public void setEventId(String eventId) { this.eventId = eventId; }
+	public String getTraceId() { return traceId; }
+	public void setTraceId(String traceId) { this.traceId = traceId; }
+	public String getExecutionId() { return executionId; }
+	public void setExecutionId(String executionId) { this.executionId = executionId; }
+	public String getRunId() { return runId; }
+	public void setRunId(String runId) { this.runId = runId; }
+	public String getStepId() { return stepId; }
+	public void setStepId(String stepId) { this.stepId = stepId; }
+	public String getEventType() { return eventType; }
+	public void setEventType(String eventType) { this.eventType = eventType; }
+	public String getThreadId() { return threadId; }
+	public void setThreadId(String threadId) { this.threadId = threadId; }
+	public String getAssistantUid() { return assistantUid; }
+	public void setAssistantUid(String assistantUid) { this.assistantUid = assistantUid; }
+	public String getSystemCode() { return systemCode; }
+	public void setSystemCode(String systemCode) { this.systemCode = systemCode; }
+	public String getToolName() { return toolName; }
+	public void setToolName(String toolName) { this.toolName = toolName; }
+	public String getAgentPhase() { return agentPhase; }
+	public void setAgentPhase(String agentPhase) { this.agentPhase = agentPhase; }
+	public String getToolInput() { return toolInput; }
+	public void setToolInput(String toolInput) { this.toolInput = toolInput; }
+	public String getToolOutput() { return toolOutput; }
+	public void setToolOutput(String toolOutput) { this.toolOutput = toolOutput; }
+	public Long getDurationMs() { return durationMs; }
+	public void setDurationMs(Long durationMs) { this.durationMs = durationMs; }
+	public String getStatus() { return status; }
+	public void setStatus(String status) { this.status = status; }
+	public String getErrorMessage() { return errorMessage; }
+	public void setErrorMessage(String errorMessage) { this.errorMessage = errorMessage; }
+	public LocalDateTime getCreatedAt() { return createdAt; }
+	public void setCreatedAt(LocalDateTime createdAt) { this.createdAt = createdAt; }
 }
