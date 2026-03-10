@@ -27,8 +27,14 @@ public enum StepStatus {
 
 	RUNNING,
 
+	WAITING_APPROVAL,
+
 	COMPLETED,
 
-	FAILED
+	FAILED,
+
+	SKIPPED,
+
+	CANCELLED
 
 }

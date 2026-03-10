@@ -22,6 +22,7 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 
@@ -45,6 +46,8 @@ public class FlowContext {
 	private final Map<String, Map<String, String>> stepRequestHeaders = new ConcurrentHashMap<>();
 
 	private final List<FlowExecutionListener> executionListeners = new CopyOnWriteArrayList<>();
+
+	private final Set<String> approvedSteps = ConcurrentHashMap.newKeySet();
 
 	private String systemCode;
 
@@ -139,6 +142,17 @@ public class FlowContext {
 
 	public List<FlowExecutionListener> getExecutionListeners() {
 		return List.copyOf(executionListeners);
+	}
+
+	public void approveStep(String stepId) {
+		if (stepId == null) {
+			return;
+		}
+		approvedSteps.add(stepId);
+	}
+
+	public boolean isStepApproved(String stepId) {
+		return stepId != null && approvedSteps.contains(stepId);
 	}
 
 	/**

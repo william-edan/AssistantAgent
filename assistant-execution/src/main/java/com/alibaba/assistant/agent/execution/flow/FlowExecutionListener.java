@@ -23,12 +23,18 @@ import com.alibaba.assistant.agent.execution.model.StepResult;
  */
 public interface FlowExecutionListener {
 
-    default void onStepStarted(StepDefinition step, FlowContext context) {
-    }
+	default void onStepStarted(StepDefinition step, FlowContext context) {
+	}
 
-    default void onStepCompleted(StepDefinition step, StepResult result, FlowContext context) {
-    }
+	default void onStepCompleted(StepDefinition step, StepResult result, FlowContext context) {
+	}
 
-    default void onStepFailed(StepDefinition step, StepResult result, FlowContext context) {
-    }
+	default void onStepFailed(StepDefinition step, StepResult result, FlowContext context) {
+	}
+
+	default void onStepSkipped(StepDefinition step, StepResult result, FlowContext context) {
+	}
+
+	default void onStepWaitingApproval(StepDefinition step, FlowContext context) {
+	}
 }

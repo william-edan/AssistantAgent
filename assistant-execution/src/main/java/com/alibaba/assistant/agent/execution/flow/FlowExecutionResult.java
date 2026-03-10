@@ -40,6 +40,12 @@ public class FlowExecutionResult {
 
 	private long durationMs;
 
+	private String lifecycleStatus;
+
+	private String pausedStepId;
+
+	private String approvalRequestId;
+
 	public FlowExecutionResult() {
 	}
 
@@ -89,6 +95,30 @@ public class FlowExecutionResult {
 
 	public void setDurationMs(long durationMs) {
 		this.durationMs = durationMs;
+	}
+
+	public String getLifecycleStatus() {
+		return lifecycleStatus;
+	}
+
+	public void setLifecycleStatus(String lifecycleStatus) {
+		this.lifecycleStatus = lifecycleStatus;
+	}
+
+	public String getPausedStepId() {
+		return pausedStepId;
+	}
+
+	public void setPausedStepId(String pausedStepId) {
+		this.pausedStepId = pausedStepId;
+	}
+
+	public String getApprovalRequestId() {
+		return approvalRequestId;
+	}
+
+	public void setApprovalRequestId(String approvalRequestId) {
+		this.approvalRequestId = approvalRequestId;
 	}
 
 }

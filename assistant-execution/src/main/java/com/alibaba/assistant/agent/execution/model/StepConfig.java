@@ -39,6 +39,8 @@ public class StepConfig {
 
 	private Object conditions;
 
+	private Object approvalGate;
+
 	public StepConfig() {
 	}
 
@@ -96,6 +98,14 @@ public class StepConfig {
 
 	public void setConditions(Object conditions) {
 		this.conditions = conditions;
+	}
+
+	public Object getApprovalGate() {
+		return approvalGate;
+	}
+
+	public void setApprovalGate(Object approvalGate) {
+		this.approvalGate = approvalGate;
 	}
 
 }

@@ -18,8 +18,12 @@ package com.alibaba.assistant.agent.execution.flow;
 import com.alibaba.assistant.agent.controlplane.identity.TokenBroker;
 import com.alibaba.assistant.agent.controlplane.identity.TokenLease;
 import com.alibaba.assistant.agent.controlplane.toolregistry.ToolMeta;
+import com.alibaba.assistant.agent.execution.model.JoinType;
+import com.alibaba.assistant.agent.execution.model.StepConfig;
+import com.alibaba.assistant.agent.execution.model.StepDefinition;
 import com.alibaba.assistant.agent.execution.model.StepResult;
 import com.alibaba.assistant.agent.execution.model.StepStatus;
+import com.alibaba.assistant.agent.execution.model.StepType;
 import com.alibaba.assistant.agent.execution.step.HttpStepExecutor;
 import com.alibaba.assistant.agent.execution.step.http.RequestBodySerializer;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -166,6 +170,127 @@ class DAGFlowExecutorTest {
                 "complete:submit_approval"), lifecycleEvents);
     }
 
+    @Test
+    void shouldRespectDependsOnOrderEvenWhenEntryOrderDiffers() throws Exception {
+        mockWebServer.enqueue(jsonResponse("{\"code\":0,\"msg\":\"create\",\"data\":{\"id\":1}}"));
+        mockWebServer.enqueue(jsonResponse("{\"code\":0,\"msg\":\"review\",\"data\":{}}"));
+        mockWebServer.enqueue(jsonResponse("{\"code\":0,\"msg\":\"notify\",\"data\":{}}"));
+
+        FlowExecutionResult result = dagFlowExecutor.execute(buildDependencyFlow(), createFlowContext(baseInputs()));
+
+        assertTrue(result.isSuccess());
+        assertEquals(StepStatus.COMPLETED, result.getStepStatuses().get("create"));
+        assertEquals(StepStatus.COMPLETED, result.getStepStatuses().get("review"));
+        assertEquals(StepStatus.COMPLETED, result.getStepStatuses().get("notify"));
+
+        RecordedRequest first = mockWebServer.takeRequest(1, TimeUnit.SECONDS);
+        RecordedRequest second = mockWebServer.takeRequest(1, TimeUnit.SECONDS);
+        RecordedRequest third = mockWebServer.takeRequest(1, TimeUnit.SECONDS);
+        assertNotNull(first);
+        assertNotNull(second);
+        assertNotNull(third);
+        assertEquals("/create", first.getPath());
+        assertEquals("/review", second.getPath());
+        assertEquals("/notify", third.getPath());
+    }
+
+    @Test
+    void shouldSkipConditionFalseStepAndStillRunAnyJoinStep() throws Exception {
+        mockWebServer.enqueue(jsonResponse("{\"code\":0,\"msg\":\"primary\",\"data\":{\"id\":1}}"));
+        mockWebServer.enqueue(jsonResponse("{\"code\":0,\"msg\":\"merge\",\"data\":{}}"));
+
+        FlowExecutionResult result = dagFlowExecutor.execute(buildAnyJoinFlow(), createFlowContext(baseInputs()));
+
+        assertTrue(result.isSuccess());
+        assertEquals(StepStatus.COMPLETED, result.getStepStatuses().get("primary"));
+        assertEquals(StepStatus.SKIPPED, result.getStepStatuses().get("optional"));
+        assertEquals(StepStatus.COMPLETED, result.getStepStatuses().get("merge"));
+        assertEquals(2, mockWebServer.getRequestCount());
+
+        RecordedRequest first = mockWebServer.takeRequest(1, TimeUnit.SECONDS);
+        RecordedRequest second = mockWebServer.takeRequest(1, TimeUnit.SECONDS);
+        assertNotNull(first);
+        assertNotNull(second);
+        assertEquals("/primary", first.getPath());
+        assertEquals("/merge", second.getPath());
+    }
+
+    @Test
+    void shouldPauseBeforeApprovalGatedStepExecutes() {
+        FlowExecutionResult result = dagFlowExecutor.execute(buildApprovalFlow(), createFlowContext(baseInputs()));
+
+        assertFalse(result.isSuccess());
+        assertEquals("WAITING_APPROVAL", result.getLifecycleStatus());
+        assertEquals("submit", result.getPausedStepId());
+        assertEquals(StepStatus.WAITING_APPROVAL, result.getStepStatuses().get("submit"));
+        assertEquals(0, mockWebServer.getRequestCount());
+    }
+    private FlowDefinition buildDependencyFlow() {
+        StepDefinition create = httpStep("create", "/create");
+        StepDefinition review = httpStep("review", "/review");
+        review.setDependsOn(List.of("create"));
+        StepDefinition notify = httpStep("notify", "/notify");
+        notify.setDependsOn(List.of("review"));
+
+        FlowDefinition flow = new FlowDefinition();
+        flow.setVersion("2.0");
+        flow.setEntry(List.of("notify", "review", "create"));
+        flow.setTerminal(List.of("notify"));
+        flow.setSteps(Map.of(
+                "notify", notify,
+                "review", review,
+                "create", create));
+        return flow;
+    }
+
+    private FlowDefinition buildAnyJoinFlow() {
+        StepDefinition primary = httpStep("primary", "/primary");
+        StepDefinition optional = httpStep("optional", "/optional");
+        StepConfig optionalConfig = optional.getConfig();
+        optionalConfig.setConditions(Map.of("enabled", true, "expression", false));
+        StepDefinition merge = httpStep("merge", "/merge");
+        merge.setDependsOn(List.of("primary", "optional"));
+        merge.setJoinType(JoinType.ANY);
+
+        FlowDefinition flow = new FlowDefinition();
+        flow.setVersion("2.0");
+        flow.setEntry(List.of("merge", "primary", "optional"));
+        flow.setTerminal(List.of("merge"));
+        flow.setSteps(Map.of(
+                "merge", merge,
+                "optional", optional,
+                "primary", primary));
+        return flow;
+    }
+
+    private FlowDefinition buildApprovalFlow() {
+        StepDefinition submit = httpStep("submit", "/submit");
+        submit.getConfig().setApprovalGate(Map.of("enabled", true, "channel", "controlplane"));
+
+        FlowDefinition flow = new FlowDefinition();
+        flow.setVersion("2.0");
+        flow.setEntry(List.of("submit"));
+        flow.setTerminal(List.of("submit"));
+        flow.setSteps(Map.of("submit", submit));
+        return flow;
+    }
+
+    private StepDefinition httpStep(String stepId, String endpoint) {
+        StepDefinition step = new StepDefinition();
+        step.setStepId(stepId);
+        step.setName(stepId);
+        step.setType(StepType.HTTP);
+        step.setJoinType(JoinType.ALL);
+        StepConfig config = new StepConfig();
+        config.setMethod("POST");
+        config.setEndpoint(endpoint);
+        config.setContentType("application/json");
+        config.setInputMapping(Map.of("reason", ""));
+        config.setOutputMapping(Map.of("message", "$.msg"));
+        config.setSuccessCondition("$.code == 0");
+        step.setConfig(config);
+        return step;
+    }
     private MockResponse jsonResponse(String body) {
         return new MockResponse()
                 .setResponseCode(200)
@@ -255,3 +380,5 @@ class DAGFlowExecutorTest {
         }
     }
 }
+
+

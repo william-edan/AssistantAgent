@@ -15,17 +15,28 @@
  */
 package com.alibaba.assistant.agent.execution.flow;
 
-import com.alibaba.assistant.agent.execution.model.*;
+import com.alibaba.assistant.agent.execution.model.JoinType;
+import com.alibaba.assistant.agent.execution.model.StepConfig;
+import com.alibaba.assistant.agent.execution.model.StepDefinition;
+import com.alibaba.assistant.agent.execution.model.StepResult;
+import com.alibaba.assistant.agent.execution.model.StepStatus;
+import com.alibaba.assistant.agent.execution.model.StepType;
 import com.alibaba.assistant.agent.execution.step.HttpStepExecutor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
-import java.util.*;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
 
 /**
- * DAG flow executor with linear execution semantics.
- * Supports sequential step execution, variable replacement, and failure short-circuit.
+ * DAG flow executor with dependency-aware sequential execution semantics.
  *
  * @author Assistant Agent Team
  * @since 1.0.0
@@ -54,54 +65,88 @@ public class DAGFlowExecutor {
 	 */
 	public FlowExecutionResult execute(FlowDefinition flow, FlowContext context) {
 		long startTime = System.currentTimeMillis();
-
 		Map<String, StepStatus> stepStatuses = new LinkedHashMap<>();
 		Map<String, StepResult> stepResults = new LinkedHashMap<>();
 
 		try {
-			List<String> executionOrder = buildExecutionOrder(flow);
+			List<String> candidates = orderedCandidates(flow);
+			Set<String> remaining = new LinkedHashSet<>(candidates);
+			while (!remaining.isEmpty()) {
+				boolean progressed = false;
+				for (String stepId : candidates) {
+					if (!remaining.contains(stepId)) {
+						continue;
+					}
+					StepDefinition step = flow.getSteps().get(stepId);
+					if (step == null) {
+						logger.error("DAGFlowExecutor#execute - step not found, stepId={}", stepId);
+						remaining.remove(stepId);
+						progressed = true;
+						continue;
+					}
+					if (!isStepReady(step, stepStatuses)) {
+						continue;
+					}
+					progressed = true;
+					remaining.remove(stepId);
+					context.setCurrentStepId(stepId);
 
-			for (String stepId : executionOrder) {
-				StepDefinition step = flow.getSteps().get(stepId);
-				if (step == null) {
-					logger.error("DAGFlowExecutor#execute - step not found, stepId={}", stepId);
-					continue;
-				}
+					if (!shouldExecute(step)) {
+						StepResult skipped = StepResult.success(Map.of("skipped", true));
+						stepStatuses.put(stepId, StepStatus.SKIPPED);
+						stepResults.put(stepId, skipped);
+						notifyStepSkipped(step, skipped, context);
+						context.setCurrentStepId(null);
+						continue;
+					}
 
-				logger.info("DAGFlowExecutor#execute - executing step, stepId={}, name={}", stepId, step.getName());
-				stepStatuses.put(stepId, StepStatus.RUNNING);
-				context.setCurrentStepId(stepId);
-				notifyStepStarted(step, context);
+					if (requiresApproval(step) && !context.isStepApproved(stepId)) {
+						stepStatuses.put(stepId, StepStatus.WAITING_APPROVAL);
+						StepResult waiting = new StepResult();
+						waiting.setSuccess(false);
+						waiting.setOutputs(Map.of("waitingApproval", true));
+						stepResults.put(stepId, waiting);
+						notifyStepWaitingApproval(step, context);
+						context.setCurrentStepId(null);
+						return waitingResult(stepStatuses, stepResults, context, stepId, startTime);
+					}
 
-				StepResult result = executeStep(step, context);
-				stepResults.put(stepId, result);
+					logger.info("DAGFlowExecutor#execute - executing step, stepId={}, name={}", stepId, step.getName());
+					stepStatuses.put(stepId, StepStatus.RUNNING);
+					notifyStepStarted(step, context);
 
-				if (result.isSuccess()) {
-					stepStatuses.put(stepId, StepStatus.COMPLETED);
-					context.putStepOutput(stepId, result.getOutputs());
-					notifyStepCompleted(step, result, context);
-					logger.info("DAGFlowExecutor#execute - step completed, stepId={}", stepId);
-				}
-				else {
-					stepStatuses.put(stepId, StepStatus.FAILED);
-					notifyStepFailed(step, result, context);
-					logger.error("DAGFlowExecutor#execute - step failed, stepId={}, error={}",
-							stepId, result.getErrorMessage());
+					StepResult result = executeStep(step, context);
+					stepResults.put(stepId, result);
+					if (result.isSuccess()) {
+						stepStatuses.put(stepId, StepStatus.COMPLETED);
+						context.putStepOutput(stepId, result.getOutputs());
+						notifyStepCompleted(step, result, context);
+						logger.info("DAGFlowExecutor#execute - step completed, stepId={}", stepId);
+					}
+					else {
+						stepStatuses.put(stepId, StepStatus.FAILED);
+						notifyStepFailed(step, result, context);
+						logger.error("DAGFlowExecutor#execute - step failed, stepId={}, error={}",
+								stepId, result.getErrorMessage());
+						context.setCurrentStepId(null);
+						return failedResult(stepStatuses, stepResults, context, result.getErrorMessage(), startTime);
+					}
 					context.setCurrentStepId(null);
-
-					FlowExecutionResult failResult = new FlowExecutionResult();
-					failResult.setSuccess(false);
-					failResult.setStepResults(stepResults);
-					failResult.setStepStatuses(stepStatuses);
-					failResult.setErrorMessage("Step execution failed: " + result.getErrorMessage());
-					failResult.setDurationMs(System.currentTimeMillis() - startTime);
-					return failResult;
 				}
-				context.setCurrentStepId(null);
+
+				if (!progressed) {
+					return failedResult(
+							stepStatuses,
+							stepResults,
+							context,
+							"Flow execution stalled due to unsatisfied dependencies or cyclic graph",
+							startTime);
+				}
 			}
 
 			FlowExecutionResult successResult = new FlowExecutionResult();
 			successResult.setSuccess(true);
+			successResult.setLifecycleStatus("COMPLETED");
 			successResult.setStepResults(stepResults);
 			successResult.setStepStatuses(stepStatuses);
 			successResult.setFinalOutputs(context.toMap());
@@ -110,62 +155,154 @@ public class DAGFlowExecutor {
 		}
 		catch (Exception e) {
 			logger.error("DAGFlowExecutor#execute - flow execution error", e);
-
-			FlowExecutionResult errorResult = new FlowExecutionResult();
-			errorResult.setSuccess(false);
-			errorResult.setStepResults(stepResults);
-			errorResult.setStepStatuses(stepStatuses);
-			errorResult.setErrorMessage("Flow execution error: " + e.getMessage());
-			errorResult.setDurationMs(System.currentTimeMillis() - startTime);
-			return errorResult;
+			return failedResult(stepStatuses, stepResults, context, "Flow execution error: " + e.getMessage(), startTime);
 		}
 	}
 
-	/**
-	 * Build linear execution order from entry points following next references.
-	 */
-	private List<String> buildExecutionOrder(FlowDefinition flow) {
-		List<String> order = new ArrayList<>();
-		Set<String> visited = new HashSet<>();
-
-		logger.info("DAGFlowExecutor#buildExecutionOrder - entry={}, totalSteps={}",
-				flow.getEntry(), flow.getSteps().size());
-
-		for (String entryId : flow.getEntry()) {
-			buildOrderRecursive(entryId, flow, order, visited);
+	private List<String> orderedCandidates(FlowDefinition flow) {
+		LinkedHashSet<String> ordered = new LinkedHashSet<>();
+		if (flow.getEntry() != null) {
+			ordered.addAll(flow.getEntry());
 		}
-
-		logger.info("DAGFlowExecutor#buildExecutionOrder - order={}", order);
-		return order;
+		if (flow.getSteps() != null) {
+			ordered.addAll(flow.getSteps().keySet());
+		}
+		return new ArrayList<>(ordered);
 	}
 
-	private void buildOrderRecursive(String stepId, FlowDefinition flow, List<String> order, Set<String> visited) {
-		if (visited.contains(stepId)) {
-			return;
+	private boolean isStepReady(StepDefinition step, Map<String, StepStatus> stepStatuses) {
+		List<String> dependsOn = step.getDependsOn();
+		if (dependsOn == null || dependsOn.isEmpty()) {
+			return true;
 		}
-
-		visited.add(stepId);
-		order.add(stepId);
-
-		StepDefinition step = flow.getSteps().get(stepId);
-		if (step == null) {
-			logger.warn("DAGFlowExecutor#buildOrderRecursive - step not found, stepId={}", stepId);
-			return;
+		JoinType joinType = step.getJoinType() != null ? step.getJoinType() : JoinType.ALL;
+		if (joinType == JoinType.ANY) {
+			return dependsOn.stream().map(stepStatuses::get).anyMatch(this::isSatisfiedDependencyStatus);
 		}
+		return dependsOn.stream().map(stepStatuses::get).allMatch(this::isSatisfiedDependencyStatus);
+	}
 
-		if (step.getNext() != null && !step.getNext().isEmpty()) {
-			for (String nextId : step.getNext()) {
-				buildOrderRecursive(nextId, flow, order, visited);
+	private boolean isSatisfiedDependencyStatus(StepStatus status) {
+		return status == StepStatus.COMPLETED || status == StepStatus.SKIPPED;
+	}
+
+	private boolean shouldExecute(StepDefinition step) {
+		StepConfig config = step.getConfig();
+		if (config == null || config.getConditions() == null) {
+			return true;
+		}
+		Object conditions = config.getConditions();
+		if (conditions instanceof Boolean bool) {
+			return bool;
+		}
+		if (conditions instanceof Number number) {
+			return number.intValue() != 0;
+		}
+		if (conditions instanceof String text) {
+			return parseBoolean(text, true);
+		}
+		if (conditions instanceof Map<?, ?> map) {
+			Object enabled = map.get("enabled");
+			if (enabled != null && !parseBoolean(enabled, true)) {
+				return true;
+			}
+			Object expression = firstNonNull(map.get("expression"), map.get("result"), map.get("value"), map.get("when"));
+			return expression == null || parseBoolean(expression, true);
+		}
+		return true;
+	}
+
+	private boolean requiresApproval(StepDefinition step) {
+		StepConfig config = step.getConfig();
+		if (config == null || config.getApprovalGate() == null) {
+			return false;
+		}
+		Object approvalGate = config.getApprovalGate();
+		if (approvalGate instanceof Boolean bool) {
+			return bool;
+		}
+		if (approvalGate instanceof Number number) {
+			return number.intValue() != 0;
+		}
+		if (approvalGate instanceof String text) {
+			return parseBoolean(text, true);
+		}
+		if (approvalGate instanceof Map<?, ?> map) {
+			Object enabled = firstNonNull(map.get("enabled"), map.get("required"));
+			return enabled == null || parseBoolean(enabled, true);
+		}
+		return true;
+	}
+
+	private boolean parseBoolean(Object candidate, boolean defaultValue) {
+		if (candidate == null) {
+			return defaultValue;
+		}
+		if (candidate instanceof Boolean bool) {
+			return bool;
+		}
+		if (candidate instanceof Number number) {
+			return number.intValue() != 0;
+		}
+		String normalized = String.valueOf(candidate).trim().toLowerCase(Locale.ROOT);
+		return switch (normalized) {
+			case "1", "true", "yes", "y", "on" -> true;
+			case "0", "false", "no", "n", "off" -> false;
+			default -> defaultValue;
+		};
+	}
+
+	private Object firstNonNull(Object... values) {
+		if (values == null) {
+			return null;
+		}
+		for (Object value : values) {
+			if (value != null) {
+				return value;
 			}
 		}
+		return null;
 	}
 
 	private StepResult executeStep(StepDefinition step, FlowContext context) {
 		if (step.getType() == StepType.HTTP) {
 			return httpStepExecutor.execute(step.getConfig(), context);
 		}
-
 		return StepResult.failure("Unsupported step type: " + step.getType());
+	}
+
+	private FlowExecutionResult waitingResult(
+			Map<String, StepStatus> stepStatuses,
+			Map<String, StepResult> stepResults,
+			FlowContext context,
+			String pausedStepId,
+			long startTime) {
+		FlowExecutionResult waitingResult = new FlowExecutionResult();
+		waitingResult.setSuccess(false);
+		waitingResult.setLifecycleStatus("WAITING_APPROVAL");
+		waitingResult.setPausedStepId(pausedStepId);
+		waitingResult.setStepResults(stepResults);
+		waitingResult.setStepStatuses(stepStatuses);
+		waitingResult.setFinalOutputs(context.toMap());
+		waitingResult.setDurationMs(System.currentTimeMillis() - startTime);
+		return waitingResult;
+	}
+
+	private FlowExecutionResult failedResult(
+			Map<String, StepStatus> stepStatuses,
+			Map<String, StepResult> stepResults,
+			FlowContext context,
+			String errorMessage,
+			long startTime) {
+		FlowExecutionResult errorResult = new FlowExecutionResult();
+		errorResult.setSuccess(false);
+		errorResult.setLifecycleStatus("FAILED");
+		errorResult.setStepResults(stepResults);
+		errorResult.setStepStatuses(stepStatuses);
+		errorResult.setFinalOutputs(context != null ? context.toMap() : Map.of());
+		errorResult.setErrorMessage(errorMessage);
+		errorResult.setDurationMs(System.currentTimeMillis() - startTime);
+		return errorResult;
 	}
 
 	private void notifyStepStarted(StepDefinition step, FlowContext context) {
@@ -183,6 +320,18 @@ public class DAGFlowExecutor {
 	private void notifyStepFailed(StepDefinition step, StepResult result, FlowContext context) {
 		for (FlowExecutionListener listener : context.getExecutionListeners()) {
 			listener.onStepFailed(step, result, context);
+		}
+	}
+
+	private void notifyStepSkipped(StepDefinition step, StepResult result, FlowContext context) {
+		for (FlowExecutionListener listener : context.getExecutionListeners()) {
+			listener.onStepSkipped(step, result, context);
+		}
+	}
+
+	private void notifyStepWaitingApproval(StepDefinition step, FlowContext context) {
+		for (FlowExecutionListener listener : context.getExecutionListeners()) {
+			listener.onStepWaitingApproval(step, context);
 		}
 	}
 
