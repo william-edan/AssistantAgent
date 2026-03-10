@@ -168,8 +168,38 @@ The runtime execution layer may add:
 
 The runtime execution layer must not add:
 
-1. a second primary source-of-truth step-definition type that duplicates `StepBinding`
-2. a new publication-time conversion back into `ToolMeta`
+1. a second primary source-of-truth step-definition type that duplicates StepBinding
+2. a new publication-time conversion back into ToolMeta
+
+## 3.6 Flow result and pause/resume contract
+
+FlowExecutionResult remains the executor return envelope, but it must represent non-terminal pause states during cutover.
+
+Required semantics:
+
+1. success=true means the run reached a successful terminal state
+2. success=false does not automatically mean failure; it may also mean WAITING_APPROVAL
+3. the result object must carry the run lifecycle status explicitly
+4. when the lifecycle status is WAITING_APPROVAL, the result must carry enough metadata to identify the paused step and the persisted approval request
+
+## 3.7 Step skip semantics
+
+The frozen event contract intentionally does not add a separate STEP_SKIPPED event type.
+
+Rules:
+
+1. dependency- or condition-driven skips should use lifecycle status SKIPPED
+2. controller payloads and persistence may surface SKIPPED
+3. if a step-level event must be emitted for a skipped step during cutover, it should reuse STEP_COMPLETED with lifecycle status SKIPPED
+
+## 3.8 Approval wait contract
+
+Approval gating during artifact-native execution is frozen as:
+
+1. a workflow step may enter WAITING_APPROVAL before its side-effecting execution starts
+2. a persisted ApprovalRequest row becomes the durable handshake between runtime pause and operator action
+3. the runtime event stream must emit STEP_WAITING_APPROVAL
+4. resumption must emit RUN_RESUMED
 
 ---
 
