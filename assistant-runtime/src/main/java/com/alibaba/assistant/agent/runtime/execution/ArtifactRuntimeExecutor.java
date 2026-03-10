@@ -54,19 +54,30 @@ public class ArtifactRuntimeExecutor {
 
     private final CredentialBroker credentialBroker;
 
+    private final ExecutionRuntimePersistenceRecorder persistenceRecorder;
+
     private final ObjectMapper objectMapper;
 
     public ArtifactRuntimeExecutor(DAGFlowExecutor dagFlowExecutor) {
-        this(dagFlowExecutor, null, new ObjectMapper());
+        this(dagFlowExecutor, null, null, new ObjectMapper());
+    }
+
+    public ArtifactRuntimeExecutor(
+            DAGFlowExecutor dagFlowExecutor,
+            @Nullable CredentialBroker credentialBroker,
+            ObjectMapper objectMapper) {
+        this(dagFlowExecutor, credentialBroker, null, objectMapper);
     }
 
     @Autowired
     public ArtifactRuntimeExecutor(
             DAGFlowExecutor dagFlowExecutor,
             @Nullable CredentialBroker credentialBroker,
+            @Nullable ExecutionRuntimePersistenceRecorder persistenceRecorder,
             ObjectMapper objectMapper) {
         this.dagFlowExecutor = dagFlowExecutor;
         this.credentialBroker = credentialBroker;
+        this.persistenceRecorder = persistenceRecorder;
         this.objectMapper = objectMapper;
     }
 
@@ -92,6 +103,9 @@ public class ArtifactRuntimeExecutor {
         List<ExecutionEvent> executionEvents = executionEventCollector.hasStepEvents()
                 ? executionEventCollector.events()
                 : buildExecutionEvents(runId, descriptor, flowResult);
+        if (persistenceRecorder != null) {
+            persistenceRecorder.record(descriptor, flowContext, flowResult, executionEvents);
+        }
 
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("success", flowResult.isSuccess());
@@ -483,3 +497,4 @@ public class ArtifactRuntimeExecutor {
         }
     }
 }
+

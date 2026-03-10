@@ -21,6 +21,7 @@ import com.alibaba.assistant.agent.execution.flow.FlowDefinition;
 import com.alibaba.assistant.agent.execution.flow.FlowExecutionResult;
 import com.alibaba.assistant.agent.runtime.compiler.RuntimeArtifact;
 import com.alibaba.assistant.agent.runtime.registry.PublishedToolDescriptor;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.ai.chat.model.ToolContext;
@@ -29,8 +30,8 @@ import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.same;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
@@ -41,7 +42,12 @@ class ArtifactRuntimeExecutorTest {
     @Test
     void shouldExecuteRuntimeArtifactFlowWithPublishedSystemCode() {
         DAGFlowExecutor dagFlowExecutor = mock(DAGFlowExecutor.class);
-        ArtifactRuntimeExecutor executor = new ArtifactRuntimeExecutor(dagFlowExecutor);
+        ExecutionRuntimePersistenceRecorder persistenceRecorder = mock(ExecutionRuntimePersistenceRecorder.class);
+        ArtifactRuntimeExecutor executor = new ArtifactRuntimeExecutor(
+                dagFlowExecutor,
+                null,
+                persistenceRecorder,
+                new ObjectMapper());
         RuntimeArtifact artifact = runtimeArtifact("oa.leave.apply");
         PublishedToolDescriptor descriptor = PublishedToolDescriptor.forArtifact(
                 "artifact-catalog",
@@ -63,6 +69,7 @@ class ArtifactRuntimeExecutorTest {
 
         ArgumentCaptor<FlowContext> flowContextCaptor = ArgumentCaptor.forClass(FlowContext.class);
         verify(dagFlowExecutor).execute(same(artifact.getFlowDefinition()), flowContextCaptor.capture());
+        verify(persistenceRecorder).record(same(descriptor), any(FlowContext.class), same(flowExecutionResult), anyList());
         assertEquals("gougu_oa", flowContextCaptor.getValue().getSystemCode());
         assertEquals("u1", flowContextCaptor.getValue().getAssistantUid());
         assertEquals("T-1", flowContextCaptor.getValue().getThreadId());

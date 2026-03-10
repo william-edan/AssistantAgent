@@ -321,9 +321,10 @@ class SlotCollectionIntegrationTest {
 		assertEquals("2026-03-03", secondResponse.collected.get("start_date"));
 		assertNull(secondResponse.collected.get("end_date"));
 
-		// slot_confirm should still build a form from current state, but execution must not be auto-ready.
+		// slot_confirm must keep the flow in collecting mode until the missing required slot is provided.
 		SlotConfirmTool.Response confirmResponse = slotConfirmTool.apply(new SlotConfirmTool.Request(), toolContext);
-		assertEquals("CONFIRMING", confirmResponse.status);
+		assertEquals("COLLECTING", confirmResponse.status);
+		assertTrue(confirmResponse.message.contains("end_date"));
 	}
 
 	private static void mockEnricher(SlotEnricherService enricherService) {
@@ -369,3 +370,4 @@ class SlotCollectionIntegrationTest {
 		return new ToolContext(Map.of(ToolContextConstants.AGENT_STATE_CONTEXT_KEY, state));
 	}
 }
+
