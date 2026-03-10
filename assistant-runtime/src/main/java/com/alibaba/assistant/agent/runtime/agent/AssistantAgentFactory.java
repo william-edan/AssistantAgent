@@ -31,6 +31,7 @@ import com.alibaba.assistant.agent.runtime.interceptor.PolicyCheckModelIntercept
 import com.alibaba.assistant.agent.runtime.interceptor.PolicyGuardToolInterceptor;
 import com.alibaba.assistant.agent.runtime.intent.AssistantFastIntentHook;
 import com.alibaba.assistant.agent.runtime.registry.TenantAwareToolRegistry;
+import com.alibaba.assistant.agent.runtime.tool.codeact.ArtifactBackedCodeactTool;
 import com.alibaba.assistant.agent.runtime.tool.codeact.CapabilityBridgeToolFactory;
 import com.alibaba.cloud.ai.graph.CompileConfig;
 import com.alibaba.cloud.ai.graph.OverAllState;
@@ -85,13 +86,13 @@ public class AssistantAgentFactory {
 			1. 意图识别：理解用户需求，匹配当前上下文中的可用工具
 			2. 槽位收集：调用 slot_collect 工具，传入真实 toolCode（禁止自行编造）
 			3. 参数确认：槽位全部收集完成后，调用 slot_confirm 展示确认
-			4. 执行操作：用户明确确认后，必须调用对应的 *_execute 业务工具执行，不要只回复文本
+			4. 执行操作：用户明确确认后，必须调用 artifact_execute 执行，不要只回复文本
 			5. 结果反馈：向用户报告执行结果
 
 			【重要规则】
 			- 调用 slot_collect 时，toolCode 参数必须使用当前可用工具目录中的 toolCode，不要编造
 			- 不要自行构造 slotSchema 或 requestSchema，留空即可，系统会根据 toolCode 自动加载
-			- 确认执行时，调用 *_execute 工具参数里必须携带 confirmed=true
+			- 确认执行时，调用 artifact_execute 工具参数里必须携带 confirmed=true
 			- 如果 slot_collect 返回 ERROR，不要重复调用同样的参数，应该向用户说明情况
 			- 如果用户的请求不匹配任何已注册工具，直接用 send_message 回复用户
 
@@ -204,7 +205,12 @@ public class AssistantAgentFactory {
 		if (tenantAwareToolRegistry != null) {
 			List<CodeactTool> tenantTools = tenantAwareToolRegistry.getAllTools();
 			if (tenantTools != null && !tenantTools.isEmpty()) {
-				merged.addAll(tenantTools);
+				for (CodeactTool tenantTool : tenantTools) {
+					if (tenantTool instanceof ArtifactBackedCodeactTool) {
+						continue;
+					}
+					merged.add(tenantTool);
+				}
 			}
 		}
 		return merged;
@@ -277,7 +283,7 @@ public class AssistantAgentFactory {
 				continue;
 			}
 			String normalized = name.trim().toLowerCase(Locale.ROOT);
-			if (normalized.endsWith("_execute") || normalized.matches(".*_execute_[0-9]+$")) {
+			if ("artifact_execute".equals(normalized) || normalized.endsWith("_execute") || normalized.matches(".*_execute_[0-9]+$")) {
 				builder.approvalOn(name, ToolConfig.builder()
 						.description("需要用户确认后执行")
 						.build());
@@ -313,3 +319,6 @@ public class AssistantAgentFactory {
 	}
 
 }
+
+
+

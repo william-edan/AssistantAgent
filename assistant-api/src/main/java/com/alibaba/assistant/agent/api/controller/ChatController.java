@@ -110,6 +110,9 @@ public class ChatController {
 		if (StringUtils.hasText(effectiveAssistantUid)) {
 			stateDelta.put(AssistantStateKeys.ASSISTANT_UID, effectiveAssistantUid);
 		}
+		if (StringUtils.hasText(defaultAppName)) {
+			stateDelta.put(AssistantStateKeys.AGENT_APP_CODE, defaultAppName);
+		}
 
 		return doRunSse(
 				defaultAppName,
@@ -480,7 +483,8 @@ public class ChatController {
 		request.stateDelta = mergeStateDelta(
 				request.stateDelta,
 				userId,
-				resolveSystemCode(authenticatedUser));
+				resolveSystemCode(authenticatedUser),
+				request.appName);
 	}
 
 	private void normalizeResumeRequest(
@@ -497,7 +501,8 @@ public class ChatController {
 		request.stateDelta = mergeStateDelta(
 				request.stateDelta,
 				request.userId,
-				resolveSystemCode(authenticatedUser));
+				resolveSystemCode(authenticatedUser),
+				request.appName);
 	}
 
 	private String resolveAppName(String... candidates) {
@@ -513,7 +518,7 @@ public class ChatController {
 	}
 
 	private Map<String, Object> mergeStateDelta(
-			Map<String, Object> baseStateDelta, String assistantUid, String systemCode) {
+			Map<String, Object> baseStateDelta, String assistantUid, String systemCode, String agentAppCode) {
 		Map<String, Object> merged = new LinkedHashMap<>();
 		if (baseStateDelta != null) {
 			merged.putAll(baseStateDelta);
@@ -523,6 +528,9 @@ public class ChatController {
 		}
 		if (StringUtils.hasText(systemCode)) {
 			merged.put(AssistantStateKeys.SYSTEM_CODE, systemCode);
+		}
+		if (StringUtils.hasText(agentAppCode)) {
+			merged.put(AssistantStateKeys.AGENT_APP_CODE, agentAppCode);
 		}
 		return merged.isEmpty() ? null : merged;
 	}
@@ -565,3 +573,4 @@ public class ChatController {
 	}
 
 }
+

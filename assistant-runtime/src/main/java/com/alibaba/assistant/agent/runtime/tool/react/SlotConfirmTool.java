@@ -17,6 +17,8 @@ package com.alibaba.assistant.agent.runtime.tool.react;
 
 import com.alibaba.assistant.agent.controlplane.toolregistry.ToolMeta;
 import com.alibaba.assistant.agent.runtime.agent.AssistantStateKeys;
+import com.alibaba.assistant.agent.runtime.registry.ArtifactPublicationLookupService;
+import com.alibaba.assistant.agent.runtime.registry.PublishedToolDescriptor;
 import com.alibaba.assistant.agent.slot.SlotEnricherService;
 import com.alibaba.assistant.agent.slot.SlotSchemaParser;
 import com.alibaba.assistant.agent.slot.computed.ComputedFieldProcessor;
@@ -75,17 +77,29 @@ public class SlotConfirmTool implements BiFunction<SlotConfirmTool.Request, Tool
     private final ComputedFieldProcessor computedFieldProcessor;
     private final FormDisplayConfigService formDisplayConfigService;
     private final ObjectMapper objectMapper;
+    private final ArtifactPublicationLookupService artifactPublicationLookupService;
 
     public SlotConfirmTool(SlotSchemaParser slotSchemaParser,
                            SlotEnricherService slotEnricherService,
                            ComputedFieldProcessor computedFieldProcessor,
                            FormDisplayConfigService formDisplayConfigService,
                            ObjectMapper objectMapper) {
+        this(slotSchemaParser, slotEnricherService, computedFieldProcessor, formDisplayConfigService, objectMapper,
+                null);
+    }
+
+    public SlotConfirmTool(SlotSchemaParser slotSchemaParser,
+                           SlotEnricherService slotEnricherService,
+                           ComputedFieldProcessor computedFieldProcessor,
+                           FormDisplayConfigService formDisplayConfigService,
+                           ObjectMapper objectMapper,
+                           ArtifactPublicationLookupService artifactPublicationLookupService) {
         this.slotSchemaParser = slotSchemaParser;
         this.slotEnricherService = slotEnricherService;
         this.computedFieldProcessor = computedFieldProcessor;
         this.formDisplayConfigService = formDisplayConfigService;
         this.objectMapper = objectMapper;
+        this.artifactPublicationLookupService = artifactPublicationLookupService;
     }
 
     public static ToolCallback createToolCallback(SlotConfirmTool tool) {
@@ -101,7 +115,7 @@ public class SlotConfirmTool implements BiFunction<SlotConfirmTool.Request, Tool
 
         try {
             OverAllState state = getState(toolContext);
-            ToolMetaSnapshot snapshot = resolveToolMetaSnapshot(effectiveRequest, state);
+            ToolMetaSnapshot snapshot = resolveToolMetaSnapshot(effectiveRequest, state, toolContext);
             if (snapshot == null) {
                 return Response.error("Missing tool meta snapshot or slot schema");
             }
@@ -161,7 +175,7 @@ public class SlotConfirmTool implements BiFunction<SlotConfirmTool.Request, Tool
         return stateObject instanceof OverAllState ? (OverAllState) stateObject : null;
     }
 
-    private ToolMetaSnapshot resolveToolMetaSnapshot(Request request, OverAllState state) {
+    private ToolMetaSnapshot resolveToolMetaSnapshot(Request request, OverAllState state, ToolContext toolContext) {
         if (state != null) {
             Object raw = state.value(AssistantStateKeys.MATCHED_TOOL_META, Object.class).orElse(null);
             if (raw != null) {
@@ -181,6 +195,14 @@ public class SlotConfirmTool implements BiFunction<SlotConfirmTool.Request, Tool
             }
         }
 
+        if (StringUtils.hasText(request.toolCode) && artifactPublicationLookupService != null) {
+            Optional<PublishedToolDescriptor> publishedArtifact = artifactPublicationLookupService
+                    .findPublishedArtifact(request.toolCode, toolContext);
+            if (publishedArtifact.isPresent()) {
+                return convertFromPublishedArtifact(publishedArtifact.get());
+            }
+        }
+
         if (StringUtils.hasText(request.slotSchema) || StringUtils.hasText(request.requestSchema)) {
             ToolMetaSnapshot snapshot = new ToolMetaSnapshot();
             snapshot.setToolCode(request.toolCode);
@@ -193,6 +215,16 @@ public class SlotConfirmTool implements BiFunction<SlotConfirmTool.Request, Tool
         return null;
     }
 
+    private ToolMetaSnapshot convertFromPublishedArtifact(PublishedToolDescriptor descriptor) {
+        ToolMetaSnapshot snapshot = new ToolMetaSnapshot();
+        snapshot.setToolCode(descriptor.artifact().getArtifactCode());
+        if (descriptor.artifact().getInteraction() != null) {
+            snapshot.setSlotSchema(descriptor.artifact().getInteraction().slotSchemaJson());
+            snapshot.setBehaviorConfig(descriptor.artifact().getInteraction().askStrategyJson());
+        }
+        snapshot.setSystemCode(descriptor.executionSystemCode());
+        return snapshot;
+    }
     private ToolMetaSnapshot convertFromToolMeta(ToolMeta toolMeta) {
         ToolMetaSnapshot snapshot = new ToolMetaSnapshot();
         snapshot.setToolCode(toolMeta.getToolCode());
@@ -700,3 +732,5 @@ public class SlotConfirmTool implements BiFunction<SlotConfirmTool.Request, Tool
         public List<EnrichedSlot> enrichedSlots;
     }
 }
+
+

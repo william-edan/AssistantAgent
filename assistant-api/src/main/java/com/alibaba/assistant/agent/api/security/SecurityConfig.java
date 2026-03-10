@@ -61,7 +61,12 @@ public class SecurityConfig {
 						exceptions.authenticationEntryPoint(new HttpStatusEntryPoint(HttpStatus.UNAUTHORIZED)))
 				.authorizeHttpRequests(authorize -> authorize
 						.requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
-						.requestMatchers("/api/chat/**").authenticated()
+						.requestMatchers("/api/chat/**").hasAuthority(AuthenticatedUserAuthorityMapper.PERMISSION_CHAT)
+						.requestMatchers("/api/controlplane/**").hasAnyAuthority(
+								AuthenticatedUserAuthorityMapper.PERMISSION_CONTROLPLANE,
+								AuthenticatedUserAuthorityMapper.ROLE_CONTROLPLANE_ADMIN,
+								AuthenticatedUserAuthorityMapper.ROLE_SPACE_ADMIN,
+								AuthenticatedUserAuthorityMapper.ROLE_AGENT_APP_ADMIN)
 						.anyRequest().permitAll())
 				.addFilterBefore(tokenIntrospectionAuthenticationFilter, UsernamePasswordAuthenticationFilter.class);
 		return http.build();
@@ -71,7 +76,7 @@ public class SecurityConfig {
 	public CorsConfigurationSource corsConfigurationSource() {
 		CorsConfiguration configuration = new CorsConfiguration();
 		configuration.setAllowedOriginPatterns(LOCAL_DEV_ORIGIN_PATTERNS);
-		configuration.setAllowedMethods(List.of("GET", "POST", "OPTIONS"));
+		configuration.setAllowedMethods(List.of("GET", "POST", "PUT", "OPTIONS"));
 		configuration.setAllowedHeaders(List.of("*"));
 		configuration.setExposedHeaders(List.of("Content-Type", "Cache-Control"));
 		configuration.setAllowCredentials(true);
@@ -80,6 +85,7 @@ public class SecurityConfig {
 		UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
 		source.registerCorsConfiguration("/system/auth/**", configuration);
 		source.registerCorsConfiguration("/api/chat/**", configuration);
+		source.registerCorsConfiguration("/api/controlplane/**", configuration);
 		return source;
 	}
 

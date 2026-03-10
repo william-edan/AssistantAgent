@@ -17,6 +17,7 @@ package com.alibaba.assistant.agent.api.security;
 
 import com.alibaba.assistant.agent.api.security.dto.LoginResult;
 import com.alibaba.assistant.agent.controlplane.identity.LocalUserAccount;
+import com.alibaba.assistant.agent.controlplane.identity.LocalUserGrantService;
 import com.alibaba.assistant.agent.controlplane.identity.mapper.LocalUserAccountMapper;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -35,6 +36,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -52,13 +54,15 @@ public class MigrationAuthService {
 
 	private static final List<String> DEFAULT_ROLES = List.of("assistant_user");
 
-	private static final List<String> DEFAULT_PERMISSIONS = List.of("assistant:chat");
+	private static final List<String> DEFAULT_PERMISSIONS = List.of(AuthenticatedUserAuthorityMapper.PERMISSION_CHAT);
 
 	private static final String STATUS_ACTIVE = "active";
 
 	private static final String DEFAULT_REDIS_KEY_PREFIX = "assistant:auth:session";
 
 	private final LocalUserAccountMapper localUserAccountMapper;
+
+	private final LocalUserGrantService localUserGrantService;
 
 	private final StringRedisTemplate stringRedisTemplate;
 
@@ -76,6 +80,7 @@ public class MigrationAuthService {
 
 	public MigrationAuthService(
 			LocalUserAccountMapper localUserAccountMapper,
+			LocalUserGrantService localUserGrantService,
 			StringRedisTemplate stringRedisTemplate,
 			ObjectMapper objectMapper,
 			@Value("${assistant.auth.local.client-id:assistant-agent}") String defaultClientId,
@@ -84,6 +89,7 @@ public class MigrationAuthService {
 			@Value("${assistant.auth.local.refresh-token-ttl-seconds:604800}") long refreshTokenTtlSeconds,
 			@Value("${assistant.auth.local.redis.key-prefix:" + DEFAULT_REDIS_KEY_PREFIX + "}") String redisKeyPrefix) {
 		this.localUserAccountMapper = localUserAccountMapper;
+		this.localUserGrantService = localUserGrantService;
 		this.stringRedisTemplate = stringRedisTemplate;
 		this.objectMapper = objectMapper;
 		this.defaultClientId = defaultClientId;
@@ -175,6 +181,8 @@ public class MigrationAuthService {
 			stringRedisTemplate.delete(accessTokenKey(accessToken));
 			return Optional.empty();
 		}
+		List<String> roles = resolveRoles(session.getAssistantUid());
+		List<String> permissions = resolvePermissions(session.getAssistantUid());
 		return Optional.of(new AuthenticatedUserContext(
 				session.getAssistantUid(),
 				session.getTenantId(),
@@ -183,8 +191,8 @@ public class MigrationAuthService {
 				accessToken,
 				session.getUsername(),
 				session.getDisplayName(),
-				DEFAULT_ROLES,
-				DEFAULT_PERMISSIONS));
+				roles,
+				permissions));
 	}
 
 	public Map<String, Object> getPermissionInfo(String accessToken) {
@@ -200,9 +208,9 @@ public class MigrationAuthService {
 				"user",
 				user,
 				"roles",
-				DEFAULT_ROLES,
+				context.roles(),
 				"permissions",
-				DEFAULT_PERMISSIONS);
+				context.permissions());
 	}
 
 	public void logout(@Nullable String accessToken, @Nullable String refreshToken) {
@@ -319,6 +327,52 @@ public class MigrationAuthService {
 		}
 		if (StringUtils.hasText(session.getRefreshToken())) {
 			stringRedisTemplate.delete(refreshTokenKey(session.getRefreshToken()));
+		}
+	}
+
+	private List<String> resolveRoles(String assistantUid) {
+		return mergeDefaultGrants(loadGrantCodes(assistantUid, true), DEFAULT_ROLES);
+	}
+
+	private List<String> resolvePermissions(String assistantUid) {
+		return mergeDefaultGrants(loadGrantCodes(assistantUid, false), DEFAULT_PERMISSIONS);
+	}
+
+	private List<String> loadGrantCodes(String assistantUid, boolean roles) {
+		Long localUserId = parseLocalUserId(assistantUid);
+		if (localUserId == null) {
+			return List.of();
+		}
+		List<String> grants = roles
+				? localUserGrantService.findRoles(localUserId)
+				: localUserGrantService.findPermissions(localUserId);
+		return grants == null ? List.of() : grants;
+	}
+
+	private List<String> mergeDefaultGrants(List<String> resolvedGrants, List<String> defaults) {
+		LinkedHashSet<String> merged = new LinkedHashSet<>();
+		if (defaults != null) {
+			merged.addAll(defaults);
+		}
+		if (resolvedGrants != null) {
+			for (String value : resolvedGrants) {
+				if (StringUtils.hasText(value)) {
+					merged.add(value.trim());
+				}
+			}
+		}
+		return List.copyOf(merged);
+	}
+
+	private Long parseLocalUserId(String assistantUid) {
+		if (!StringUtils.hasText(assistantUid)) {
+			return null;
+		}
+		try {
+			return Long.parseLong(assistantUid.trim());
+		}
+		catch (NumberFormatException ignored) {
+			return null;
 		}
 	}
 

@@ -21,10 +21,11 @@ import com.alibaba.assistant.agent.common.tools.definition.CodeactToolDefinition
 import com.alibaba.assistant.agent.common.tools.definition.ReturnSchema;
 import com.alibaba.assistant.agent.core.tool.CodeactToolRegistry;
 import com.alibaba.assistant.agent.core.tool.DefaultCodeactToolRegistry;
+import com.alibaba.assistant.agent.core.tool.ToolContextScopedCodeactToolRegistry;
 import com.alibaba.assistant.agent.core.tool.schema.ReturnSchemaRegistry;
-import com.alibaba.assistant.agent.runtime.tool.codeact.CapabilityBridgeToolFactory;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.ai.chat.model.ToolContext;
 import org.springframework.context.annotation.Profile;
 import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Component;
@@ -35,133 +36,211 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Tenant-aware CodeactToolRegistry with snapshot cache.
- * Uses tenant-level cached snapshots and supports event-driven invalidation.
+ * Uses provider-driven publication snapshots and supports event-driven invalidation.
  *
  * @author Assistant Agent Team
  * @since 1.0.0
  */
 @Component
 @Profile("migration")
-public class TenantAwareToolRegistry implements CodeactToolRegistry {
+public class TenantAwareToolRegistry implements ToolContextScopedCodeactToolRegistry {
 
-	private static final Logger logger = LoggerFactory.getLogger(TenantAwareToolRegistry.class);
+    private static final Logger logger = LoggerFactory.getLogger(TenantAwareToolRegistry.class);
 
-	private static final Duration SNAPSHOT_TTL = Duration.ofMinutes(5);
+    private static final Duration SNAPSHOT_TTL = Duration.ofMinutes(5);
 
-	private final CapabilityBridgeToolFactory bridgeToolFactory;
+    private final List<ToolPublicationProvider> publicationProviders;
 
-	private final Map<String, SnapshotEntry> snapshotCache = new ConcurrentHashMap<>();
+    private final ToolPublicationMaterializer toolPublicationMaterializer;
 
-	private volatile DefaultCodeactToolRegistry delegate;
+    private final PublicationScopeResolver publicationScopeResolver;
 
-	public TenantAwareToolRegistry(CapabilityBridgeToolFactory bridgeToolFactory) {
-		this.bridgeToolFactory = bridgeToolFactory;
-		this.delegate = createSessionRegistry("default");
-	}
+    private final ToolPublicationProviderSelector toolPublicationProviderSelector;
 
-	/**
-	 * Build tenant-scoped immutable snapshot registry.
-	 */
-	public DefaultCodeactToolRegistry createSessionRegistry(String tenantId) {
-		String effectiveTenant = StringUtils.hasText(tenantId) ? tenantId : "default";
-		SnapshotEntry snapshot = snapshotCache.compute(effectiveTenant, (key, existing) -> {
-			if (existing != null && !existing.isExpired()) {
-				return existing;
-			}
-			List<CodeactTool> tools = bridgeToolFactory.createToolsForTenant(key);
-			return new SnapshotEntry(Instant.now(), tools);
-		});
+    private final Map<String, SnapshotEntry> snapshotCache = new ConcurrentHashMap<>();
 
-		DefaultCodeactToolRegistry registry = new DefaultCodeactToolRegistry();
-		for (CodeactTool tool : snapshot.tools()) {
-			registry.register(tool);
-		}
-		return registry;
-	}
+    private volatile DefaultCodeactToolRegistry delegate;
 
-	@EventListener
-	public void onToolPublished(ToolPublishedEvent event) {
-		String tenantId = event != null ? event.tenantId() : null;
-		if (!StringUtils.hasText(tenantId)) {
-			tenantId = "default";
-		}
-		snapshotCache.remove(tenantId);
-		if ("default".equals(tenantId)) {
-			delegate = createSessionRegistry("default");
-		}
-		logger.info("TenantAwareToolRegistry#onToolPublished - tenantId={} cache invalidated", tenantId);
-	}
+    public TenantAwareToolRegistry(
+            List<ToolPublicationProvider> publicationProviders,
+            ToolPublicationMaterializer toolPublicationMaterializer,
+            PublicationScopeResolver publicationScopeResolver,
+            ToolPublicationProviderSelector toolPublicationProviderSelector) {
+        this.publicationProviders = publicationProviders != null ? List.copyOf(publicationProviders) : List.of();
+        this.toolPublicationMaterializer = toolPublicationMaterializer;
+        this.publicationScopeResolver = publicationScopeResolver;
+        this.toolPublicationProviderSelector = toolPublicationProviderSelector;
+        this.delegate = createSessionRegistry("default");
+    }
 
-	@Override
-	public void register(CodeactTool tool) {
-		delegate.register(tool);
-	}
+    TenantAwareToolRegistry(
+            List<ToolPublicationProvider> publicationProviders,
+            ToolPublicationMaterializer toolPublicationMaterializer,
+            PublicationScopeResolver publicationScopeResolver) {
+        this(publicationProviders, toolPublicationMaterializer, publicationScopeResolver,
+                new ToolPublicationProviderSelector());
+    }
 
-	@Override
-	public Optional<CodeactTool> getTool(String name) {
-		return delegate.getTool(name);
-	}
+    TenantAwareToolRegistry(
+            List<ToolPublicationProvider> publicationProviders,
+            ToolPublicationMaterializer toolPublicationMaterializer) {
+        this(publicationProviders, toolPublicationMaterializer, null, new ToolPublicationProviderSelector());
+    }
 
-	@Override
-	public Optional<CodeactTool> getToolByAlias(String alias) {
-		return delegate.getToolByAlias(alias);
-	}
+    /**
+     * Build tenant-scoped immutable snapshot registry.
+     */
+    public DefaultCodeactToolRegistry createSessionRegistry(String tenantId) {
+        return createSessionRegistry(new ToolPublicationProvider.PublicationScope(normalizeTenant(tenantId), null, null, null));
+    }
 
-	@Override
-	public List<CodeactTool> getAllTools() {
-		return delegate.getAllTools();
-	}
+    /**
+     * Build scoped immutable snapshot registry.
+     */
+    public DefaultCodeactToolRegistry createSessionRegistry(ToolPublicationProvider.PublicationScope scope) {
+        ToolPublicationProvider.PublicationScope effectiveScope = normalizeScope(scope);
+        String cacheKey = cacheKey(effectiveScope);
+        SnapshotEntry snapshot = snapshotCache.compute(cacheKey, (key, existing) -> {
+            if (existing != null && !existing.isExpired()) {
+                return existing;
+            }
+            List<PublishedToolDescriptor> descriptors = new ArrayList<>();
+            List<ToolPublicationProvider> selectedProviders = toolPublicationProviderSelector
+                    .selectProviders(effectiveScope, publicationProviders);
+            for (ToolPublicationProvider provider : selectedProviders) {
+                if (provider == null) {
+                    continue;
+                }
+                descriptors.addAll(provider.listPublishedTools(effectiveScope));
+            }
+            List<CodeactTool> tools = toolPublicationMaterializer.materialize(descriptors);
+            return new SnapshotEntry(Instant.now(), tools);
+        });
 
-	@Override
-	public List<CodeactTool> getToolsForLanguage(Language language) {
-		return delegate.getToolsForLanguage(language);
-	}
+        DefaultCodeactToolRegistry registry = new DefaultCodeactToolRegistry();
+        for (CodeactTool tool : snapshot.tools()) {
+            registry.register(tool);
+        }
+        return registry;
+    }
 
-	@Override
-	public Optional<CodeactToolDefinition> getToolDefinition(String toolName) {
-		return delegate.getToolDefinition(toolName);
-	}
+    @Override
+    public CodeactToolRegistry scope(ToolContext toolContext) {
+        if (publicationScopeResolver == null) {
+            return this;
+        }
+        return createSessionRegistry(publicationScopeResolver.resolve(toolContext));
+    }
 
-	@Override
-	public Optional<ReturnSchema> getReturnSchema(String toolName) {
-		return delegate.getReturnSchema(toolName);
-	}
+    @EventListener
+    public void onToolPublished(ToolPublishedEvent event) {
+        String tenantId = normalizeTenant(event != null ? event.tenantId() : null);
+        snapshotCache.keySet().removeIf(key -> key.startsWith(tenantId + "|"));
+        if ("default".equals(tenantId)) {
+            delegate = createSessionRegistry("default");
+        }
+        logger.info("TenantAwareToolRegistry#onToolPublished - tenantId={} cache invalidated", tenantId);
+    }
 
-	@Override
-	public String generateStructuredToolPrompt(Language language) {
-		return delegate.generateStructuredToolPrompt(language);
-	}
+    @Override
+    public void register(CodeactTool tool) {
+        delegate.register(tool);
+    }
 
-	@Override
-	@Deprecated
-	public String generateToolDescriptionPrompt(Language language) {
-		return delegate.generateToolDescriptionPrompt(language);
-	}
+    @Override
+    public Optional<CodeactTool> getTool(String name) {
+        return delegate.getTool(name);
+    }
 
-	@Override
-	public ReturnSchemaRegistry getReturnSchemaRegistry() {
-		return delegate.getReturnSchemaRegistry();
-	}
+    @Override
+    public Optional<CodeactTool> getToolByAlias(String alias) {
+        return delegate.getToolByAlias(alias);
+    }
 
-	private record SnapshotEntry(Instant loadedAt, List<CodeactTool> tools) {
-		private SnapshotEntry(Instant loadedAt, List<CodeactTool> tools) {
-			this.loadedAt = loadedAt;
-			this.tools = tools != null ? List.copyOf(new ArrayList<>(tools)) : List.of();
-		}
+    @Override
+    public List<CodeactTool> getAllTools() {
+        return delegate.getAllTools();
+    }
 
-		private boolean isExpired() {
-			return loadedAt.plus(SNAPSHOT_TTL).isBefore(Instant.now());
-		}
-	}
+    @Override
+    public List<CodeactTool> getToolsForLanguage(Language language) {
+        return delegate.getToolsForLanguage(language);
+    }
 
-	/**
-	 * Tool publish event used for cache invalidation.
-	 */
-	public record ToolPublishedEvent(String tenantId) {
-	}
+    @Override
+    public Optional<CodeactToolDefinition> getToolDefinition(String toolName) {
+        return delegate.getToolDefinition(toolName);
+    }
+
+    @Override
+    public Optional<ReturnSchema> getReturnSchema(String toolName) {
+        return delegate.getReturnSchema(toolName);
+    }
+
+    @Override
+    public String generateStructuredToolPrompt(Language language) {
+        return delegate.generateStructuredToolPrompt(language);
+    }
+
+    @Override
+    @Deprecated
+    public String generateToolDescriptionPrompt(Language language) {
+        return delegate.generateToolDescriptionPrompt(language);
+    }
+
+    @Override
+    public ReturnSchemaRegistry getReturnSchemaRegistry() {
+        return delegate.getReturnSchemaRegistry();
+    }
+
+    private ToolPublicationProvider.PublicationScope normalizeScope(ToolPublicationProvider.PublicationScope scope) {
+        if (scope == null) {
+            return new ToolPublicationProvider.PublicationScope("default", null, null, null);
+        }
+        return new ToolPublicationProvider.PublicationScope(
+                normalizeTenant(scope.tenantId()),
+                scope.spaceId(),
+                StringUtils.hasText(scope.environment()) ? scope.environment().trim() : null,
+                StringUtils.hasText(scope.agentAppCode()) ? scope.agentAppCode().trim() : null,
+                scope.sourceSelectionMode(),
+                scope.requestedSourceIds(),
+                scope.blockedSourceIds());
+    }
+
+    private String normalizeTenant(String tenantId) {
+        return StringUtils.hasText(tenantId) ? tenantId : "default";
+    }
+
+    private String cacheKey(ToolPublicationProvider.PublicationScope scope) {
+        return normalizeTenant(scope.tenantId()) + "|"
+                + Objects.toString(scope.spaceId(), "_") + "|"
+                + Objects.toString(scope.environment(), "_") + "|"
+                + Objects.toString(scope.agentAppCode(), "_") + "|"
+                + scope.sourceSelectionMode().name() + "|"
+                + String.join(",", scope.requestedSourceIds()) + "|"
+                + String.join(",", scope.blockedSourceIds());
+    }
+
+    private record SnapshotEntry(Instant loadedAt, List<CodeactTool> tools) {
+        private SnapshotEntry(Instant loadedAt, List<CodeactTool> tools) {
+            this.loadedAt = loadedAt;
+            this.tools = tools != null ? List.copyOf(new ArrayList<>(tools)) : List.of();
+        }
+
+        private boolean isExpired() {
+            return loadedAt.plus(SNAPSHOT_TTL).isBefore(Instant.now());
+        }
+    }
+
+    /**
+     * Tool publish event used for cache invalidation.
+     */
+    public record ToolPublishedEvent(String tenantId) {
+    }
 }

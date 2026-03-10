@@ -27,28 +27,35 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class SecurityConfigCorsTest {
 
-	@Test
-	void shouldRegisterGlobalCorsForAuthAndChatEndpoints() {
-		SecurityConfig securityConfig = new SecurityConfig();
-		CorsConfigurationSource source = securityConfig.corsConfigurationSource();
+    @Test
+    void shouldRegisterGlobalCorsForAuthChatAndControlplaneEndpoints() {
+        SecurityConfig securityConfig = new SecurityConfig();
+        CorsConfigurationSource source = securityConfig.corsConfigurationSource();
 
-		CorsConfiguration authConfig = source.getCorsConfiguration(request(HttpMethod.OPTIONS.name(), "/system/auth/login"));
-		CorsConfiguration chatConfig = source.getCorsConfiguration(request(HttpMethod.OPTIONS.name(), "/api/chat/run_sse"));
+        CorsConfiguration authConfig = source.getCorsConfiguration(request(HttpMethod.OPTIONS.name(), "/system/auth/login"));
+        CorsConfiguration chatConfig = source.getCorsConfiguration(request(HttpMethod.OPTIONS.name(), "/api/chat/run_sse"));
+        CorsConfiguration controlplaneConfig = source.getCorsConfiguration(request(
+                HttpMethod.OPTIONS.name(),
+                "/api/controlplane/spaces/enterprise-default/agent-apps/finance-agent/publication-source-policy"));
 
-		assertNotNull(authConfig);
-		assertNotNull(chatConfig);
-		assertEquals(authConfig.getAllowedOriginPatterns(), chatConfig.getAllowedOriginPatterns());
-		assertTrue(authConfig.getAllowedOriginPatterns().contains("http://localhost:*"));
-		assertTrue(authConfig.getAllowedOriginPatterns().contains("http://127.0.0.1:*"));
-		assertTrue(authConfig.getAllowedMethods().contains(HttpMethod.POST.name()));
-		assertTrue(authConfig.getAllowedMethods().contains(HttpMethod.OPTIONS.name()));
-	}
+        assertNotNull(authConfig);
+        assertNotNull(chatConfig);
+        assertNotNull(controlplaneConfig);
+        assertEquals(authConfig.getAllowedOriginPatterns(), chatConfig.getAllowedOriginPatterns());
+        assertEquals(chatConfig.getAllowedOriginPatterns(), controlplaneConfig.getAllowedOriginPatterns());
+        assertTrue(authConfig.getAllowedOriginPatterns().contains("http://localhost:*"));
+        assertTrue(authConfig.getAllowedOriginPatterns().contains("http://127.0.0.1:*"));
+        assertTrue(authConfig.getAllowedMethods().contains(HttpMethod.POST.name()));
+        assertTrue(controlplaneConfig.getAllowedMethods().contains(HttpMethod.GET.name()));
+        assertTrue(controlplaneConfig.getAllowedMethods().contains(HttpMethod.PUT.name()));
+        assertTrue(authConfig.getAllowedMethods().contains(HttpMethod.OPTIONS.name()));
+    }
 
-	private static MockHttpServletRequest request(String method, String path) {
-		MockHttpServletRequest request = new MockHttpServletRequest(method, path);
-		request.addHeader("Origin", "http://localhost:5173");
-		request.addHeader("Access-Control-Request-Method", "POST");
-		return request;
-	}
+    private static MockHttpServletRequest request(String method, String path) {
+        MockHttpServletRequest request = new MockHttpServletRequest(method, path);
+        request.addHeader("Origin", "http://localhost:5173");
+        request.addHeader("Access-Control-Request-Method", "POST");
+        return request;
+    }
 
 }

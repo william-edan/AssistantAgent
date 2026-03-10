@@ -17,6 +17,7 @@ package com.alibaba.assistant.agent.api.security;
 
 import com.alibaba.assistant.agent.api.security.dto.LoginResult;
 import com.alibaba.assistant.agent.controlplane.identity.LocalUserAccount;
+import com.alibaba.assistant.agent.controlplane.identity.LocalUserGrantService;
 import com.alibaba.assistant.agent.controlplane.identity.mapper.LocalUserAccountMapper;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
@@ -52,6 +53,9 @@ class MigrationAuthServiceTest {
 	private LocalUserAccountMapper localUserAccountMapper;
 
 	@Mock
+	private LocalUserGrantService localUserGrantService;
+
+	@Mock
 	private StringRedisTemplate stringRedisTemplate;
 
 	@Mock
@@ -65,6 +69,7 @@ class MigrationAuthServiceTest {
 	void setUp() {
 		authService = new MigrationAuthService(
 				localUserAccountMapper,
+				localUserGrantService,
 				stringRedisTemplate,
 				new ObjectMapper(),
 				"assistant-agent",

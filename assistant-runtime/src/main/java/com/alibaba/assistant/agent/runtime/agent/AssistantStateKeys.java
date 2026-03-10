@@ -34,6 +34,14 @@ public final class AssistantStateKeys {
 
 	public static final String SYSTEM_CODE = "system_code";
 
+	public static final String AGENT_APP_CODE = "agent_app_code";
+
+	public static final String SPACE_ID = "space_id";
+
+	public static final String SPACE_CODE = "space_code";
+
+	public static final String SPACE_ENVIRONMENT = "space_environment";
+
 	// Slot Collection
 	public static final String MATCHED_TOOL_META = "matched_tool_meta";
 

@@ -23,6 +23,7 @@ import com.alibaba.assistant.agent.extension.experience.spi.ExperienceProvider;
 import com.alibaba.assistant.agent.runtime.intent.AssistantFastIntentHook;
 import com.alibaba.assistant.agent.runtime.intent.AssistantIntentRouter;
 import com.alibaba.assistant.agent.runtime.registry.TenantAwareToolRegistry;
+import com.alibaba.assistant.agent.runtime.tool.codeact.ArtifactBackedCodeactTool;
 import com.alibaba.cloud.ai.graph.agent.hook.Hook;
 import com.alibaba.cloud.ai.graph.agent.hook.hip.HumanInTheLoopHook;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -39,137 +40,143 @@ import static org.mockito.Mockito.when;
 
 class AssistantAgentFactoryTest {
 
-	@Test
-	void shouldHaveMigrationProfileAnnotation() {
-		assertTrue(AssistantAgentFactory.class.isAnnotationPresent(
-				org.springframework.context.annotation.Profile.class));
-		String[] profiles = AssistantAgentFactory.class
-				.getAnnotation(org.springframework.context.annotation.Profile.class).value();
-		assertArrayEquals(new String[] { "migration" }, profiles);
-	}
+    @Test
+    void shouldHaveMigrationProfileAnnotation() {
+        assertTrue(AssistantAgentFactory.class.isAnnotationPresent(
+                org.springframework.context.annotation.Profile.class));
+        String[] profiles = AssistantAgentFactory.class
+                .getAnnotation(org.springframework.context.annotation.Profile.class).value();
+        assertArrayEquals(new String[] { "migration" }, profiles);
+    }
 
-	@Test
-	void shouldHaveConfigurationAnnotation() {
-		assertTrue(AssistantAgentFactory.class.isAnnotationPresent(
-				org.springframework.context.annotation.Configuration.class));
-	}
+    @Test
+    void shouldHaveConfigurationAnnotation() {
+        assertTrue(AssistantAgentFactory.class.isAnnotationPresent(
+                org.springframework.context.annotation.Configuration.class));
+    }
 
-	@Test
-	void shouldFilterLegacyFastIntentHookWhenRuntimeHookPresent() {
-		ExperienceProvider experienceProvider = mock(ExperienceProvider.class);
-		FastIntentReactHook legacyHook = new FastIntentReactHook(
-				experienceProvider,
-				new ExperienceExtensionProperties(),
-				new FastIntentService(List.of()));
+    @Test
+    void shouldFilterLegacyFastIntentHookWhenRuntimeHookPresent() {
+        ExperienceProvider experienceProvider = mock(ExperienceProvider.class);
+        FastIntentReactHook legacyHook = new FastIntentReactHook(
+                experienceProvider,
+                new ExperienceExtensionProperties(),
+                new FastIntentService(List.of()));
 
-		AssistantFastIntentHook runtimeHook =
-				new AssistantFastIntentHook(mock(AssistantIntentRouter.class), new ObjectMapper());
-		Hook otherHook = mock(Hook.class);
+        AssistantFastIntentHook runtimeHook =
+                new AssistantFastIntentHook(mock(AssistantIntentRouter.class), new ObjectMapper());
+        Hook otherHook = mock(Hook.class);
 
-		List<Hook> filtered = AssistantAgentFactory.filterReactHooks(List.of(legacyHook, runtimeHook, otherHook));
+        List<Hook> filtered = AssistantAgentFactory.filterReactHooks(List.of(legacyHook, runtimeHook, otherHook));
 
-		assertEquals(2, filtered.size());
-		assertTrue(filtered.contains(runtimeHook));
-		assertTrue(filtered.contains(otherHook));
-		assertFalse(filtered.contains(legacyHook));
-	}
+        assertEquals(2, filtered.size());
+        assertTrue(filtered.contains(runtimeHook));
+        assertTrue(filtered.contains(otherHook));
+        assertFalse(filtered.contains(legacyHook));
+    }
 
-	@Test
-	void shouldMergeCodeactToolsIntoReactCallbacks() {
-		ToolCallback slotCollect = mockTool("slot_collect");
-		CodeactTool executeTool = mockCodeactTool("gougu_oa_leave_application_execute");
+    @Test
+    void shouldMergeCodeactToolsIntoReactCallbacks() {
+        ToolCallback slotCollect = mockTool("slot_collect");
+        CodeactTool executeTool = mockCodeactTool("gougu_oa_leave_application_execute");
 
-		ToolCallback[] merged = AssistantAgentFactory.mergeReactAndCodeactToolCallbacks(
-				List.of(slotCollect),
-				List.of(executeTool));
+        ToolCallback[] merged = AssistantAgentFactory.mergeReactAndCodeactToolCallbacks(
+                List.of(slotCollect),
+                List.of(executeTool));
 
-		List<String> names = List.of(merged).stream()
-				.map(callback -> callback.getToolDefinition().name())
-				.collect(Collectors.toList());
-		assertEquals(2, merged.length);
-		assertTrue(names.contains("slot_collect"));
-		assertTrue(names.contains("gougu_oa_leave_application_execute"));
-	}
+        List<String> names = List.of(merged).stream()
+                .map(callback -> callback.getToolDefinition().name())
+                .collect(Collectors.toList());
+        assertEquals(2, merged.length);
+        assertTrue(names.contains("slot_collect"));
+        assertTrue(names.contains("gougu_oa_leave_application_execute"));
+    }
 
-	@Test
-	void shouldKeepFirstToolWhenDuplicateNamesExist() {
-		ToolCallback reactTool = mockTool("same_execute");
-		CodeactTool codeactTool = mockCodeactTool("same_execute");
+    @Test
+    void shouldKeepFirstToolWhenDuplicateNamesExist() {
+        ToolCallback reactTool = mockTool("same_execute");
+        CodeactTool codeactTool = mockCodeactTool("same_execute");
 
-		ToolCallback[] merged = AssistantAgentFactory.mergeReactAndCodeactToolCallbacks(
-				List.of(reactTool),
-				List.of(codeactTool));
+        ToolCallback[] merged = AssistantAgentFactory.mergeReactAndCodeactToolCallbacks(
+                List.of(reactTool),
+                List.of(codeactTool));
 
-		assertEquals(1, merged.length);
-		assertSame(reactTool, merged[0]);
-	}
+        assertEquals(1, merged.length);
+        assertSame(reactTool, merged[0]);
+    }
 
-	@Test
-	void shouldCollectTenantRegistryToolsForReactCallbacks() {
-		CodeactTool staticTool = mockCodeactTool("unified_search");
-		CodeactTool tenantDynamicTool = mockCodeactTool("gougu_oa_leave_application_execute");
-		TenantAwareToolRegistry registry = mock(TenantAwareToolRegistry.class);
-		when(registry.getAllTools()).thenReturn(List.of(tenantDynamicTool));
+    @Test
+    void shouldExcludeArtifactBackedRegistryToolsFromReactCallbacks() {
+        CodeactTool staticTool = mockCodeactTool("unified_search");
+        ArtifactBackedCodeactTool artifactTool = mock(ArtifactBackedCodeactTool.class);
+        when(artifactTool.getToolDefinition()).thenReturn(DefaultToolDefinition.builder()
+                .name("oa_leave_apply_execute")
+                .description("artifact")
+                .inputSchema("{}")
+                .build());
+        CodeactTool legacyDynamicTool = mockCodeactTool("gougu_oa_leave_application_execute");
+        TenantAwareToolRegistry registry = mock(TenantAwareToolRegistry.class);
+        when(registry.getAllTools()).thenReturn(List.of(artifactTool, legacyDynamicTool));
 
-		List<CodeactTool> collected = AssistantAgentFactory.collectReactAccessibleCodeactTools(
-				List.of(staticTool),
-				registry);
+        List<CodeactTool> collected = AssistantAgentFactory.collectReactAccessibleCodeactTools(
+                List.of(staticTool),
+                registry);
 
-		List<String> names = collected.stream()
-				.map(tool -> tool.getToolDefinition().name())
-				.collect(Collectors.toList());
-		assertEquals(2, collected.size());
-		assertTrue(names.contains("unified_search"));
-		assertTrue(names.contains("gougu_oa_leave_application_execute"));
-	}
+        List<String> names = collected.stream()
+                .map(tool -> tool.getToolDefinition().name())
+                .collect(Collectors.toList());
+        assertEquals(2, collected.size());
+        assertTrue(names.contains("unified_search"));
+        assertTrue(names.contains("gougu_oa_leave_application_execute"));
+        assertFalse(names.contains("oa_leave_apply_execute"));
+    }
 
-	@Test
-	void shouldBuildHumanInTheLoopHookForExecuteTools() {
-		ToolCallback slotCollect = mockTool("slot_collect");
-		ToolCallback executeLeave = mockTool("gougu_oa_leave_application_execute");
-		ToolCallback executeApproval = mockTool("gougu_oa_approval_execute");
+    @Test
+    void shouldBuildHumanInTheLoopHookForExecuteToolsAndArtifactExecute() {
+        ToolCallback slotCollect = mockTool("slot_collect");
+        ToolCallback artifactExecute = mockTool("artifact_execute");
 
-		HumanInTheLoopHook hook = AssistantAgentFactory.buildHumanInTheLoopHook(
-				new ToolCallback[] { slotCollect, executeLeave, executeApproval });
+        HumanInTheLoopHook hook = AssistantAgentFactory.buildHumanInTheLoopHook(
+                new ToolCallback[] { slotCollect, artifactExecute });
 
-		assertNotNull(hook);
-	}
+        assertNotNull(hook);
+    }
 
-	@Test
-	void shouldReturnNullHookWhenNoExecuteTools() {
-		ToolCallback slotCollect = mockTool("slot_collect");
-		ToolCallback slotConfirm = mockTool("slot_confirm");
+    @Test
+    void shouldReturnNullHookWhenNoExecuteTools() {
+        ToolCallback slotCollect = mockTool("slot_collect");
+        ToolCallback slotConfirm = mockTool("slot_confirm");
 
-		HumanInTheLoopHook hook = AssistantAgentFactory.buildHumanInTheLoopHook(
-				new ToolCallback[] { slotCollect, slotConfirm });
+        HumanInTheLoopHook hook = AssistantAgentFactory.buildHumanInTheLoopHook(
+                new ToolCallback[] { slotCollect, slotConfirm });
 
-		assertNull(hook);
-	}
+        assertNull(hook);
+    }
 
-	@Test
-	void shouldReturnNullHookWhenToolsEmpty() {
-		assertNull(AssistantAgentFactory.buildHumanInTheLoopHook(new ToolCallback[0]));
-		assertNull(AssistantAgentFactory.buildHumanInTheLoopHook(null));
-	}
+    @Test
+    void shouldReturnNullHookWhenToolsEmpty() {
+        assertNull(AssistantAgentFactory.buildHumanInTheLoopHook(new ToolCallback[0]));
+        assertNull(AssistantAgentFactory.buildHumanInTheLoopHook(null));
+    }
 
-	private ToolCallback mockTool(String toolName) {
-		ToolCallback callback = mock(ToolCallback.class);
-		when(callback.getToolDefinition()).thenReturn(DefaultToolDefinition.builder()
-				.name(toolName)
-				.description("test")
-				.inputSchema("{}")
-				.build());
-		return callback;
-	}
+    private ToolCallback mockTool(String toolName) {
+        ToolCallback callback = mock(ToolCallback.class);
+        when(callback.getToolDefinition()).thenReturn(DefaultToolDefinition.builder()
+                .name(toolName)
+                .description("test")
+                .inputSchema("{}")
+                .build());
+        return callback;
+    }
 
-	private CodeactTool mockCodeactTool(String toolName) {
-		CodeactTool callback = mock(CodeactTool.class);
-		when(callback.getToolDefinition()).thenReturn(DefaultToolDefinition.builder()
-				.name(toolName)
-				.description("test")
-				.inputSchema("{}")
-				.build());
-		return callback;
-	}
+    private CodeactTool mockCodeactTool(String toolName) {
+        CodeactTool callback = mock(CodeactTool.class);
+        when(callback.getToolDefinition()).thenReturn(DefaultToolDefinition.builder()
+                .name(toolName)
+                .description("test")
+                .inputSchema("{}")
+                .build());
+        return callback;
+    }
 
 }

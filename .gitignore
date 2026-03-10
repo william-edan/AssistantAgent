@@ -42,3 +42,5 @@ logs/
 /docs/
 /lib/
 /GRAPH_JAR=/
+
+.worktrees/

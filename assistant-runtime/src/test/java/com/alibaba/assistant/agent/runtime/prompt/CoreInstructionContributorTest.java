@@ -34,63 +34,63 @@ import static org.mockito.Mockito.when;
 
 class CoreInstructionContributorTest {
 
-	@Test
-	void shouldSkipWhenDynamicPromptDisabled() {
-		RuntimeConfigCompatibilityAdapter adapter = mock(RuntimeConfigCompatibilityAdapter.class);
-		when(adapter.promptDynamicEnabled()).thenReturn(false);
+    @Test
+    void shouldSkipWhenDynamicPromptDisabled() {
+        RuntimeConfigCompatibilityAdapter adapter = mock(RuntimeConfigCompatibilityAdapter.class);
+        when(adapter.promptDynamicEnabled()).thenReturn(false);
 
-		CoreInstructionContributor contributor = new CoreInstructionContributor(adapter);
+        CoreInstructionContributor contributor = new CoreInstructionContributor(adapter);
 
-		assertFalse(contributor.shouldContribute(context()));
-	}
+        assertFalse(contributor.shouldContribute(context()));
+    }
 
-	@Test
-	void shouldIncludeCurrentTimeAnchorAndDateNormalizationRule() {
-		RuntimeConfigCompatibilityAdapter adapter = mock(RuntimeConfigCompatibilityAdapter.class);
-		when(adapter.promptDynamicEnabled()).thenReturn(true);
+    @Test
+    void shouldIncludeCurrentTimeAnchorAndArtifactExecuteRule() {
+        RuntimeConfigCompatibilityAdapter adapter = mock(RuntimeConfigCompatibilityAdapter.class);
+        when(adapter.promptDynamicEnabled()).thenReturn(true);
 
-		CoreInstructionContributor contributor = new CoreInstructionContributor(adapter);
-		PromptContribution contribution = contributor.contribute(context());
+        CoreInstructionContributor contributor = new CoreInstructionContributor(adapter);
+        PromptContribution contribution = contributor.contribute(context());
 
-		String text = contribution.messagesToAppend().get(0).getText();
-		assertTrue(text.contains("当前系统时间："));
-		assertTrue(text.matches("(?s).*\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}.*"));
-		assertTrue(text.contains("今天/明天/后天"));
-		assertTrue(text.contains("YYYY-MM-DD"));
-		assertTrue(text.contains("个人事务"));
-		assertTrue(text.contains("程序返回的“仍需补充参数”中的必填字段"));
-		assertTrue(text.contains("不要重复追问"));
-		assertTrue(text.contains("inferred_from"));
-		assertTrue(text.contains("CONFIRMING"));
-		assertTrue(text.contains("*_execute"));
-		assertTrue(text.contains("confirmed=true"));
-		assertTrue(text.contains("自由文本槽位"));
-		assertTrue(text.contains("严禁虚构"));
-		assertTrue(text.contains("本轮不得再次调用任何工具"));
-	}
+        String text = contribution.messagesToAppend().get(0).getText();
+        assertTrue(text.contains("当前系统时间："));
+        assertTrue(text.matches("(?s).*\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}.*"));
+        assertTrue(text.contains("今天/明天/后天"));
+        assertTrue(text.contains("YYYY-MM-DD"));
+        assertTrue(text.contains("个人事务"));
+        assertTrue(text.contains("程序返回的“仍需补充参数”中的必填字段"));
+        assertTrue(text.contains("不要重复追问"));
+        assertTrue(text.contains("inferred_from"));
+        assertTrue(text.contains("CONFIRMING"));
+        assertTrue(text.contains("artifact_execute"));
+        assertTrue(text.contains("confirmed=true"));
+        assertTrue(text.contains("自由文本槽位"));
+        assertTrue(text.contains("严禁虚构"));
+        assertTrue(text.contains("本轮不得再次调用任何工具"));
+    }
 
-	private PromptContributorContext context() {
-		return new PromptContributorContext() {
-			@Override
-			public List<Message> getMessages() {
-				return Collections.emptyList();
-			}
+    private PromptContributorContext context() {
+        return new PromptContributorContext() {
+            @Override
+            public List<Message> getMessages() {
+                return Collections.emptyList();
+            }
 
-			@Override
-			public Optional<SystemMessage> getSystemMessage() {
-				return Optional.empty();
-			}
+            @Override
+            public Optional<SystemMessage> getSystemMessage() {
+                return Optional.empty();
+            }
 
-			@Override
-			public Map<String, Object> getAttributes() {
-				return Map.of();
-			}
+            @Override
+            public Map<String, Object> getAttributes() {
+                return Map.of();
+            }
 
-			@Override
-			public Optional<String> getPhase() {
-				return Optional.of("REACT");
-			}
-		};
-	}
+            @Override
+            public Optional<String> getPhase() {
+                return Optional.of("REACT");
+            }
+        };
+    }
 
 }

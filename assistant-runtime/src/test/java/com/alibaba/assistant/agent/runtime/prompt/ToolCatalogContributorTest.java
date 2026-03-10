@@ -17,9 +17,13 @@ package com.alibaba.assistant.agent.runtime.prompt;
 
 import com.alibaba.assistant.agent.controlplane.toolregistry.ToolMeta;
 import com.alibaba.assistant.agent.controlplane.toolregistry.ToolMetaService;
-import com.alibaba.assistant.agent.runtime.config.RuntimeConfigCompatibilityAdapter;
+import com.alibaba.assistant.agent.execution.flow.FlowDefinition;
 import com.alibaba.assistant.agent.prompt.PromptContribution;
 import com.alibaba.assistant.agent.prompt.PromptContributorContext;
+import com.alibaba.assistant.agent.runtime.compiler.RuntimeArtifact;
+import com.alibaba.assistant.agent.runtime.config.RuntimeConfigCompatibilityAdapter;
+import com.alibaba.assistant.agent.runtime.registry.ArtifactPublicationLookupService;
+import com.alibaba.assistant.agent.runtime.registry.PublishedToolDescriptor;
 import org.junit.jupiter.api.Test;
 import org.springframework.ai.chat.messages.Message;
 import org.springframework.ai.chat.messages.SystemMessage;
@@ -30,97 +34,136 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
-import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.anyMap;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
 class ToolCatalogContributorTest {
 
-	@Test
-	void shouldSkipWhenDynamicPromptDisabled() {
-		ToolMetaService toolMetaService = mock(ToolMetaService.class);
-		RuntimeConfigCompatibilityAdapter adapter = mock(RuntimeConfigCompatibilityAdapter.class);
-		when(adapter.promptDynamicEnabled()).thenReturn(false);
+    @Test
+    void shouldSkipWhenDynamicPromptDisabled() {
+        ArtifactPublicationLookupService artifactLookupService = mock(ArtifactPublicationLookupService.class);
+        ToolMetaService toolMetaService = mock(ToolMetaService.class);
+        RuntimeConfigCompatibilityAdapter adapter = mock(RuntimeConfigCompatibilityAdapter.class);
+        when(adapter.promptDynamicEnabled()).thenReturn(false);
 
-		ToolCatalogContributor contributor = new ToolCatalogContributor(toolMetaService, adapter);
-		boolean shouldContribute = contributor.shouldContribute(context(Map.of()));
+        ToolCatalogContributor contributor = new ToolCatalogContributor(artifactLookupService, toolMetaService, adapter);
+        boolean shouldContribute = contributor.shouldContribute(context(Map.of()));
 
-		assertFalse(shouldContribute);
-	}
+        assertFalse(shouldContribute);
+    }
 
-	@Test
-	void shouldRenderCatalogInMessagesToAppendAndApplyLimit() {
-		ToolMetaService toolMetaService = mock(ToolMetaService.class);
-		RuntimeConfigCompatibilityAdapter adapter = mock(RuntimeConfigCompatibilityAdapter.class);
-		when(adapter.promptDynamicEnabled()).thenReturn(true);
-		when(adapter.promptMaxToolsInPrompt()).thenReturn(1);
+    @Test
+    void shouldRenderArtifactCatalogBeforeLegacyFallback() {
+        ArtifactPublicationLookupService artifactLookupService = mock(ArtifactPublicationLookupService.class);
+        ToolMetaService toolMetaService = mock(ToolMetaService.class);
+        RuntimeConfigCompatibilityAdapter adapter = mock(RuntimeConfigCompatibilityAdapter.class);
+        when(adapter.promptDynamicEnabled()).thenReturn(true);
+        when(adapter.promptMaxToolsInPrompt()).thenReturn(1);
+        when(artifactLookupService.listPublishedArtifacts(anyMap())).thenReturn(List.of(
+                descriptor("workflow:oa.leave.apply", artifact("oa.leave.apply", "请假申请")),
+                descriptor("workflow:oa.current.user", artifact("oa.current.user", "当前用户"))));
 
-		ToolMeta first = tool("gougu_oa.leave_apply", "请假申请", "发起请假");
-		ToolMeta second = tool("gougu_oa.current_user", "当前用户", "查询当前用户");
-		when(toolMetaService.listEnabledByTenantAndSystem(eq("default"), eq(null)))
-				.thenReturn(List.of(first, second));
+        ToolCatalogContributor contributor = new ToolCatalogContributor(artifactLookupService, toolMetaService, adapter);
+        PromptContribution contribution = contributor.contribute(context(Map.of()));
 
-		ToolCatalogContributor contributor = new ToolCatalogContributor(toolMetaService, adapter);
-		PromptContribution contribution = contributor.contribute(context(Map.of()));
+        assertNotNull(contribution);
+        assertEquals(1, contribution.messagesToAppend().size());
+        Message message = contribution.messagesToAppend().get(0);
+        assertInstanceOf(UserMessage.class, message);
+        assertTrue(message.getText().contains("oa.leave.apply"));
+        assertFalse(message.getText().contains("oa.current.user"));
+        assertTrue(message.getText().contains("artifact_execute"));
+        assertTrue(message.getText().contains("1/2"));
+        verifyNoInteractions(toolMetaService);
+    }
 
-		assertNotNull(contribution);
-		assertEquals(1, contribution.messagesToAppend().size());
-		Message message = contribution.messagesToAppend().get(0);
-		assertInstanceOf(UserMessage.class, message);
-		assertTrue(message.getText().contains("gougu_oa.leave_apply"));
-		assertFalse(message.getText().contains("gougu_oa.current_user"));
-		assertTrue(message.getText().contains("1/2"));
-		assertTrue(contribution.systemTextToAppend() == null || contribution.systemTextToAppend().isBlank());
-	}
+    @Test
+    void shouldFallbackToLegacyCatalogWhenNoArtifactPublicationExists() {
+        ArtifactPublicationLookupService artifactLookupService = mock(ArtifactPublicationLookupService.class);
+        ToolMetaService toolMetaService = mock(ToolMetaService.class);
+        RuntimeConfigCompatibilityAdapter adapter = mock(RuntimeConfigCompatibilityAdapter.class);
+        when(adapter.promptDynamicEnabled()).thenReturn(true);
+        when(adapter.promptMaxToolsInPrompt()).thenReturn(5);
+        when(artifactLookupService.listPublishedArtifacts(anyMap())).thenReturn(List.of());
+        when(toolMetaService.listEnabledByTenantAndSystem(eq("tenant-a"), eq("gougu_oa")))
+                .thenReturn(List.of(tool("gougu_oa.leave_apply", "请假申请", null)));
 
-	@Test
-	void shouldResolveTenantAndSystemFromContextAttributes() {
-		ToolMetaService toolMetaService = mock(ToolMetaService.class);
-		RuntimeConfigCompatibilityAdapter adapter = mock(RuntimeConfigCompatibilityAdapter.class);
-		when(adapter.promptDynamicEnabled()).thenReturn(true);
-		when(adapter.promptMaxToolsInPrompt()).thenReturn(5);
-		when(toolMetaService.listEnabledByTenantAndSystem(eq("tenant-a"), eq("gougu_oa")))
-				.thenReturn(List.of(tool("gougu_oa.leave_apply", "请假申请", null)));
+        ToolCatalogContributor contributor = new ToolCatalogContributor(artifactLookupService, toolMetaService, adapter);
+        PromptContribution contribution = contributor.contribute(context(Map.of(
+                "tenant_id", "tenant-a",
+                "system_code", "gougu_oa")));
 
-		ToolCatalogContributor contributor = new ToolCatalogContributor(toolMetaService, adapter);
-		PromptContribution contribution = contributor.contribute(context(Map.of(
-				"tenant_id", "tenant-a",
-				"system_code", "gougu_oa")));
+        assertEquals(1, contribution.messagesToAppend().size());
+        verify(toolMetaService, times(1)).listEnabledByTenantAndSystem("tenant-a", "gougu_oa");
+    }
 
-		assertEquals(1, contribution.messagesToAppend().size());
-		verify(toolMetaService, times(1)).listEnabledByTenantAndSystem("tenant-a", "gougu_oa");
-	}
+    private ToolMeta tool(String toolCode, String toolName, String desc) {
+        ToolMeta toolMeta = new ToolMeta();
+        toolMeta.setToolCode(toolCode);
+        toolMeta.setToolName(toolName);
+        toolMeta.setDescription(desc);
+        return toolMeta;
+    }
 
-	private ToolMeta tool(String toolCode, String toolName, String desc) {
-		ToolMeta toolMeta = new ToolMeta();
-		toolMeta.setToolCode(toolCode);
-		toolMeta.setToolName(toolName);
-		toolMeta.setDescription(desc);
-		return toolMeta;
-	}
+    private PublishedToolDescriptor descriptor(String publicationKey, RuntimeArtifact artifact) {
+        return PublishedToolDescriptor.forArtifact(
+                "artifact-catalog",
+                publicationKey,
+                artifact.getDisplayName(),
+                null,
+                null,
+                false,
+                "gougu_oa",
+                artifact);
+    }
 
-	private PromptContributorContext context(Map<String, Object> attrs) {
-		return new PromptContributorContext() {
-			@Override
-			public List<Message> getMessages() {
-				return Collections.emptyList();
-			}
+    private RuntimeArtifact artifact(String artifactCode, String displayName) {
+        return new RuntimeArtifact(
+                1L,
+                artifactCode,
+                RuntimeArtifact.ArtifactType.WORKFLOW,
+                displayName,
+                1,
+                null,
+                null,
+                null,
+                null,
+                null,
+                new FlowDefinition(),
+                Map.of(),
+                Map.of());
+    }
 
-			@Override
-			public Optional<SystemMessage> getSystemMessage() {
-				return Optional.empty();
-			}
+    private PromptContributorContext context(Map<String, Object> attrs) {
+        return new PromptContributorContext() {
+            @Override
+            public List<Message> getMessages() {
+                return Collections.emptyList();
+            }
 
-			@Override
-			public Map<String, Object> getAttributes() {
-				return attrs;
-			}
+            @Override
+            public Optional<SystemMessage> getSystemMessage() {
+                return Optional.empty();
+            }
 
-			@Override
-			public Optional<String> getPhase() {
-				return Optional.of("REACT");
-			}
-		};
-	}
+            @Override
+            public Map<String, Object> getAttributes() {
+                return attrs;
+            }
+
+            @Override
+            public Optional<String> getPhase() {
+                return Optional.of("REACT");
+            }
+        };
+    }
 
 }
+
+

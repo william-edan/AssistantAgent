@@ -68,7 +68,7 @@ class ChatControllerAuthenticationTest {
 
 	@Test
 	@SuppressWarnings("unchecked")
-	void shouldUseAuthenticatedIdentityOverRequestValues() throws Exception {
+	void shouldUseAuthenticatedIdentityAndInjectAgentAppScopeIntoState() throws Exception {
 		SecurityContextHolder.getContext().setAuthentication(new UsernamePasswordAuthenticationToken(
 				new AuthenticatedUserContext("1001", 1L, "gougu_oa", "assistant-ui", "token-x"),
 				"token-x",
@@ -82,12 +82,15 @@ class ChatControllerAuthenticationTest {
 		request.stateDelta = new LinkedHashMap<>();
 		request.stateDelta.put(AssistantStateKeys.ASSISTANT_UID, "spoof-assistant");
 		request.stateDelta.put(AssistantStateKeys.SYSTEM_CODE, "spoof-system");
+		request.stateDelta.put(AssistantStateKeys.SPACE_CODE, "enterprise_default");
 
 		controller.runSse(request, null, "spoof-assistant", "spoof-system").blockLast();
 
 		assertEquals("1001", request.userId);
 		assertEquals("1001", request.stateDelta.get(AssistantStateKeys.ASSISTANT_UID));
 		assertEquals("gougu_oa", request.stateDelta.get(AssistantStateKeys.SYSTEM_CODE));
+		assertEquals("grayscale_agent", request.stateDelta.get(AssistantStateKeys.AGENT_APP_CODE));
+		assertEquals("enterprise_default", request.stateDelta.get(AssistantStateKeys.SPACE_CODE));
 
 		ArgumentCaptor<RunnableConfig> runnableConfigCaptor = ArgumentCaptor.forClass(RunnableConfig.class);
 		verify(agent).stream(any(org.springframework.ai.chat.messages.UserMessage.class), runnableConfigCaptor.capture());
@@ -99,8 +102,11 @@ class ChatControllerAuthenticationTest {
 				.orElse(Map.of());
 		assertTrue(stateUpdate.containsKey(AssistantStateKeys.ASSISTANT_UID));
 		assertTrue(stateUpdate.containsKey(AssistantStateKeys.SYSTEM_CODE));
+		assertTrue(stateUpdate.containsKey(AssistantStateKeys.AGENT_APP_CODE));
 		assertEquals("1001", stateUpdate.get(AssistantStateKeys.ASSISTANT_UID));
 		assertEquals("gougu_oa", stateUpdate.get(AssistantStateKeys.SYSTEM_CODE));
+		assertEquals("grayscale_agent", stateUpdate.get(AssistantStateKeys.AGENT_APP_CODE));
+		assertEquals("enterprise_default", stateUpdate.get(AssistantStateKeys.SPACE_CODE));
 	}
 
 	private static AgentRunRequest buildValidRunRequest(String userId) {

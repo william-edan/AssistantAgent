@@ -31,11 +31,10 @@ import org.springframework.web.cors.CorsUtils;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
-import java.util.Collections;
 import java.util.Optional;
 
 /**
- * Authenticates chat requests by introspecting Bearer token with current auth system.
+ * Authenticates protected API requests by introspecting Bearer token with current auth system.
  *
  * @author Assistant Agent Team
  * @since 1.0.0
@@ -45,6 +44,8 @@ import java.util.Optional;
 public class TokenIntrospectionAuthenticationFilter extends OncePerRequestFilter {
 
 	private static final String CHAT_API_PREFIX = "/api/chat/";
+
+	private static final String CONTROLPLANE_API_PREFIX = "/api/controlplane/";
 
 	private static final String BEARER_PREFIX = "Bearer ";
 
@@ -60,7 +61,7 @@ public class TokenIntrospectionAuthenticationFilter extends OncePerRequestFilter
 			return true;
 		}
 		String requestUri = request.getRequestURI();
-		return !StringUtils.hasText(requestUri) || !requestUri.startsWith(CHAT_API_PREFIX);
+		return !StringUtils.hasText(requestUri) || !isProtectedPath(requestUri);
 	}
 
 	@Override
@@ -90,11 +91,12 @@ public class TokenIntrospectionAuthenticationFilter extends OncePerRequestFilter
 			return;
 		}
 
+		AuthenticatedUserContext userContext = authenticatedUser.get();
 		SecurityContext securityContext = SecurityContextHolder.createEmptyContext();
 		securityContext.setAuthentication(new UsernamePasswordAuthenticationToken(
-				authenticatedUser.get(),
+				userContext,
 				accessToken,
-				Collections.emptyList()));
+				AuthenticatedUserAuthorityMapper.toAuthorities(userContext)));
 		SecurityContextHolder.setContext(securityContext);
 		try {
 			filterChain.doFilter(request, response);
@@ -102,6 +104,10 @@ public class TokenIntrospectionAuthenticationFilter extends OncePerRequestFilter
 		finally {
 			SecurityContextHolder.clearContext();
 		}
+	}
+
+	private boolean isProtectedPath(String requestUri) {
+		return requestUri.startsWith(CHAT_API_PREFIX) || requestUri.startsWith(CONTROLPLANE_API_PREFIX);
 	}
 
 	private String resolveAccessToken(HttpServletRequest request) {

@@ -39,4 +39,9 @@ public class AssistantReactToolConfiguration {
     public ToolCallback slotConfirmToolCallback(SlotConfirmTool slotConfirmTool) {
         return SlotConfirmTool.createToolCallback(slotConfirmTool);
     }
+
+    @Bean
+    public ToolCallback artifactExecuteToolCallback(ArtifactExecuteTool artifactExecuteTool) {
+        return ArtifactExecuteTool.createToolCallback(artifactExecuteTool);
+    }
 }
