@@ -28,8 +28,10 @@ import org.springframework.ai.chat.model.ToolContext;
 
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CopyOnWriteArrayList;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.same;
@@ -75,6 +77,46 @@ class ArtifactRuntimeExecutorTest {
         assertEquals("T-1", flowContextCaptor.getValue().getThreadId());
         assertEquals("oa.leave.apply", payload.get("artifactCode"));
         assertEquals(Map.of("leaveId", "L-1"), payload.get("finalOutputs"));
+    }
+
+    @Test
+    void shouldPublishExecutionEventsToThreadStreamWhileExecuting() {
+        DAGFlowExecutor dagFlowExecutor = mock(DAGFlowExecutor.class);
+        ExecutionEventStreamRegistry eventStreamRegistry = new ExecutionEventStreamRegistry();
+        ArtifactRuntimeExecutor executor = new ArtifactRuntimeExecutor(
+                dagFlowExecutor,
+                null,
+                null,
+                eventStreamRegistry,
+                new ObjectMapper());
+        RuntimeArtifact artifact = runtimeArtifact("oa.leave.apply");
+        PublishedToolDescriptor descriptor = PublishedToolDescriptor.forArtifact(
+                "artifact-catalog",
+                "workflow:oa.leave.apply",
+                "请假申请",
+                null,
+                null,
+                false,
+                "gougu_oa",
+                artifact);
+        FlowExecutionResult flowExecutionResult = new FlowExecutionResult();
+        flowExecutionResult.setSuccess(true);
+        flowExecutionResult.setFinalOutputs(Map.of("leaveId", "L-1"));
+        when(dagFlowExecutor.execute(same(artifact.getFlowDefinition()), any(FlowContext.class)))
+                .thenReturn(flowExecutionResult);
+
+        ExecutionEventStreamRegistry.ExecutionEventSubscription subscription = eventStreamRegistry.open("T-1");
+        CopyOnWriteArrayList<ExecutionEvent> streamedEvents = new CopyOnWriteArrayList<>();
+        try {
+            subscription.flux().subscribe(streamedEvents::add);
+            executor.execute(descriptor, Map.of("reason", "事假"), toolContext());
+        }
+        finally {
+            subscription.close();
+        }
+
+        assertTrue(streamedEvents.stream().anyMatch(event -> event.eventType() == ExecutionEventType.RUN_STARTED));
+        assertTrue(streamedEvents.stream().anyMatch(event -> event.eventType() == ExecutionEventType.RUN_COMPLETED));
     }
 
     private RuntimeArtifact runtimeArtifact(String artifactCode) {

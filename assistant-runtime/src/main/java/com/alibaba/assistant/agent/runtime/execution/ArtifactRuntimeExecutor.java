@@ -56,17 +56,27 @@ public class ArtifactRuntimeExecutor {
 
     private final ExecutionRuntimePersistenceRecorder persistenceRecorder;
 
+    private final ExecutionEventStreamRegistry executionEventStreamRegistry;
+
     private final ObjectMapper objectMapper;
 
     public ArtifactRuntimeExecutor(DAGFlowExecutor dagFlowExecutor) {
-        this(dagFlowExecutor, null, null, new ObjectMapper());
+        this(dagFlowExecutor, null, null, null, new ObjectMapper());
     }
 
     public ArtifactRuntimeExecutor(
             DAGFlowExecutor dagFlowExecutor,
             @Nullable CredentialBroker credentialBroker,
             ObjectMapper objectMapper) {
-        this(dagFlowExecutor, credentialBroker, null, objectMapper);
+        this(dagFlowExecutor, credentialBroker, null, null, objectMapper);
+    }
+
+    public ArtifactRuntimeExecutor(
+            DAGFlowExecutor dagFlowExecutor,
+            @Nullable CredentialBroker credentialBroker,
+            @Nullable ExecutionRuntimePersistenceRecorder persistenceRecorder,
+            ObjectMapper objectMapper) {
+        this(dagFlowExecutor, credentialBroker, persistenceRecorder, null, objectMapper);
     }
 
     @Autowired
@@ -74,10 +84,12 @@ public class ArtifactRuntimeExecutor {
             DAGFlowExecutor dagFlowExecutor,
             @Nullable CredentialBroker credentialBroker,
             @Nullable ExecutionRuntimePersistenceRecorder persistenceRecorder,
+            @Nullable ExecutionEventStreamRegistry executionEventStreamRegistry,
             ObjectMapper objectMapper) {
         this.dagFlowExecutor = dagFlowExecutor;
         this.credentialBroker = credentialBroker;
         this.persistenceRecorder = persistenceRecorder;
+        this.executionEventStreamRegistry = executionEventStreamRegistry;
         this.objectMapper = objectMapper;
     }
 
@@ -94,7 +106,11 @@ public class ArtifactRuntimeExecutor {
 
         String runId = UUID.randomUUID().toString();
         FlowContext flowContext = buildFlowContext(descriptor, arguments, toolContext, runId);
-        RuntimeExecutionEventCollector executionEventCollector = new RuntimeExecutionEventCollector(runId, descriptor);
+        RuntimeExecutionEventCollector executionEventCollector = new RuntimeExecutionEventCollector(
+                runId,
+                descriptor,
+                flowContext.getThreadId(),
+                executionEventStreamRegistry);
         executionEventCollector.recordRunStarted();
         flowContext.addExecutionListener(executionEventCollector);
         resolveStepCredentials(descriptor, flowContext);
@@ -386,17 +402,27 @@ public class ArtifactRuntimeExecutor {
 
         private final PublishedToolDescriptor descriptor;
 
+        private final String threadId;
+
+        private final ExecutionEventStreamRegistry executionEventStreamRegistry;
+
         private final List<ExecutionEvent> events = new ArrayList<>();
 
         private long sequence = 1L;
 
-        private RuntimeExecutionEventCollector(String runId, PublishedToolDescriptor descriptor) {
+        private RuntimeExecutionEventCollector(
+                String runId,
+                PublishedToolDescriptor descriptor,
+                String threadId,
+                @Nullable ExecutionEventStreamRegistry executionEventStreamRegistry) {
             this.runId = runId;
             this.descriptor = descriptor;
+            this.threadId = threadId;
+            this.executionEventStreamRegistry = executionEventStreamRegistry;
         }
 
         void recordRunStarted() {
-            events.add(new ExecutionEvent(
+            record(new ExecutionEvent(
                     runId,
                     descriptor.artifact().getArtifactCode(),
                     descriptor.artifact().getArtifactType().name(),
@@ -416,7 +442,7 @@ public class ArtifactRuntimeExecutor {
             if (StringUtils.hasText(flowResult.getErrorMessage())) {
                 terminalPayload.put("error", flowResult.getErrorMessage());
             }
-            events.add(new ExecutionEvent(
+            record(new ExecutionEvent(
                     runId,
                     descriptor.artifact().getArtifactCode(),
                     descriptor.artifact().getArtifactType().name(),
@@ -442,7 +468,7 @@ public class ArtifactRuntimeExecutor {
             if (StringUtils.hasText(step.getName())) {
                 payload.put("stepName", step.getName());
             }
-            events.add(new ExecutionEvent(
+            record(new ExecutionEvent(
                     runId,
                     descriptor.artifact().getArtifactCode(),
                     descriptor.artifact().getArtifactType().name(),
@@ -463,7 +489,7 @@ public class ArtifactRuntimeExecutor {
             if (result.getOutputs() != null && !result.getOutputs().isEmpty()) {
                 payload.put("outputs", result.getOutputs());
             }
-            events.add(new ExecutionEvent(
+            record(new ExecutionEvent(
                     runId,
                     descriptor.artifact().getArtifactCode(),
                     descriptor.artifact().getArtifactType().name(),
@@ -484,7 +510,7 @@ public class ArtifactRuntimeExecutor {
             if (StringUtils.hasText(result.getErrorMessage())) {
                 payload.put("error", result.getErrorMessage());
             }
-            events.add(new ExecutionEvent(
+            record(new ExecutionEvent(
                     runId,
                     descriptor.artifact().getArtifactCode(),
                     descriptor.artifact().getArtifactType().name(),
@@ -495,6 +521,12 @@ public class ArtifactRuntimeExecutor {
                     Instant.now(),
                     payload));
         }
+
+        private void record(ExecutionEvent event) {
+            events.add(event);
+            if (executionEventStreamRegistry != null && StringUtils.hasText(threadId)) {
+                executionEventStreamRegistry.publish(threadId, event);
+            }
+        }
     }
 }
-
