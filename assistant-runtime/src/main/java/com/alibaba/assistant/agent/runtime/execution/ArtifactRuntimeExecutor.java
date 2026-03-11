@@ -531,7 +531,7 @@ public class ArtifactRuntimeExecutor {
         }
 
         boolean hasStepEvents() {
-            return events.size() > 1;
+            return events.stream().anyMatch(event -> StringUtils.hasText(event.stepId()));
         }
 
         List<ExecutionEvent> events() {
@@ -646,3 +646,4 @@ public class ArtifactRuntimeExecutor {
         }
     }
 }
+
