@@ -33,6 +33,8 @@ public record ExecutionHistoryDetailData(
         String platformPrincipalId,
         String threadId,
         String status,
+        String pausedStepId,
+        String approvalRequestId,
         LocalDateTime startedAt,
         LocalDateTime completedAt,
         List<ExecutionHistoryStepData> steps) {
@@ -51,6 +53,8 @@ public record ExecutionHistoryDetailData(
                 detailView.platformPrincipalId(),
                 detailView.threadId(),
                 detailView.status(),
+                detailView.pausedStepId(),
+                detailView.approvalRequestId(),
                 detailView.startedAt(),
                 detailView.completedAt(),
                 detailView.steps() != null

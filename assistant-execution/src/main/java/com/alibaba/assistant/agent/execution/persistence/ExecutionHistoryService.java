@@ -56,6 +56,8 @@ public class ExecutionHistoryService {
                         run.getPlatformPrincipalId(),
                         run.getThreadId(),
                         run.getStatus(),
+                        run.getPausedStepId(),
+                        run.getApprovalRequestId(),
                         run.getStartedAt(),
                         run.getCompletedAt(),
                         mapSteps(executionStepService.listByRunId(run.getRunId()))));
@@ -121,3 +123,4 @@ public class ExecutionHistoryService {
                 .toList();
     }
 }
+

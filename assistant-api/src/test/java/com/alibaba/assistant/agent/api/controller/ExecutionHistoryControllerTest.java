@@ -82,6 +82,8 @@ class ExecutionHistoryControllerTest {
                 .andExpect(jsonPath("$.code").value(0))
                 .andExpect(jsonPath("$.data.runId").value("RUN-1"))
                 .andExpect(jsonPath("$.data.spaceCode").value("finance-space"))
+                .andExpect(jsonPath("$.data.pausedStepId").value("submit_approval"))
+                .andExpect(jsonPath("$.data.approvalRequestId").value("RUN-1:submit_approval"))
                 .andExpect(jsonPath("$.data.steps.length()").value(1))
                 .andExpect(jsonPath("$.data.steps[0].stepId").value("create_leave"));
     }
@@ -101,7 +103,9 @@ class ExecutionHistoryControllerTest {
                 .andExpect(jsonPath("$.code").value(0))
                 .andExpect(jsonPath("$.data.runId").value("RUN-1"))
                 .andExpect(jsonPath("$.data.spaceCode").value("finance-space"))
-                .andExpect(jsonPath("$.data.environment").value("test"));
+                .andExpect(jsonPath("$.data.environment").value("test"))
+                .andExpect(jsonPath("$.data.pausedStepId").value("submit_approval"))
+                .andExpect(jsonPath("$.data.approvalRequestId").value("RUN-1:submit_approval"));
     }
 
     @Test
@@ -128,6 +132,8 @@ class ExecutionHistoryControllerTest {
                 "u1001",
                 "T-1",
                 "COMPLETED",
+                null,
+                null,
                 LocalDateTime.of(2026, 3, 10, 12, 0),
                 LocalDateTime.of(2026, 3, 10, 12, 1),
                 List.of())));
@@ -162,6 +168,8 @@ class ExecutionHistoryControllerTest {
                 "u1001",
                 "T-1",
                 "COMPLETED",
+                "submit_approval",
+                "RUN-1:submit_approval",
                 LocalDateTime.of(2026, 3, 10, 12, 0),
                 LocalDateTime.of(2026, 3, 10, 12, 1),
                 List.of(new ExecutionStepView(

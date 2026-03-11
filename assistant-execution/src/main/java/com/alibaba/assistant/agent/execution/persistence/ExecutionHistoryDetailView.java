@@ -29,6 +29,8 @@ public record ExecutionHistoryDetailView(
         String platformPrincipalId,
         String threadId,
         String status,
+        String pausedStepId,
+        String approvalRequestId,
         LocalDateTime startedAt,
         LocalDateTime completedAt,
         List<ExecutionStepView> steps) {

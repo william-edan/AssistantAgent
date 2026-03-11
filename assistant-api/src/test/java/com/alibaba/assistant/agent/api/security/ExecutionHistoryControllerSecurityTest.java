@@ -139,6 +139,8 @@ class ExecutionHistoryControllerSecurityTest {
                 "u1001",
                 "T-1",
                 "WAITING_APPROVAL",
+                "submit_approval",
+                "RUN-1:submit_approval",
                 LocalDateTime.of(2026, 3, 10, 12, 0),
                 null,
                 List.of())));
