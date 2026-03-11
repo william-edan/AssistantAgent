@@ -92,6 +92,15 @@ public class DAGFlowExecutor {
 						progressed = true;
 						continue;
 					}
+					if (shouldSkipAnyJoinStep(stepId, step, stepStatuses, nextPredecessors)) {
+						StepResult skipped = StepResult.success(Map.of("skipped", true));
+						stepStatuses.put(stepId, StepStatus.SKIPPED);
+						stepResults.put(stepId, skipped);
+						notifyStepSkipped(step, skipped, context);
+						remaining.remove(stepId);
+						progressed = true;
+						continue;
+					}
 					if (!isStepReady(stepId, step, stepStatuses, nextPredecessors)) {
 						continue;
 					}
@@ -324,6 +333,31 @@ public class DAGFlowExecutor {
 			dependencyIds.addAll(nextPredecessors.get(stepId));
 		}
 		return new ArrayList<>(dependencyIds);
+	}
+
+	private boolean shouldSkipAnyJoinStep(
+			String stepId,
+			StepDefinition step,
+			Map<String, StepStatus> stepStatuses,
+			Map<String, List<String>> nextPredecessors) {
+		JoinType joinType = step.getJoinType() != null ? step.getJoinType() : JoinType.ALL;
+		if (joinType != JoinType.ANY) {
+			return false;
+		}
+		List<String> dependencyIds = mergedDependencyIds(stepId, step, nextPredecessors);
+		if (dependencyIds.isEmpty()) {
+			return false;
+		}
+		for (String dependencyId : dependencyIds) {
+			StepStatus status = stepStatuses.get(dependencyId);
+			if (status == null || status == StepStatus.COMPLETED) {
+				return false;
+			}
+			if (status != StepStatus.SKIPPED && status != StepStatus.CANCELLED) {
+				return false;
+			}
+		}
+		return true;
 	}
 
 	private boolean isSatisfiedDependencyStatus(StepStatus status) {
@@ -574,5 +608,4 @@ public class DAGFlowExecutor {
 	}
 
 }
-
 

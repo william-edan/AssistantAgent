@@ -216,6 +216,17 @@ class DAGFlowExecutorTest {
         assertEquals("/merge", second.getPath());
     }
 
+
+    @Test
+    void shouldSkipAnyJoinStepWhenAllDependenciesAreSkipped() {
+        FlowExecutionResult result = dagFlowExecutor.execute(buildAnyJoinAllSkippedFlow(), createFlowContext(baseInputs()));
+
+        assertTrue(result.isSuccess());
+        assertEquals(StepStatus.SKIPPED, result.getStepStatuses().get("optionalA"));
+        assertEquals(StepStatus.SKIPPED, result.getStepStatuses().get("optionalB"));
+        assertEquals(StepStatus.SKIPPED, result.getStepStatuses().get("merge"));
+        assertEquals(0, mockWebServer.getRequestCount());
+    }
     @Test
     void shouldPauseBeforeApprovalGatedStepExecutes() {
         FlowExecutionResult result = dagFlowExecutor.execute(buildApprovalFlow(), createFlowContext(baseInputs()));
@@ -498,6 +509,26 @@ class DAGFlowExecutorTest {
         return flow;
     }
 
+
+    private FlowDefinition buildAnyJoinAllSkippedFlow() {
+        StepDefinition optionalA = httpStep("optionalA", "/optional-a");
+        optionalA.getConfig().setConditions(Map.of("enabled", true, "expression", false));
+        StepDefinition optionalB = httpStep("optionalB", "/optional-b");
+        optionalB.getConfig().setConditions(Map.of("enabled", true, "expression", false));
+        StepDefinition merge = httpStep("merge", "/merge");
+        merge.setDependsOn(List.of("optionalA", "optionalB"));
+        merge.setJoinType(JoinType.ANY);
+
+        FlowDefinition flow = new FlowDefinition();
+        flow.setVersion("2.0");
+        flow.setEntry(List.of("merge", "optionalA", "optionalB"));
+        flow.setTerminal(List.of("merge"));
+        flow.setSteps(Map.of(
+                "merge", merge,
+                "optionalA", optionalA,
+                "optionalB", optionalB));
+        return flow;
+    }
     private FlowDefinition buildSlotConditionalFlow() {
         StepDefinition primary = httpStep("primary", "/primary");
         StepDefinition conditional = httpStep("conditional", "/conditional");
