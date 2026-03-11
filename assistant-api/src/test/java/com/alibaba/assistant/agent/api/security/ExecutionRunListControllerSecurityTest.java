@@ -98,7 +98,7 @@ class ExecutionRunListControllerSecurityTest {
 
         verify(migrationAuthService, never()).introspect(anyString());
         verify(authorizationService, never()).canViewSpaceCatalog(any(), anyString(), anyString());
-        verify(executionHistoryService, never()).listRuns(any(), any(), any(), any());
+        verify(executionHistoryService, never()).listRuns(any(), any(), any(), any(), any(), any(), any());
     }
 
     @Test
@@ -131,7 +131,7 @@ class ExecutionRunListControllerSecurityTest {
         when(platformSpaceService.findActiveByCode("finance-space", "prod")).thenReturn(Optional.of(space));
         when(authorizationService.canViewSpaceCatalog(any(AuthenticatedUserContext.class), eq("finance-space"), eq("prod")))
                 .thenReturn(true);
-        when(executionHistoryService.listRuns(11L, null, null, 20)).thenReturn(List.of());
+        when(executionHistoryService.listRuns(11L, null, null, null, null, null, 20)).thenReturn(List.of());
 
         mockMvc.perform(get(LIST_PATH).header(AUTHORIZATION, "Bearer token-space-admin"))
                 .andExpect(status().isOk());
@@ -196,5 +196,3 @@ class ExecutionRunListControllerSecurityTest {
         }
     }
 }
-
-

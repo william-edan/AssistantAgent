@@ -64,8 +64,11 @@ public class ExecutionRunListController {
     public ResponseEntity<ExecutionRunListResponse> listExecutionRuns(
             @PathVariable String spaceCode,
             @RequestParam(required = false) String environment,
+            @RequestParam(required = false) String runId,
             @RequestParam(required = false) String status,
             @RequestParam(required = false) String artifactCode,
+            @RequestParam(required = false) String platformPrincipalId,
+            @RequestParam(required = false) String threadId,
             @RequestParam(required = false) Integer limit,
             Principal principal) {
         AuthenticatedUserContext authenticatedUser = requireAuthenticatedUser(principal);
@@ -76,7 +79,14 @@ public class ExecutionRunListController {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "controlplane_scope_denied");
         }
         return ResponseEntity.ok(ExecutionRunListResponse.ok(new ExecutionRunListData(
-                executionHistoryService.listRuns(space.getId(), normalizeOptional(status), normalizeOptional(artifactCode), limit)
+                executionHistoryService.listRuns(
+                                space.getId(),
+                                normalizeOptional(runId),
+                                normalizeOptional(status),
+                                normalizeOptional(artifactCode),
+                                normalizeOptional(platformPrincipalId),
+                                normalizeOptional(threadId),
+                                limit)
                         .stream()
                         .map(run -> ExecutionRunSummaryData.from(run, space.getSpaceCode(), normalizedEnvironment))
                         .toList())));

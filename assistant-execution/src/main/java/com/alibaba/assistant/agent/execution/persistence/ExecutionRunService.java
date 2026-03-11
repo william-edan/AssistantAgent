@@ -68,6 +68,34 @@ public class ExecutionRunService extends ServiceImpl<ExecutionRunMapper, Executi
                 .toList();
     }
 
+    public List<ExecutionRun> listBySpace(
+            Long spaceId,
+            String runId,
+            String status,
+            String artifactCode,
+            String platformPrincipalId,
+            String threadId,
+            Integer limit) {
+        if (spaceId == null) {
+            return List.of();
+        }
+        int normalizedLimit = normalizeLimit(limit);
+        return lambdaQuery()
+                .eq(ExecutionRun::getSpaceId, spaceId)
+                .eq(StringUtils.hasText(runId), ExecutionRun::getRunId, runId != null ? runId.trim() : null)
+                .eq(StringUtils.hasText(status), ExecutionRun::getStatus, status != null ? status.trim() : null)
+                .eq(StringUtils.hasText(artifactCode), ExecutionRun::getArtifactCode, artifactCode != null ? artifactCode.trim() : null)
+                .eq(StringUtils.hasText(platformPrincipalId), ExecutionRun::getPlatformPrincipalId,
+                        platformPrincipalId != null ? platformPrincipalId.trim() : null)
+                .eq(StringUtils.hasText(threadId), ExecutionRun::getThreadId, threadId != null ? threadId.trim() : null)
+                .orderByDesc(ExecutionRun::getStartedAt)
+                .orderByDesc(ExecutionRun::getId)
+                .list()
+                .stream()
+                .limit(normalizedLimit)
+                .toList();
+    }
+
     private int normalizeLimit(Integer limit) {
         if (limit == null || limit <= 0) {
             return DEFAULT_LIST_LIMIT;

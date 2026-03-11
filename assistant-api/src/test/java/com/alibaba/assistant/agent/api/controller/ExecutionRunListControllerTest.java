@@ -75,7 +75,7 @@ class ExecutionRunListControllerTest {
         when(platformSpaceService.findActiveByCode("finance-space", "test")).thenReturn(java.util.Optional.of(space));
         when(authorizationService.canViewSpaceCatalog(any(AuthenticatedUserContext.class), eq("finance-space"), eq("test")))
                 .thenReturn(true);
-        when(executionHistoryService.listRuns(11L, "WAITING_APPROVAL", "oa.leave.apply", 10))
+        when(executionHistoryService.listRuns(11L, null, "WAITING_APPROVAL", "oa.leave.apply", null, null, 10))
                 .thenReturn(List.of(new ExecutionHistoryRunSummaryView(
                         "RUN-1",
                         "oa.leave.apply",
@@ -105,6 +105,43 @@ class ExecutionRunListControllerTest {
     }
 
     @Test
+    void shouldPassIdentityAndThreadFiltersToExecutionRunList() throws Exception {
+        PlatformSpace space = new PlatformSpace();
+        space.setId(11L);
+        space.setSpaceCode("finance-space");
+        space.setEnvironment("prod");
+        when(platformSpaceService.findActiveByCode("finance-space", "prod")).thenReturn(java.util.Optional.of(space));
+        when(authorizationService.canViewSpaceCatalog(any(AuthenticatedUserContext.class), eq("finance-space"), eq("prod")))
+                .thenReturn(true);
+        when(executionHistoryService.listRuns(11L, "RUN-2", "COMPLETED", "oa.leave.apply", "u2002", "THREAD-9", 5))
+                .thenReturn(List.of(new ExecutionHistoryRunSummaryView(
+                        "RUN-2",
+                        "oa.leave.apply",
+                        "WORKFLOW",
+                        11L,
+                        "u2002",
+                        "THREAD-9",
+                        "COMPLETED",
+                        null,
+                        null,
+                        LocalDateTime.of(2026, 3, 11, 12, 0),
+                        LocalDateTime.of(2026, 3, 11, 12, 3))));
+
+        mockMvc.perform(get("/api/controlplane/spaces/finance-space/execution-runs")
+                        .param("runId", "RUN-2")
+                        .param("status", "COMPLETED")
+                        .param("artifactCode", "oa.leave.apply")
+                        .param("platformPrincipalId", "u2002")
+                        .param("threadId", "THREAD-9")
+                        .param("limit", "5")
+                        .principal(authenticatedPrincipal()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.runs[0].runId").value("RUN-2"))
+                .andExpect(jsonPath("$.data.runs[0].platformPrincipalId").value("u2002"))
+                .andExpect(jsonPath("$.data.runs[0].threadId").value("THREAD-9"));
+    }
+
+    @Test
     void shouldReturnForbiddenWhenExecutionRunListScopeDenied() throws Exception {
         PlatformSpace space = new PlatformSpace();
         space.setId(11L);
@@ -118,7 +155,7 @@ class ExecutionRunListControllerTest {
                         .principal(authenticatedPrincipal()))
                 .andExpect(status().isForbidden());
 
-        verify(executionHistoryService, never()).listRuns(11L, null, null, 20);
+        verify(executionHistoryService, never()).listRuns(11L, null, null, null, null, null, 20);
     }
 
     private Principal authenticatedPrincipal() {
