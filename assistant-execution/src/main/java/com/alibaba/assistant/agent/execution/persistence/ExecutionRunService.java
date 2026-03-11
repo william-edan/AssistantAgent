@@ -21,6 +21,7 @@ import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
+import java.util.List;
 import java.util.Optional;
 
 /**
@@ -28,6 +29,8 @@ import java.util.Optional;
  */
 @Service
 public class ExecutionRunService extends ServiceImpl<ExecutionRunMapper, ExecutionRun> {
+
+    private static final int DEFAULT_LIST_LIMIT = 20;
 
     public Optional<ExecutionRun> findLatestByRunId(String runId) {
         if (!StringUtils.hasText(runId)) {
@@ -47,5 +50,28 @@ public class ExecutionRunService extends ServiceImpl<ExecutionRunMapper, Executi
         query.eq(ExecutionRun::getApprovalRequestId, approvalRequestId.trim());
         query.orderByDesc(ExecutionRun::getId);
         return Optional.ofNullable(getOne(query, false));
+    }
+
+    public List<ExecutionRun> listLatestBySpace(Long spaceId, String runId, Integer limit) {
+        if (spaceId == null) {
+            return List.of();
+        }
+        int normalizedLimit = normalizeLimit(limit);
+        return lambdaQuery()
+                .eq(ExecutionRun::getSpaceId, spaceId)
+                .eq(StringUtils.hasText(runId), ExecutionRun::getRunId, runId != null ? runId.trim() : null)
+                .orderByDesc(ExecutionRun::getStartedAt)
+                .orderByDesc(ExecutionRun::getId)
+                .list()
+                .stream()
+                .limit(normalizedLimit)
+                .toList();
+    }
+
+    private int normalizeLimit(Integer limit) {
+        if (limit == null || limit <= 0) {
+            return DEFAULT_LIST_LIMIT;
+        }
+        return Math.min(limit, 100);
     }
 }

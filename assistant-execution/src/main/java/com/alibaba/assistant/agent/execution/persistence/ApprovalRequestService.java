@@ -21,6 +21,7 @@ import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
+import java.util.List;
 import java.util.Optional;
 
 /**
@@ -30,6 +31,7 @@ import java.util.Optional;
 public class ApprovalRequestService extends ServiceImpl<ApprovalRequestMapper, ApprovalRequest> {
 
     private static final String STATUS_PENDING = "WAITING_APPROVAL";
+    private static final int DEFAULT_LIST_LIMIT = 20;
 
     public Optional<ApprovalRequest> findLatestPendingByRunAndStep(String runId, String stepId) {
         if (!StringUtils.hasText(runId) || !StringUtils.hasText(stepId)) {
@@ -51,5 +53,28 @@ public class ApprovalRequestService extends ServiceImpl<ApprovalRequestMapper, A
         query.eq(ApprovalRequest::getRequestId, requestId.trim());
         query.orderByDesc(ApprovalRequest::getId);
         return Optional.ofNullable(getOne(query, false));
+    }
+
+    public List<ApprovalRequest> listByRunIds(List<String> runIds, String status, Integer limit) {
+        if (runIds == null || runIds.isEmpty()) {
+            return List.of();
+        }
+        int normalizedLimit = normalizeLimit(limit);
+        return lambdaQuery()
+                .in(ApprovalRequest::getRunId, runIds)
+                .eq(StringUtils.hasText(status), ApprovalRequest::getStatus, status != null ? status.trim() : null)
+                .orderByDesc(ApprovalRequest::getRequestedAt)
+                .orderByDesc(ApprovalRequest::getId)
+                .list()
+                .stream()
+                .limit(normalizedLimit)
+                .toList();
+    }
+
+    private int normalizeLimit(Integer limit) {
+        if (limit == null || limit <= 0) {
+            return DEFAULT_LIST_LIMIT;
+        }
+        return Math.min(limit, 100);
     }
 }

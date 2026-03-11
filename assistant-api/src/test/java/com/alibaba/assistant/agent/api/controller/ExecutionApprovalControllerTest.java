@@ -69,7 +69,7 @@ class ExecutionApprovalControllerTest {
         when(authorizationService.canManageSpaceExecutionApprovals(
                 any(AuthenticatedUserContext.class), eq("finance-space"), eq("prod")))
                 .thenReturn(true);
-        when(executionApprovalService.listPendingRequests("finance-space", "prod"))
+        when(executionApprovalService.listRequests("finance-space", "prod", null, null, null))
                 .thenReturn(List.of(new ExecutionApprovalRequestView(
                         "REQ-1",
                         "RUN-1",
@@ -97,6 +97,42 @@ class ExecutionApprovalControllerTest {
                 .andExpect(jsonPath("$.data.requests[0].runId").value("RUN-1"))
                 .andExpect(jsonPath("$.data.requests[0].spaceCode").value("finance-space"))
                 .andExpect(jsonPath("$.data.requests[0].status").value("WAITING_APPROVAL"));
+    }
+
+    @Test
+    void shouldPassStatusAndRunFiltersToApprovalList() throws Exception {
+        when(authorizationService.canManageSpaceExecutionApprovals(
+                any(AuthenticatedUserContext.class), eq("finance-space"), eq("test")))
+                .thenReturn(true);
+        when(executionApprovalService.listRequests("finance-space", "test", "APPROVED", "RUN-2", 5))
+                .thenReturn(List.of(new ExecutionApprovalRequestView(
+                        "REQ-2",
+                        "RUN-2",
+                        "oa.leave.apply",
+                        "WORKFLOW",
+                        11L,
+                        "finance-space",
+                        "test",
+                        "submit_approval",
+                        "APPROVED",
+                        "manual",
+                        "u2001",
+                        "submit_approval",
+                        "u1001",
+                        "T-2",
+                        LocalDateTime.of(2026, 3, 10, 22, 0),
+                        LocalDateTime.of(2026, 3, 10, 22, 5))));
+
+        mockMvc.perform(get("/api/controlplane/spaces/finance-space/approval-requests")
+                        .queryParam("environment", "test")
+                        .queryParam("status", "APPROVED")
+                        .queryParam("runId", "RUN-2")
+                        .queryParam("limit", "5")
+                        .principal(authenticatedPrincipal()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.requests[0].requestId").value("REQ-2"))
+                .andExpect(jsonPath("$.data.requests[0].status").value("APPROVED"))
+                .andExpect(jsonPath("$.data.requests[0].runId").value("RUN-2"));
     }
 
     @Test
@@ -229,7 +265,7 @@ class ExecutionApprovalControllerTest {
                         .principal(authenticatedPrincipal()))
                 .andExpect(status().isForbidden());
 
-        verify(executionApprovalService, never()).listPendingRequests("finance-space", "prod");
+        verify(executionApprovalService, never()).listRequests("finance-space", "prod", null, null, null);
     }
 
     private Principal authenticatedPrincipal() {

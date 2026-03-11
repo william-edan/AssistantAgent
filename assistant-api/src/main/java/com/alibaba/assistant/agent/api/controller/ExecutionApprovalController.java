@@ -66,12 +66,21 @@ public class ExecutionApprovalController {
     public ResponseEntity<ExecutionApprovalListResponse> listApprovalRequests(
             @PathVariable String spaceCode,
             @RequestParam(required = false) String environment,
+            @RequestParam(required = false) String status,
+            @RequestParam(required = false) String runId,
+            @RequestParam(required = false) Integer limit,
             Principal principal) {
         AuthenticatedUserContext authenticatedUser = requireAuthenticatedUser(principal);
         String normalizedEnvironment = normalizeEnvironment(environment);
         requireApprovalAccess(authenticatedUser, spaceCode, normalizedEnvironment);
         return ResponseEntity.ok(ExecutionApprovalListResponse.ok(new ExecutionApprovalListData(
-                executionApprovalService.listPendingRequests(spaceCode, normalizedEnvironment).stream()
+                executionApprovalService.listRequests(
+                                spaceCode,
+                                normalizedEnvironment,
+                                normalizeOptional(status),
+                                normalizeOptional(runId),
+                                limit)
+                        .stream()
                         .map(ExecutionApprovalRequestData::from)
                         .toList())));
     }
@@ -147,5 +156,9 @@ public class ExecutionApprovalController {
 
     private String normalizeEnvironment(String environment) {
         return StringUtils.hasText(environment) ? environment.trim() : "prod";
+    }
+
+    private String normalizeOptional(String value) {
+        return StringUtils.hasText(value) ? value.trim() : null;
     }
 }

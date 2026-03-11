@@ -29,7 +29,6 @@ import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
 import java.time.LocalDateTime;
-import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -70,48 +69,48 @@ public class ExecutionApprovalService {
     }
 
     /**
-     * List pending approval requests for the target space.
+     * List approval requests for the target space with optional status and run filters.
      */
-    public List<ExecutionApprovalRequestView> listPendingRequests(String spaceCode, String environment) {
+    public List<ExecutionApprovalRequestView> listRequests(
+            String spaceCode,
+            String environment,
+            String status,
+            String runId,
+            Integer limit) {
         Optional<PlatformSpace> spaceOptional = findSpace(spaceCode, environment);
         if (spaceOptional.isEmpty()) {
             return List.of();
         }
         PlatformSpace space = spaceOptional.get();
-        List<ExecutionRun> runs = executionRunService.lambdaQuery()
-                .eq(ExecutionRun::getSpaceId, space.getId())
-                .eq(ExecutionRun::getStatus, STATUS_WAITING_APPROVAL)
-                .orderByDesc(ExecutionRun::getId)
-                .list();
+        String normalizedStatus = normalizeStatus(status);
+        String normalizedRunId = normalizeOptional(runId);
+        List<ExecutionRun> runs = executionRunService.listLatestBySpace(space.getId(), normalizedRunId, limit);
         if (runs == null || runs.isEmpty()) {
             return List.of();
         }
 
-        Map<String, ExecutionRun> latestRunsById = new LinkedHashMap<>();
+        Map<String, ExecutionRun> runsById = new LinkedHashMap<>();
         for (ExecutionRun run : runs) {
-            if (run != null && StringUtils.hasText(run.getRunId()) && !latestRunsById.containsKey(run.getRunId())) {
-                latestRunsById.put(run.getRunId(), run);
+            if (run != null && StringUtils.hasText(run.getRunId())) {
+                runsById.putIfAbsent(run.getRunId(), run);
             }
         }
-        if (latestRunsById.isEmpty()) {
-            return List.of();
-        }
-
-        List<ApprovalRequest> requests = approvalRequestService.lambdaQuery()
-                .in(ApprovalRequest::getRunId, new ArrayList<>(latestRunsById.keySet()))
-                .eq(ApprovalRequest::getStatus, STATUS_WAITING_APPROVAL)
-                .orderByDesc(ApprovalRequest::getRequestedAt)
-                .orderByDesc(ApprovalRequest::getId)
-                .list();
-        if (requests == null || requests.isEmpty()) {
+        if (runsById.isEmpty()) {
             return List.of();
         }
 
         String normalizedEnvironment = normalizeEnvironment(environment);
-        return requests.stream()
-                .map(request -> toRequestView(request, latestRunsById.get(request.getRunId()), space.getSpaceCode(), normalizedEnvironment))
+        return approvalRequestService.listByRunIds(List.copyOf(runsById.keySet()), normalizedStatus, limit).stream()
+                .map(request -> toRequestView(request, runsById.get(request.getRunId()), space.getSpaceCode(), normalizedEnvironment))
                 .filter(view -> view != null)
                 .toList();
+    }
+
+    /**
+     * List pending approval requests for the target space.
+     */
+    public List<ExecutionApprovalRequestView> listPendingRequests(String spaceCode, String environment) {
+        return listRequests(spaceCode, environment, null, null, null);
     }
 
     /**
@@ -306,6 +305,17 @@ public class ExecutionApprovalService {
 
     private String normalizeEnvironment(String environment) {
         return StringUtils.hasText(environment) ? environment.trim() : DEFAULT_ENVIRONMENT;
+    }
+
+    private String normalizeStatus(String status) {
+        if (!StringUtils.hasText(status)) {
+            return STATUS_WAITING_APPROVAL;
+        }
+        return status.trim().toUpperCase();
+    }
+
+    private String normalizeOptional(String value) {
+        return StringUtils.hasText(value) ? value.trim() : null;
     }
 
     private record ApprovalResolution(
