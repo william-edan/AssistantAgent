@@ -19,9 +19,11 @@ import com.alibaba.assistant.agent.controlplane.connector.mapper.AuthProfileMapp
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import org.springframework.stereotype.Service;
+import org.springframework.util.StringUtils;
 
 import java.util.Collections;
 import java.util.List;
+import java.util.Optional;
 
 /**
  * Service for auth_profile lookup operations.
@@ -32,24 +34,39 @@ import java.util.List;
 @Service
 public class AuthProfileService extends ServiceImpl<AuthProfileMapper, AuthProfile> {
 
-	private static final String STATUS_ACTIVE = "active";
+    private static final String STATUS_ACTIVE = "active";
 
-	/**
-	 * List active auth profiles for a connector.
-	 *
-	 * @param connectorId connector id
-	 * @return active auth profiles ordered by id
-	 */
-	public List<AuthProfile> listActiveByConnector(Long connectorId) {
-		if (connectorId == null) {
-			return Collections.emptyList();
-		}
+    /**
+     * List active auth profiles for a connector.
+     *
+     * @param connectorId connector id
+     * @return active auth profiles ordered by id
+     */
+    public List<AuthProfile> listActiveByConnector(Long connectorId) {
+        if (connectorId == null) {
+            return Collections.emptyList();
+        }
 
-		LambdaQueryWrapper<AuthProfile> query = new LambdaQueryWrapper<>();
-		query.eq(AuthProfile::getConnectorId, connectorId);
-		query.eq(AuthProfile::getStatus, STATUS_ACTIVE);
-		query.orderByAsc(AuthProfile::getId);
-		return list(query);
-	}
+        LambdaQueryWrapper<AuthProfile> query = new LambdaQueryWrapper<>();
+        query.eq(AuthProfile::getConnectorId, connectorId);
+        query.eq(AuthProfile::getStatus, STATUS_ACTIVE);
+        query.orderByAsc(AuthProfile::getId);
+        return list(query);
+    }
 
+    /**
+     * Find latest active auth profile by code under a connector.
+     */
+    public Optional<AuthProfile> findLatestActiveByCode(Long connectorId, String authProfileCode) {
+        if (connectorId == null || !StringUtils.hasText(authProfileCode)) {
+            return Optional.empty();
+        }
+
+        LambdaQueryWrapper<AuthProfile> query = new LambdaQueryWrapper<>();
+        query.eq(AuthProfile::getConnectorId, connectorId);
+        query.eq(AuthProfile::getAuthProfileCode, authProfileCode.trim());
+        query.eq(AuthProfile::getStatus, STATUS_ACTIVE);
+        query.orderByDesc(AuthProfile::getId);
+        return Optional.ofNullable(getOne(query, false));
+    }
 }
