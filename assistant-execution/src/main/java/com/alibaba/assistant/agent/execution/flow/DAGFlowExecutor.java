@@ -316,7 +316,17 @@ public class DAGFlowExecutor {
 		}
 		JoinType joinType = step.getJoinType() != null ? step.getJoinType() : JoinType.ALL;
 		if (joinType == JoinType.ANY) {
-			return dependsOn.stream().map(stepStatuses::get).anyMatch(this::isSatisfiedDependencyStatus);
+			boolean anySatisfied = false;
+			for (String dependencyId : dependsOn) {
+				StepStatus status = stepStatuses.get(dependencyId);
+				if (isSatisfiedDependencyStatus(status)) {
+					anySatisfied = true;
+				}
+				if (!isTerminalDependencyStatus(status)) {
+					return false;
+				}
+			}
+			return anySatisfied;
 		}
 		return dependsOn.stream().map(stepStatuses::get).allMatch(this::isSatisfiedDependencyStatus);
 	}
@@ -362,6 +372,13 @@ public class DAGFlowExecutor {
 
 	private boolean isSatisfiedDependencyStatus(StepStatus status) {
 		return status == StepStatus.COMPLETED || status == StepStatus.SKIPPED;
+	}
+
+	private boolean isTerminalDependencyStatus(StepStatus status) {
+		return status == StepStatus.COMPLETED
+				|| status == StepStatus.SKIPPED
+				|| status == StepStatus.CANCELLED
+				|| status == StepStatus.FAILED;
 	}
 
 	private boolean shouldExecute(StepDefinition step, FlowContext context) {

@@ -227,6 +227,41 @@ class DAGFlowExecutorTest {
         assertEquals(StepStatus.SKIPPED, result.getStepStatuses().get("merge"));
         assertEquals(0, mockWebServer.getRequestCount());
     }
+
+    @Test
+    void shouldSkipAllJoinStepWhenAllDependenciesAreSkipped() {
+        FlowExecutionResult result = dagFlowExecutor.execute(buildAllJoinAllSkippedFlow(), createFlowContext(baseInputs()));
+
+        assertTrue(result.isSuccess());
+        assertEquals(StepStatus.SKIPPED, result.getStepStatuses().get("optionalA"));
+        assertEquals(StepStatus.SKIPPED, result.getStepStatuses().get("optionalB"));
+        assertEquals(StepStatus.SKIPPED, result.getStepStatuses().get("merge"));
+        assertEquals(0, mockWebServer.getRequestCount());
+    }
+
+    @Test
+    void shouldDelayAnyJoinUntilPendingDependencySettlesAfterResume() throws Exception {
+        mockWebServer.enqueue(jsonResponse("{\"code\":0,\"msg\":\"optional\",\"data\":{}}"));
+        mockWebServer.enqueue(jsonResponse("{\"code\":0,\"msg\":\"merge\",\"data\":{}}"));
+
+        FlowContext context = createFlowContext(baseInputs());
+        context.restoreStepStatus("primary", StepStatus.COMPLETED);
+        context.restoreStepOutput("primary", Map.of("message", "primary"));
+
+        FlowExecutionResult result = dagFlowExecutor.execute(buildResumedAnyJoinFlow(), context);
+
+        assertTrue(result.isSuccess());
+        assertEquals(StepStatus.COMPLETED, result.getStepStatuses().get("primary"));
+        assertEquals(StepStatus.COMPLETED, result.getStepStatuses().get("optional"));
+        assertEquals(StepStatus.COMPLETED, result.getStepStatuses().get("merge"));
+
+        RecordedRequest first = mockWebServer.takeRequest(1, TimeUnit.SECONDS);
+        RecordedRequest second = mockWebServer.takeRequest(1, TimeUnit.SECONDS);
+        assertNotNull(first);
+        assertNotNull(second);
+        assertEquals("/optional", first.getPath());
+        assertEquals("/merge", second.getPath());
+    }
     @Test
     void shouldPauseBeforeApprovalGatedStepExecutes() {
         FlowExecutionResult result = dagFlowExecutor.execute(buildApprovalFlow(), createFlowContext(baseInputs()));
@@ -527,6 +562,45 @@ class DAGFlowExecutorTest {
                 "merge", merge,
                 "optionalA", optionalA,
                 "optionalB", optionalB));
+        return flow;
+    }
+
+    private FlowDefinition buildAllJoinAllSkippedFlow() {
+        StepDefinition optionalA = httpStep("optionalA", "/optional-a");
+        optionalA.getConfig().setConditions(Map.of("enabled", true, "expression", false));
+        StepDefinition optionalB = httpStep("optionalB", "/optional-b");
+        optionalB.getConfig().setConditions(Map.of("enabled", true, "expression", false));
+        StepDefinition merge = httpStep("merge", "/merge");
+        merge.setDependsOn(List.of("optionalA", "optionalB"));
+
+        FlowDefinition flow = new FlowDefinition();
+        flow.setVersion("2.0");
+        flow.setEntry(List.of("merge", "optionalA", "optionalB"));
+        flow.setTerminal(List.of("merge"));
+        flow.setSteps(Map.of(
+                "merge", merge,
+                "optionalA", optionalA,
+                "optionalB", optionalB));
+        return flow;
+    }
+
+    private FlowDefinition buildResumedAnyJoinFlow() {
+        StepDefinition primary = httpStep("primary", "/primary");
+        StepDefinition optional = httpStep("optional", "/optional");
+        StepDefinition merge = httpStep("merge", "/merge");
+        merge.setDependsOn(List.of("primary", "optional"));
+        merge.setJoinType(JoinType.ANY);
+
+        Map<String, StepDefinition> steps = new LinkedHashMap<>();
+        steps.put("merge", merge);
+        steps.put("optional", optional);
+        steps.put("primary", primary);
+
+        FlowDefinition flow = new FlowDefinition();
+        flow.setVersion("2.0");
+        flow.setEntry(List.of("merge", "optional", "primary"));
+        flow.setTerminal(List.of("merge"));
+        flow.setSteps(steps);
         return flow;
     }
     private FlowDefinition buildSlotConditionalFlow() {
