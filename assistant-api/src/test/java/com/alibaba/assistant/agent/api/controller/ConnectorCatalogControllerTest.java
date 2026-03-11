@@ -72,6 +72,7 @@ class ConnectorCatalogControllerTest {
                         "gougu_oa",
                         "OA Core",
                         "openapi",
+                        "intranet",
                         "http://oa.internal",
                         "active",
                         2)));
@@ -87,6 +88,7 @@ class ConnectorCatalogControllerTest {
                 .andExpect(jsonPath("$.data.systemCode").value("gougu_oa"))
                 .andExpect(jsonPath("$.data.displayName").value("OA Core"))
                 .andExpect(jsonPath("$.data.protocolType").value("OPENAPI"))
+                .andExpect(jsonPath("$.data.networkZone").value("INTRANET"))
                 .andExpect(jsonPath("$.data.baseUrl").value("http://oa.internal"))
                 .andExpect(jsonPath("$.data.status").value("ACTIVE"))
                 .andExpect(jsonPath("$.data.version").value(2));

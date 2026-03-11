@@ -16,18 +16,13 @@
 package com.alibaba.assistant.agent.controlplane.connector;
 
 /**
- * Resolved connector view scoped to a concrete space/environment.
+ * Typed command for connector create/update operations.
  */
-public record ResolvedConnectorView(
-        Long connectorId,
-        String spaceCode,
-        String environment,
-        String connectorCode,
+public record ConnectorUpsertCommand(
         String systemCode,
         String displayName,
         String protocolType,
         String networkZone,
         String baseUrl,
-        String status,
-        Integer version) {
+        String status) {
 }

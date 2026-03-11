@@ -13,21 +13,14 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package com.alibaba.assistant.agent.controlplane.connector;
+package com.alibaba.assistant.agent.api.controller.dto;
 
 /**
- * Resolved connector view scoped to a concrete space/environment.
+ * API envelope for connector list responses.
  */
-public record ResolvedConnectorView(
-        Long connectorId,
-        String spaceCode,
-        String environment,
-        String connectorCode,
-        String systemCode,
-        String displayName,
-        String protocolType,
-        String networkZone,
-        String baseUrl,
-        String status,
-        Integer version) {
+public record ConnectorListResponse(int code, String msg, ConnectorListData data) {
+
+    public static ConnectorListResponse ok(ConnectorListData data) {
+        return new ConnectorListResponse(0, "", data);
+    }
 }

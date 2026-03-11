@@ -30,6 +30,7 @@ public record ConnectorData(
         String systemCode,
         String displayName,
         String protocolType,
+        String networkZone,
         String baseUrl,
         String status,
         Integer version) {
@@ -42,6 +43,7 @@ public record ConnectorData(
                 resolved.systemCode(),
                 resolved.displayName(),
                 upper(resolved.protocolType()),
+                upper(resolved.networkZone()),
                 resolved.baseUrl(),
                 upper(resolved.status()),
                 resolved.version());

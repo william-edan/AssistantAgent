@@ -60,6 +60,16 @@ public class MigrationControlPlaneAuthorizationService {
     }
 
     /**
+     * Whether the authenticated user can manage connector/auth/workflow catalog records under a space.
+     */
+    public boolean canManageSpaceCatalog(
+            AuthenticatedUserContext authenticatedUser,
+            String spaceCode,
+            String environment) {
+        return canViewSpaceCatalog(authenticatedUser, spaceCode, environment);
+    }
+
+    /**
      * Whether the authenticated user can manage the target agent-app publication policy.
      */
     public boolean canManageAgentAppPublicationPolicy(

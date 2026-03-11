@@ -13,21 +13,22 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package com.alibaba.assistant.agent.controlplane.connector;
+package com.alibaba.assistant.agent.api.controller.dto;
+
+import com.alibaba.assistant.agent.controlplane.connector.ConnectorUpsertCommand;
 
 /**
- * Resolved connector view scoped to a concrete space/environment.
+ * Request payload for connector create/update operations.
  */
-public record ResolvedConnectorView(
-        Long connectorId,
-        String spaceCode,
-        String environment,
-        String connectorCode,
+public record ConnectorUpsertRequest(
         String systemCode,
         String displayName,
         String protocolType,
         String networkZone,
         String baseUrl,
-        String status,
-        Integer version) {
+        String status) {
+
+    public ConnectorUpsertCommand toCommand() {
+        return new ConnectorUpsertCommand(systemCode, displayName, protocolType, networkZone, baseUrl, status);
+    }
 }

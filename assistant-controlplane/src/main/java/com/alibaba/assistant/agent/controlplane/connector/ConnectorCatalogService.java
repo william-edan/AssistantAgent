@@ -55,8 +55,7 @@ public class ConnectorCatalogService {
         if (space.isEmpty()) {
             return Optional.empty();
         }
-        return connectorService.findLatestActiveByCode(space.get().getId(), connectorCode.trim())
-                .filter(connector -> matchesEnvironment(normalizedEnvironment, connector.getEnvironment()))
+        return connectorService.findLatestActiveByCodeAndEnvironment(space.get().getId(), normalizedEnvironment, connectorCode.trim())
                 .map(connector -> new ResolvedConnectorView(
                         connector.getId(),
                         space.get().getSpaceCode(),
@@ -65,6 +64,7 @@ public class ConnectorCatalogService {
                         connector.getSystemCode(),
                         connector.getDisplayName(),
                         connector.getProtocolType(),
+                        connector.getNetworkZone(),
                         connector.getBaseUrl(),
                         connector.getStatus(),
                         connector.getVersion()));
@@ -88,13 +88,6 @@ public class ConnectorCatalogService {
                         profile.getTokenHeaderPrefix(),
                         profile.getStatus()))
                 .toList();
-    }
-
-    private boolean matchesEnvironment(String requestedEnvironment, String connectorEnvironment) {
-        if (!StringUtils.hasText(connectorEnvironment)) {
-            return true;
-        }
-        return connectorEnvironment.trim().equalsIgnoreCase(requestedEnvironment);
     }
 
     private String normalizeEnvironment(String environment) {

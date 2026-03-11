@@ -13,21 +13,24 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package com.alibaba.assistant.agent.controlplane.connector;
+package com.alibaba.assistant.agent.api.controller.dto;
+
+import com.alibaba.assistant.agent.controlplane.connector.ResolvedConnectorView;
+
+import java.util.List;
 
 /**
- * Resolved connector view scoped to a concrete space/environment.
+ * Connector list payload.
  */
-public record ResolvedConnectorView(
-        Long connectorId,
+public record ConnectorListData(
         String spaceCode,
         String environment,
-        String connectorCode,
-        String systemCode,
-        String displayName,
-        String protocolType,
-        String networkZone,
-        String baseUrl,
-        String status,
-        Integer version) {
+        List<ConnectorData> connectors) {
+
+    public static ConnectorListData from(String spaceCode, String environment, List<ResolvedConnectorView> connectors) {
+        return new ConnectorListData(
+                spaceCode,
+                environment,
+                connectors == null ? List.of() : connectors.stream().map(ConnectorData::from).toList());
+    }
 }
