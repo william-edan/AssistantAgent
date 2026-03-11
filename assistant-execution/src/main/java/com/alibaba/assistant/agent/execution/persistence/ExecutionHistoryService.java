@@ -27,6 +27,8 @@ import java.util.Optional;
 @Service
 public class ExecutionHistoryService {
 
+    private static final int DEFAULT_LIST_LIMIT = 20;
+
     private final ExecutionRunService executionRunService;
 
     private final ExecutionStepService executionStepService;
@@ -57,6 +59,49 @@ public class ExecutionHistoryService {
                         run.getStartedAt(),
                         run.getCompletedAt(),
                         mapSteps(executionStepService.listByRunId(run.getRunId()))));
+    }
+
+    /**
+     * List persisted execution runs for a space with optional status and artifact filters.
+     */
+    public List<ExecutionHistoryRunSummaryView> listRuns(
+            Long spaceId,
+            String status,
+            String artifactCode,
+            Integer limit) {
+        if (spaceId == null) {
+            return List.of();
+        }
+        int normalizedLimit = normalizeLimit(limit);
+        return executionRunService.lambdaQuery()
+                .eq(ExecutionRun::getSpaceId, spaceId)
+                .eq(StringUtils.hasText(status), ExecutionRun::getStatus, status != null ? status.trim() : null)
+                .eq(StringUtils.hasText(artifactCode), ExecutionRun::getArtifactCode, artifactCode != null ? artifactCode.trim() : null)
+                .orderByDesc(ExecutionRun::getStartedAt)
+                .orderByDesc(ExecutionRun::getId)
+                .list()
+                .stream()
+                .limit(normalizedLimit)
+                .map(run -> new ExecutionHistoryRunSummaryView(
+                        run.getRunId(),
+                        run.getArtifactCode(),
+                        run.getArtifactType(),
+                        run.getSpaceId(),
+                        run.getPlatformPrincipalId(),
+                        run.getThreadId(),
+                        run.getStatus(),
+                        run.getPausedStepId(),
+                        run.getApprovalRequestId(),
+                        run.getStartedAt(),
+                        run.getCompletedAt()))
+                .toList();
+    }
+
+    private int normalizeLimit(Integer limit) {
+        if (limit == null || limit <= 0) {
+            return DEFAULT_LIST_LIMIT;
+        }
+        return Math.min(limit, 100);
     }
 
     private List<ExecutionStepView> mapSteps(List<ExecutionStep> steps) {
