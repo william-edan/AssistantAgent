@@ -69,7 +69,7 @@ class ExecutionApprovalControllerTest {
         when(authorizationService.canManageSpaceExecutionApprovals(
                 any(AuthenticatedUserContext.class), eq("finance-space"), eq("prod")))
                 .thenReturn(true);
-        when(executionApprovalService.listRequests("finance-space", "prod", null, null, null))
+        when(executionApprovalService.listRequests("finance-space", "prod", null, null, null, null, null))
                 .thenReturn(List.of(new ExecutionApprovalRequestView(
                         "REQ-1",
                         "RUN-1",
@@ -100,11 +100,20 @@ class ExecutionApprovalControllerTest {
     }
 
     @Test
-    void shouldPassStatusAndRunFiltersToApprovalList() throws Exception {
+    void shouldPassStatusRunAndRequestedTimeFiltersToApprovalList() throws Exception {
+        LocalDateTime requestedAfter = LocalDateTime.of(2026, 3, 10, 21, 0);
+        LocalDateTime requestedBefore = LocalDateTime.of(2026, 3, 10, 23, 0);
         when(authorizationService.canManageSpaceExecutionApprovals(
                 any(AuthenticatedUserContext.class), eq("finance-space"), eq("test")))
                 .thenReturn(true);
-        when(executionApprovalService.listRequests("finance-space", "test", "APPROVED", "RUN-2", 5))
+        when(executionApprovalService.listRequests(
+                "finance-space",
+                "test",
+                "APPROVED",
+                "RUN-2",
+                requestedAfter,
+                requestedBefore,
+                5))
                 .thenReturn(List.of(new ExecutionApprovalRequestView(
                         "REQ-2",
                         "RUN-2",
@@ -127,6 +136,8 @@ class ExecutionApprovalControllerTest {
                         .queryParam("environment", "test")
                         .queryParam("status", "APPROVED")
                         .queryParam("runId", "RUN-2")
+                        .queryParam("requestedAfter", "2026-03-10T21:00:00")
+                        .queryParam("requestedBefore", "2026-03-10T23:00:00")
                         .queryParam("limit", "5")
                         .principal(authenticatedPrincipal()))
                 .andExpect(status().isOk())
@@ -265,7 +276,7 @@ class ExecutionApprovalControllerTest {
                         .principal(authenticatedPrincipal()))
                 .andExpect(status().isForbidden());
 
-        verify(executionApprovalService, never()).listRequests("finance-space", "prod", null, null, null);
+        verify(executionApprovalService, never()).listRequests("finance-space", "prod", null, null, null, null, null);
     }
 
     private Principal authenticatedPrincipal() {
@@ -285,3 +296,4 @@ class ExecutionApprovalControllerTest {
                 List.of("assistant:chat", "assistant:controlplane"));
     }
 }
+

@@ -28,6 +28,7 @@ import com.alibaba.assistant.agent.runtime.execution.ExecutionApprovalDecisionVi
 import com.alibaba.assistant.agent.runtime.execution.ExecutionApprovalDetailView;
 import com.alibaba.assistant.agent.runtime.execution.ExecutionApprovalService;
 import org.springframework.context.annotation.Profile;
+import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
@@ -41,6 +42,7 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.security.Principal;
+import java.time.LocalDateTime;
 import java.util.Optional;
 
 /**
@@ -68,6 +70,8 @@ public class ExecutionApprovalController {
             @RequestParam(required = false) String environment,
             @RequestParam(required = false) String status,
             @RequestParam(required = false) String runId,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime requestedAfter,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime requestedBefore,
             @RequestParam(required = false) Integer limit,
             Principal principal) {
         AuthenticatedUserContext authenticatedUser = requireAuthenticatedUser(principal);
@@ -79,6 +83,8 @@ public class ExecutionApprovalController {
                                 normalizedEnvironment,
                                 normalizeOptional(status),
                                 normalizeOptional(runId),
+                                requestedAfter,
+                                requestedBefore,
                                 limit)
                         .stream()
                         .map(ExecutionApprovalRequestData::from)
@@ -162,3 +168,4 @@ public class ExecutionApprovalController {
         return StringUtils.hasText(value) ? value.trim() : null;
     }
 }
+

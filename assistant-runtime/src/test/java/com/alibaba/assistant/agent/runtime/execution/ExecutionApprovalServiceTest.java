@@ -75,9 +75,9 @@ class ExecutionApprovalServiceTest {
 
         when(platformSpaceService.findActiveByCode("finance-space", "prod")).thenReturn(Optional.of(space));
         when(executionRunService.listLatestBySpace(11L, null, 20)).thenReturn(List.of(run));
-        when(approvalRequestService.listByRunIds(List.of("RUN-1"), "WAITING_APPROVAL", 20)).thenReturn(List.of(request));
+        when(approvalRequestService.listByRunIds(List.of("RUN-1"), "WAITING_APPROVAL", null, null, 20)).thenReturn(List.of(request));
 
-        List<ExecutionApprovalRequestView> views = service.listRequests("finance-space", "prod", null, null, 20);
+        List<ExecutionApprovalRequestView> views = service.listRequests("finance-space", "prod", null, null, null, null, 20);
 
         assertEquals(1, views.size());
         assertEquals("REQ-1", views.get(0).requestId());
@@ -85,7 +85,7 @@ class ExecutionApprovalServiceTest {
     }
 
     @Test
-    void shouldReturnApprovedHistoryWhenStatusAndRunFiltersProvided() {
+    void shouldReturnApprovedHistoryWhenStatusRunAndRequestedTimeFiltersProvided() {
         PlatformSpaceService platformSpaceService = mock(PlatformSpaceService.class);
         ApprovalRequestService approvalRequestService = mock(ApprovalRequestService.class);
         ExecutionRunService executionRunService = mock(ExecutionRunService.class);
@@ -100,6 +100,8 @@ class ExecutionApprovalServiceTest {
                 artifactPublicationLookupService,
                 artifactRuntimeResumeService);
 
+        LocalDateTime requestedAfter = LocalDateTime.of(2026, 3, 11, 8, 0);
+        LocalDateTime requestedBefore = LocalDateTime.of(2026, 3, 11, 10, 0);
         PlatformSpace space = new PlatformSpace();
         space.setId(11L);
         space.setSpaceCode("finance-space");
@@ -124,9 +126,17 @@ class ExecutionApprovalServiceTest {
 
         when(platformSpaceService.findActiveByCode("finance-space", "prod")).thenReturn(Optional.of(space));
         when(executionRunService.listLatestBySpace(11L, "RUN-2", 10)).thenReturn(List.of(run));
-        when(approvalRequestService.listByRunIds(List.of("RUN-2"), "APPROVED", 10)).thenReturn(List.of(request));
+        when(approvalRequestService.listByRunIds(List.of("RUN-2"), "APPROVED", requestedAfter, requestedBefore, 10))
+                .thenReturn(List.of(request));
 
-        List<ExecutionApprovalRequestView> views = service.listRequests("finance-space", "prod", "APPROVED", "RUN-2", 10);
+        List<ExecutionApprovalRequestView> views = service.listRequests(
+                "finance-space",
+                "prod",
+                "APPROVED",
+                "RUN-2",
+                requestedAfter,
+                requestedBefore,
+                10);
 
         assertEquals(1, views.size());
         assertEquals("REQ-2", views.get(0).requestId());
@@ -135,3 +145,4 @@ class ExecutionApprovalServiceTest {
         assertTrue(views.get(0).respondedAt() != null);
     }
 }
+

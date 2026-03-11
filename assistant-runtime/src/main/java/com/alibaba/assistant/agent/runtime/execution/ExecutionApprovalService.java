@@ -76,6 +76,8 @@ public class ExecutionApprovalService {
             String environment,
             String status,
             String runId,
+            LocalDateTime requestedAfter,
+            LocalDateTime requestedBefore,
             Integer limit) {
         Optional<PlatformSpace> spaceOptional = findSpace(spaceCode, environment);
         if (spaceOptional.isEmpty()) {
@@ -100,7 +102,7 @@ public class ExecutionApprovalService {
         }
 
         String normalizedEnvironment = normalizeEnvironment(environment);
-        return approvalRequestService.listByRunIds(List.copyOf(runsById.keySet()), normalizedStatus, limit).stream()
+        return approvalRequestService.listByRunIds(List.copyOf(runsById.keySet()), normalizedStatus, requestedAfter, requestedBefore, limit).stream()
                 .map(request -> toRequestView(request, runsById.get(request.getRunId()), space.getSpaceCode(), normalizedEnvironment))
                 .filter(view -> view != null)
                 .toList();
@@ -110,7 +112,7 @@ public class ExecutionApprovalService {
      * List pending approval requests for the target space.
      */
     public List<ExecutionApprovalRequestView> listPendingRequests(String spaceCode, String environment) {
-        return listRequests(spaceCode, environment, null, null, null);
+        return listRequests(spaceCode, environment, null, null, null, null, null);
     }
 
     /**
@@ -325,3 +327,4 @@ public class ExecutionApprovalService {
             ExecutionRun run) {
     }
 }
+

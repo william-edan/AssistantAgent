@@ -21,6 +21,7 @@ import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 
@@ -55,7 +56,12 @@ public class ApprovalRequestService extends ServiceImpl<ApprovalRequestMapper, A
         return Optional.ofNullable(getOne(query, false));
     }
 
-    public List<ApprovalRequest> listByRunIds(List<String> runIds, String status, Integer limit) {
+    public List<ApprovalRequest> listByRunIds(
+            List<String> runIds,
+            String status,
+            LocalDateTime requestedAfter,
+            LocalDateTime requestedBefore,
+            Integer limit) {
         if (runIds == null || runIds.isEmpty()) {
             return List.of();
         }
@@ -63,6 +69,8 @@ public class ApprovalRequestService extends ServiceImpl<ApprovalRequestMapper, A
         return lambdaQuery()
                 .in(ApprovalRequest::getRunId, runIds)
                 .eq(StringUtils.hasText(status), ApprovalRequest::getStatus, status != null ? status.trim() : null)
+                .ge(requestedAfter != null, ApprovalRequest::getRequestedAt, requestedAfter)
+                .le(requestedBefore != null, ApprovalRequest::getRequestedAt, requestedBefore)
                 .orderByDesc(ApprovalRequest::getRequestedAt)
                 .orderByDesc(ApprovalRequest::getId)
                 .list()
@@ -78,3 +86,4 @@ public class ApprovalRequestService extends ServiceImpl<ApprovalRequestMapper, A
         return Math.min(limit, 100);
     }
 }
+
