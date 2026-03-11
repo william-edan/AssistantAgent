@@ -21,6 +21,7 @@ import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
+import java.util.List;
 import java.util.Optional;
 
 @Service
@@ -40,6 +41,20 @@ public class WorkflowSpecService extends ServiceImpl<WorkflowSpecMapper, Workflo
 		query.orderByDesc(WorkflowSpec::getVersion);
 		query.orderByDesc(WorkflowSpec::getId);
 		return Optional.ofNullable(getOne(query, false));
+	}
+
+	public List<WorkflowSpec> listEnabledBySpace(Long spaceId) {
+		if (spaceId == null) {
+			return List.of();
+		}
+
+		LambdaQueryWrapper<WorkflowSpec> query = new LambdaQueryWrapper<>();
+		query.eq(WorkflowSpec::getSpaceId, spaceId);
+		query.eq(WorkflowSpec::getStatus, STATUS_ENABLED);
+		query.orderByAsc(WorkflowSpec::getWorkflowCode);
+		query.orderByDesc(WorkflowSpec::getVersion);
+		query.orderByDesc(WorkflowSpec::getId);
+		return list(query);
 	}
 
 }
