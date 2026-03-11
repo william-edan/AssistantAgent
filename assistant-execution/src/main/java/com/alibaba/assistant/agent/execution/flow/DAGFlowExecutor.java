@@ -70,6 +70,7 @@ public class DAGFlowExecutor {
 
 		try {
 			List<String> candidates = orderedCandidates(flow);
+			Map<String, List<String>> nextPredecessors = nextPredecessorIndex(flow.getSteps());
 			Set<String> remaining = new LinkedHashSet<>();
 			for (String candidate : candidates) {
 				StepStatus restored = stepStatuses.get(candidate);
@@ -91,7 +92,7 @@ public class DAGFlowExecutor {
 						progressed = true;
 						continue;
 					}
-					if (!isStepReady(step, stepStatuses)) {
+					if (!isStepReady(stepId, step, stepStatuses, nextPredecessors)) {
 						continue;
 					}
 					progressed = true;
@@ -271,9 +272,36 @@ public class DAGFlowExecutor {
 		}
 		return dependents;
 	}
-	private boolean isStepReady(StepDefinition step, Map<String, StepStatus> stepStatuses) {
-		List<String> dependsOn = step.getDependsOn();
-		if (dependsOn == null || dependsOn.isEmpty()) {
+
+	private Map<String, List<String>> nextPredecessorIndex(Map<String, StepDefinition> steps) {
+		Map<String, List<String>> predecessors = new LinkedHashMap<>();
+		if (steps == null || steps.isEmpty()) {
+			return predecessors;
+		}
+		for (String stepId : steps.keySet()) {
+			predecessors.put(stepId, new ArrayList<>());
+		}
+		for (Map.Entry<String, StepDefinition> entry : steps.entrySet()) {
+			StepDefinition step = entry.getValue();
+			if (step == null || step.getNext() == null) {
+				continue;
+			}
+			for (String nextStepId : step.getNext()) {
+				if (steps.containsKey(nextStepId)) {
+					predecessors.computeIfAbsent(nextStepId, ignored -> new ArrayList<>()).add(entry.getKey());
+				}
+			}
+		}
+		return predecessors;
+	}
+
+	private boolean isStepReady(
+			String stepId,
+			StepDefinition step,
+			Map<String, StepStatus> stepStatuses,
+			Map<String, List<String>> nextPredecessors) {
+		List<String> dependsOn = mergedDependencyIds(stepId, step, nextPredecessors);
+		if (dependsOn.isEmpty()) {
 			return true;
 		}
 		JoinType joinType = step.getJoinType() != null ? step.getJoinType() : JoinType.ALL;
@@ -281,6 +309,20 @@ public class DAGFlowExecutor {
 			return dependsOn.stream().map(stepStatuses::get).anyMatch(this::isSatisfiedDependencyStatus);
 		}
 		return dependsOn.stream().map(stepStatuses::get).allMatch(this::isSatisfiedDependencyStatus);
+	}
+
+	private List<String> mergedDependencyIds(
+			String stepId,
+			StepDefinition step,
+			Map<String, List<String>> nextPredecessors) {
+		LinkedHashSet<String> dependencyIds = new LinkedHashSet<>();
+		if (step.getDependsOn() != null) {
+			dependencyIds.addAll(step.getDependsOn());
+		}
+		if (nextPredecessors != null && nextPredecessors.get(stepId) != null) {
+			dependencyIds.addAll(nextPredecessors.get(stepId));
+		}
+		return new ArrayList<>(dependencyIds);
 	}
 
 	private boolean isSatisfiedDependencyStatus(StepStatus status) {
@@ -531,3 +573,4 @@ public class DAGFlowExecutor {
 	}
 
 }
+

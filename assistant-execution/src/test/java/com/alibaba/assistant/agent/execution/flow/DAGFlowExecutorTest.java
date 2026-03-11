@@ -40,6 +40,7 @@ import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -351,6 +352,30 @@ class DAGFlowExecutorTest {
         return flow;
     }
 
+    @Test
+    void shouldRespectNextOrderingWhenDependsOnIsOmitted() throws Exception {
+        mockWebServer.enqueue(jsonResponse("{\"code\":0,\"msg\":\"create\",\"data\":{}}"));
+        mockWebServer.enqueue(jsonResponse("{\"code\":0,\"msg\":\"review\",\"data\":{}}"));
+        mockWebServer.enqueue(jsonResponse("{\"code\":0,\"msg\":\"notify\",\"data\":{}}"));
+
+        FlowExecutionResult result = dagFlowExecutor.execute(buildNextOnlyFlowWithReverseStepOrder(), createFlowContext(baseInputs()));
+
+        assertTrue(result.isSuccess());
+        assertEquals(StepStatus.COMPLETED, result.getStepStatuses().get("create"));
+        assertEquals(StepStatus.COMPLETED, result.getStepStatuses().get("review"));
+        assertEquals(StepStatus.COMPLETED, result.getStepStatuses().get("notify"));
+
+        RecordedRequest first = mockWebServer.takeRequest(1, TimeUnit.SECONDS);
+        RecordedRequest second = mockWebServer.takeRequest(1, TimeUnit.SECONDS);
+        RecordedRequest third = mockWebServer.takeRequest(1, TimeUnit.SECONDS);
+        assertNotNull(first);
+        assertNotNull(second);
+        assertNotNull(third);
+        assertEquals("/create", first.getPath());
+        assertEquals("/review", second.getPath());
+        assertEquals("/notify", third.getPath());
+    }
+
     private FlowDefinition buildTerminalEntryWithSiblingDependentFlow() {
         StepDefinition create = httpStep("create", "/create");
         StepDefinition review = httpStep("review", "/review");
@@ -369,6 +394,25 @@ class DAGFlowExecutorTest {
                 "review", review,
                 "create", create,
                 "audit", audit));
+        return flow;
+    }
+
+    private FlowDefinition buildNextOnlyFlowWithReverseStepOrder() {
+        StepDefinition create = httpStep("create", "/create");
+        create.setNext(List.of("review"));
+        StepDefinition review = httpStep("review", "/review");
+        review.setNext(List.of("notify"));
+        StepDefinition notify = httpStep("notify", "/notify");
+        Map<String, StepDefinition> steps = new LinkedHashMap<>();
+        steps.put("notify", notify);
+        steps.put("review", review);
+        steps.put("create", create);
+
+        FlowDefinition flow = new FlowDefinition();
+        flow.setVersion("2.0");
+        flow.setEntry(List.of("create"));
+        flow.setTerminal(List.of("notify"));
+        flow.setSteps(steps);
         return flow;
     }
 
