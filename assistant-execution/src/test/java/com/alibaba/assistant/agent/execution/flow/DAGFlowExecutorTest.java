@@ -303,6 +303,31 @@ class DAGFlowExecutorTest {
         assertEquals(3, mockWebServer.getRequestCount());
     }
 
+
+    @Test
+    void shouldBackfillNextOnlyPredecessorChainWhenEntryTargetsTerminalStep() throws Exception {
+        mockWebServer.enqueue(jsonResponse("{\"code\":0,\"msg\":\"create\",\"data\":{}}"));
+        mockWebServer.enqueue(jsonResponse("{\"code\":0,\"msg\":\"review\",\"data\":{}}"));
+        mockWebServer.enqueue(jsonResponse("{\"code\":0,\"msg\":\"notify\",\"data\":{}}"));
+
+        FlowExecutionResult result = dagFlowExecutor.execute(buildTerminalEntryNextOnlyFlow(), createFlowContext(baseInputs()));
+
+        assertTrue(result.isSuccess());
+        assertEquals(StepStatus.COMPLETED, result.getStepStatuses().get("create"));
+        assertEquals(StepStatus.COMPLETED, result.getStepStatuses().get("review"));
+        assertEquals(StepStatus.COMPLETED, result.getStepStatuses().get("notify"));
+        assertEquals(3, mockWebServer.getRequestCount());
+
+        RecordedRequest first = mockWebServer.takeRequest(1, TimeUnit.SECONDS);
+        RecordedRequest second = mockWebServer.takeRequest(1, TimeUnit.SECONDS);
+        RecordedRequest third = mockWebServer.takeRequest(1, TimeUnit.SECONDS);
+        assertNotNull(first);
+        assertNotNull(second);
+        assertNotNull(third);
+        assertEquals("/create", first.getPath());
+        assertEquals("/review", second.getPath());
+        assertEquals("/notify", third.getPath());
+    }
     @Test
     void shouldNotExecuteSiblingDependentBranchWhenEntryTargetsTerminalPath() throws Exception {
         mockWebServer.enqueue(jsonResponse("{\"code\":0,\"msg\":\"create\",\"data\":{}}"));
@@ -338,6 +363,25 @@ class DAGFlowExecutorTest {
         return flow;
     }
 
+
+    private FlowDefinition buildTerminalEntryNextOnlyFlow() {
+        StepDefinition create = httpStep("create", "/create");
+        create.setNext(List.of("review"));
+        StepDefinition review = httpStep("review", "/review");
+        review.setNext(List.of("notify"));
+        StepDefinition notify = httpStep("notify", "/notify");
+        Map<String, StepDefinition> steps = new LinkedHashMap<>();
+        steps.put("notify", notify);
+        steps.put("review", review);
+        steps.put("create", create);
+
+        FlowDefinition flow = new FlowDefinition();
+        flow.setVersion("2.0");
+        flow.setEntry(List.of("notify"));
+        flow.setTerminal(List.of("notify"));
+        flow.setSteps(steps);
+        return flow;
+    }
     private FlowDefinition buildFlowWithOrphan() {
         StepDefinition create = httpStep("create", "/create");
         StepDefinition orphan = httpStep("orphan", "/orphan");

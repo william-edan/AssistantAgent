@@ -206,7 +206,8 @@ public class DAGFlowExecutor {
 			return new LinkedHashSet<>(steps.keySet());
 		}
 		LinkedHashSet<String> forwardReachable = forwardReachableStepIds(flow, steps);
-		return includeDependencies(forwardReachable, steps);
+		Map<String, List<String>> nextPredecessors = nextPredecessorIndex(steps);
+		return includeDependencies(forwardReachable, steps, nextPredecessors);
 	}
 
 	private LinkedHashSet<String> forwardReachableStepIds(FlowDefinition flow, Map<String, StepDefinition> steps) {
@@ -233,7 +234,10 @@ public class DAGFlowExecutor {
 		return reachable;
 	}
 
-	private LinkedHashSet<String> includeDependencies(Set<String> seeds, Map<String, StepDefinition> steps) {
+	private LinkedHashSet<String> includeDependencies(
+			Set<String> seeds,
+			Map<String, StepDefinition> steps,
+			Map<String, List<String>> nextPredecessors) {
 		LinkedHashSet<String> reachable = new LinkedHashSet<>();
 		List<String> frontier = new ArrayList<>(seeds);
 		for (int index = 0; index < frontier.size(); index++) {
@@ -242,10 +246,7 @@ public class DAGFlowExecutor {
 				continue;
 			}
 			StepDefinition step = steps.get(stepId);
-			if (step.getDependsOn() == null) {
-				continue;
-			}
-			for (String dependency : step.getDependsOn()) {
+			for (String dependency : mergedDependencyIds(stepId, step, nextPredecessors)) {
 				if (steps.containsKey(dependency)) {
 					frontier.add(dependency);
 				}
@@ -573,4 +574,5 @@ public class DAGFlowExecutor {
 	}
 
 }
+
 
