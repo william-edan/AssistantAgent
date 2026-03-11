@@ -21,6 +21,7 @@ import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
+import java.util.List;
 import java.util.Optional;
 
 @Service
@@ -40,6 +41,19 @@ public class BusinessQueryActionService extends ServiceImpl<BusinessQueryActionM
 		query.orderByDesc(BusinessQueryAction::getVersion);
 		query.orderByDesc(BusinessQueryAction::getId);
 		return Optional.ofNullable(getOne(query, false));
+	}
+
+	public List<BusinessQueryAction> listEnabledByConnector(Long connectorId) {
+		if (connectorId == null) {
+			return List.of();
+		}
+		LambdaQueryWrapper<BusinessQueryAction> query = new LambdaQueryWrapper<>();
+		query.eq(BusinessQueryAction::getConnectorId, connectorId);
+		query.eq(BusinessQueryAction::getStatus, STATUS_ENABLED);
+		query.orderByAsc(BusinessQueryAction::getQueryActionCode);
+		query.orderByDesc(BusinessQueryAction::getVersion);
+		query.orderByDesc(BusinessQueryAction::getId);
+		return list(query);
 	}
 
 }
