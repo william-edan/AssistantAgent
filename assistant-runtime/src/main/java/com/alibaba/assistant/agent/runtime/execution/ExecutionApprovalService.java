@@ -166,6 +166,9 @@ public class ExecutionApprovalService {
         artifactRuntimeResumeService.approveAndResume(descriptor, resolution.request().getRequestId());
         ApprovalRequest request = approvalRequestService.findLatestByRequestId(resolution.request().getRequestId())
                 .orElse(resolution.request());
+        if (applyApproverPrincipal(request, actorUserId)) {
+            approvalRequestService.updateById(request);
+        }
         ExecutionRun run = executionRunService.findLatestByRunId(resolution.run().getRunId())
                 .orElse(resolution.run());
         return Optional.of(toDecisionView(request, run, resolution.space().getSpaceCode(), resolution.environment()));
@@ -187,6 +190,7 @@ public class ExecutionApprovalService {
         ApprovalRequest request = resolution.request();
         request.setStatus(STATUS_REJECTED);
         request.setRespondedAt(now);
+        applyApproverPrincipal(request, actorUserId);
         approvalRequestService.updateById(request);
 
         ExecutionRun run = resolution.run();
@@ -316,6 +320,18 @@ public class ExecutionApprovalService {
                 run.getPlatformPrincipalId(),
                 request.getRequestedAt(),
                 request.getRespondedAt());
+    }
+
+    private boolean applyApproverPrincipal(ApprovalRequest request, String actorUserId) {
+        String normalizedActor = normalizeOptional(actorUserId);
+        if (request == null || !StringUtils.hasText(normalizedActor)) {
+            return false;
+        }
+        if (normalizedActor.equals(request.getApproverPrincipalId())) {
+            return false;
+        }
+        request.setApproverPrincipalId(normalizedActor);
+        return true;
     }
 
     private String normalizeEnvironment(String environment) {

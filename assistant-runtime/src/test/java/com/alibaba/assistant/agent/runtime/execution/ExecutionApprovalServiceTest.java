@@ -23,10 +23,13 @@ import com.alibaba.assistant.agent.execution.persistence.ExecutionRun;
 import com.alibaba.assistant.agent.execution.persistence.ExecutionRunService;
 import com.alibaba.assistant.agent.execution.persistence.ExecutionStepService;
 import com.alibaba.assistant.agent.runtime.registry.ArtifactPublicationLookupService;
+import com.alibaba.assistant.agent.runtime.compiler.RuntimeArtifact;
+import com.alibaba.assistant.agent.runtime.registry.PublishedToolDescriptor;
 import org.junit.jupiter.api.Test;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -151,6 +154,138 @@ class ExecutionApprovalServiceTest {
         assertEquals("THREAD-2", views.get(0).threadId());
         assertTrue(views.get(0).respondedAt() != null);
     }
+
+    @Test
+    void shouldRecordApproverPrincipalWhenApprovingPendingRequest() {
+        PlatformSpaceService platformSpaceService = mock(PlatformSpaceService.class);
+        ApprovalRequestService approvalRequestService = mock(ApprovalRequestService.class);
+        ExecutionRunService executionRunService = mock(ExecutionRunService.class);
+        ExecutionStepService executionStepService = mock(ExecutionStepService.class);
+        ArtifactPublicationLookupService artifactPublicationLookupService = mock(ArtifactPublicationLookupService.class);
+        ArtifactRuntimeResumeService artifactRuntimeResumeService = mock(ArtifactRuntimeResumeService.class);
+        ExecutionApprovalService service = new ExecutionApprovalService(
+                platformSpaceService,
+                approvalRequestService,
+                executionRunService,
+                executionStepService,
+                artifactPublicationLookupService,
+                artifactRuntimeResumeService);
+
+        PlatformSpace space = new PlatformSpace();
+        space.setId(11L);
+        space.setSpaceCode("finance-space");
+        space.setEnvironment("prod");
+        ExecutionRun run = new ExecutionRun();
+        run.setRunId("RUN-3");
+        run.setArtifactCode("oa.leave.apply");
+        run.setArtifactType("WORKFLOW");
+        run.setSpaceId(11L);
+        run.setStatus("WAITING_APPROVAL");
+        run.setPausedStepId("submit_approval");
+        run.setPlatformPrincipalId("u1001");
+        ApprovalRequest request = new ApprovalRequest();
+        request.setRequestId("REQ-3");
+        request.setRunId("RUN-3");
+        request.setStepId("submit_approval");
+        request.setStatus("WAITING_APPROVAL");
+        request.setApprovalChannel("manual");
+        request.setRequestedAt(LocalDateTime.of(2026, 3, 11, 11, 30));
+
+        when(platformSpaceService.findActiveByCode("finance-space", "prod")).thenReturn(Optional.of(space));
+        when(approvalRequestService.findLatestByRequestId("REQ-3")).thenReturn(Optional.of(request), Optional.of(request));
+        when(executionRunService.findLatestByRunId("RUN-3")).thenReturn(Optional.of(run), Optional.of(run));
+        when(artifactPublicationLookupService.listPublishedArtifacts(org.mockito.ArgumentMatchers.anyMap()))
+                .thenReturn(List.of(descriptor(11L, "oa.leave.apply")));
+        when(artifactRuntimeResumeService.approveAndResume(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.eq("REQ-3")))
+                .thenReturn(Map.of("success", true, "runId", "RUN-3"));
+
+        Optional<ExecutionApprovalDecisionView> decision = service.approveRequest(
+                "finance-space",
+                "prod",
+                "REQ-3",
+                "u2001");
+
+        assertTrue(decision.isPresent());
+        assertEquals("u2001", request.getApproverPrincipalId());
+        assertEquals("u2001", decision.get().approverPrincipalId());
+    }
+
+    @Test
+    void shouldRecordApproverPrincipalWhenRejectingPendingRequest() {
+        PlatformSpaceService platformSpaceService = mock(PlatformSpaceService.class);
+        ApprovalRequestService approvalRequestService = mock(ApprovalRequestService.class);
+        ExecutionRunService executionRunService = mock(ExecutionRunService.class);
+        ExecutionStepService executionStepService = mock(ExecutionStepService.class);
+        ArtifactPublicationLookupService artifactPublicationLookupService = mock(ArtifactPublicationLookupService.class);
+        ArtifactRuntimeResumeService artifactRuntimeResumeService = mock(ArtifactRuntimeResumeService.class);
+        ExecutionApprovalService service = new ExecutionApprovalService(
+                platformSpaceService,
+                approvalRequestService,
+                executionRunService,
+                executionStepService,
+                artifactPublicationLookupService,
+                artifactRuntimeResumeService);
+
+        PlatformSpace space = new PlatformSpace();
+        space.setId(11L);
+        space.setSpaceCode("finance-space");
+        space.setEnvironment("prod");
+        ExecutionRun run = new ExecutionRun();
+        run.setRunId("RUN-4");
+        run.setArtifactCode("oa.leave.apply");
+        run.setArtifactType("WORKFLOW");
+        run.setSpaceId(11L);
+        run.setStatus("WAITING_APPROVAL");
+        run.setPausedStepId("submit_approval");
+        run.setPlatformPrincipalId("u1002");
+        ApprovalRequest request = new ApprovalRequest();
+        request.setId(88L);
+        request.setRequestId("REQ-4");
+        request.setRunId("RUN-4");
+        request.setStepId("submit_approval");
+        request.setStatus("WAITING_APPROVAL");
+        request.setApprovalChannel("manual");
+        request.setRequestedAt(LocalDateTime.of(2026, 3, 11, 12, 0));
+
+        when(platformSpaceService.findActiveByCode("finance-space", "prod")).thenReturn(Optional.of(space));
+        when(approvalRequestService.findLatestByRequestId("REQ-4")).thenReturn(Optional.of(request));
+        when(executionRunService.findLatestByRunId("RUN-4")).thenReturn(Optional.of(run));
+        when(executionStepService.findByRunIdAndStepId("RUN-4", "submit_approval")).thenReturn(Optional.empty());
+
+        Optional<ExecutionApprovalDecisionView> decision = service.rejectRequest(
+                "finance-space",
+                "prod",
+                "REQ-4",
+                "u3001");
+
+        assertTrue(decision.isPresent());
+        assertEquals("u3001", request.getApproverPrincipalId());
+        assertEquals("u3001", decision.get().approverPrincipalId());
+    }
+
+    private PublishedToolDescriptor descriptor(Long spaceId, String artifactCode) {
+        RuntimeArtifact artifact = new RuntimeArtifact(
+                spaceId,
+                artifactCode,
+                RuntimeArtifact.ArtifactType.WORKFLOW,
+                "请假申请",
+                1,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                Map.of(),
+                Map.of());
+        return PublishedToolDescriptor.forArtifact(
+                "artifact-catalog",
+                "workflow:" + artifactCode,
+                "请假申请",
+                null,
+                null,
+                false,
+                "gougu_oa",
+                artifact);
+    }
 }
-
-
