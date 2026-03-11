@@ -69,7 +69,7 @@ class ExecutionApprovalControllerTest {
         when(authorizationService.canManageSpaceExecutionApprovals(
                 any(AuthenticatedUserContext.class), eq("finance-space"), eq("prod")))
                 .thenReturn(true);
-        when(executionApprovalService.listRequests("finance-space", "prod", null, null, null, null, null))
+        when(executionApprovalService.listRequests("finance-space", "prod", null, null, null, null, null, null, null, null))
                 .thenReturn(List.of(new ExecutionApprovalRequestView(
                         "REQ-1",
                         "RUN-1",
@@ -100,7 +100,7 @@ class ExecutionApprovalControllerTest {
     }
 
     @Test
-    void shouldPassStatusRunAndRequestedTimeFiltersToApprovalList() throws Exception {
+    void shouldPassIdentityAndRequestedTimeFiltersToApprovalList() throws Exception {
         LocalDateTime requestedAfter = LocalDateTime.of(2026, 3, 10, 21, 0);
         LocalDateTime requestedBefore = LocalDateTime.of(2026, 3, 10, 23, 0);
         when(authorizationService.canManageSpaceExecutionApprovals(
@@ -111,6 +111,9 @@ class ExecutionApprovalControllerTest {
                 "test",
                 "APPROVED",
                 "RUN-2",
+                "oa.leave.apply",
+                "u1001",
+                "THREAD-2",
                 requestedAfter,
                 requestedBefore,
                 5))
@@ -128,7 +131,7 @@ class ExecutionApprovalControllerTest {
                         "u2001",
                         "submit_approval",
                         "u1001",
-                        "T-2",
+                        "THREAD-2",
                         LocalDateTime.of(2026, 3, 10, 22, 0),
                         LocalDateTime.of(2026, 3, 10, 22, 5))));
 
@@ -136,6 +139,9 @@ class ExecutionApprovalControllerTest {
                         .queryParam("environment", "test")
                         .queryParam("status", "APPROVED")
                         .queryParam("runId", "RUN-2")
+                        .queryParam("artifactCode", "oa.leave.apply")
+                        .queryParam("platformPrincipalId", "u1001")
+                        .queryParam("threadId", "THREAD-2")
                         .queryParam("requestedAfter", "2026-03-10T21:00:00")
                         .queryParam("requestedBefore", "2026-03-10T23:00:00")
                         .queryParam("limit", "5")
@@ -143,7 +149,10 @@ class ExecutionApprovalControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.requests[0].requestId").value("REQ-2"))
                 .andExpect(jsonPath("$.data.requests[0].status").value("APPROVED"))
-                .andExpect(jsonPath("$.data.requests[0].runId").value("RUN-2"));
+                .andExpect(jsonPath("$.data.requests[0].runId").value("RUN-2"))
+                .andExpect(jsonPath("$.data.requests[0].artifactCode").value("oa.leave.apply"))
+                .andExpect(jsonPath("$.data.requests[0].platformPrincipalId").value("u1001"))
+                .andExpect(jsonPath("$.data.requests[0].threadId").value("THREAD-2"));
     }
 
     @Test
@@ -276,7 +285,7 @@ class ExecutionApprovalControllerTest {
                         .principal(authenticatedPrincipal()))
                 .andExpect(status().isForbidden());
 
-        verify(executionApprovalService, never()).listRequests("finance-space", "prod", null, null, null, null, null);
+        verify(executionApprovalService, never()).listRequests("finance-space", "prod", null, null, null, null, null, null, null, null);
     }
 
     private Principal authenticatedPrincipal() {
@@ -296,4 +305,6 @@ class ExecutionApprovalControllerTest {
                 List.of("assistant:chat", "assistant:controlplane"));
     }
 }
+
+
 

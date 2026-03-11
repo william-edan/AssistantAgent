@@ -95,7 +95,7 @@ class ExecutionApprovalControllerSecurityTest {
 
         verify(migrationAuthService, never()).introspect(anyString());
         verify(authorizationService, never()).canManageSpaceExecutionApprovals(any(), anyString(), anyString());
-        verify(executionApprovalService, never()).listRequests(anyString(), anyString(), any(), any(), any(), any(), any());
+        verify(executionApprovalService, never()).listRequests(anyString(), anyString(), any(), any(), any(), any(), any(), any(), any(), any());
     }
 
     @Test
@@ -126,7 +126,7 @@ class ExecutionApprovalControllerSecurityTest {
                 .andExpect(status().isForbidden());
 
         verify(authorizationService, never()).canManageSpaceExecutionApprovals(any(), anyString(), anyString());
-        verify(executionApprovalService, never()).listRequests(anyString(), anyString(), any(), any(), any(), any(), any());
+        verify(executionApprovalService, never()).listRequests(anyString(), anyString(), any(), any(), any(), any(), any(), any(), any(), any());
     }
 
     @Test
@@ -138,7 +138,7 @@ class ExecutionApprovalControllerSecurityTest {
         mockMvc.perform(get(LIST_PATH).header(AUTHORIZATION, "Bearer token-space-admin"))
                 .andExpect(status().isForbidden());
 
-        verify(executionApprovalService, never()).listRequests(anyString(), anyString(), any(), any(), any(), any(), any());
+        verify(executionApprovalService, never()).listRequests(anyString(), anyString(), any(), any(), any(), any(), any(), any(), any(), any());
     }
 
     @Test
@@ -146,7 +146,7 @@ class ExecutionApprovalControllerSecurityTest {
         when(migrationAuthService.introspect("token-space-admin")).thenReturn(Optional.of(controlPlaneUser()));
         when(authorizationService.canManageSpaceExecutionApprovals(any(AuthenticatedUserContext.class), eq("finance-space"), eq("prod")))
                 .thenReturn(true);
-        when(executionApprovalService.listRequests("finance-space", "prod", null, null, null, null, null)).thenReturn(List.of());
+        when(executionApprovalService.listRequests("finance-space", "prod", null, null, null, null, null, null, null, null)).thenReturn(List.of());
 
         mockMvc.perform(get(LIST_PATH).header(AUTHORIZATION, "Bearer token-space-admin"))
                 .andExpect(status().isOk());
@@ -229,4 +229,5 @@ class ExecutionApprovalControllerSecurityTest {
         }
     }
 }
+
 

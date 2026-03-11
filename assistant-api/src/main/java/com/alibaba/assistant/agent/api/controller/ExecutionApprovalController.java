@@ -70,6 +70,9 @@ public class ExecutionApprovalController {
             @RequestParam(required = false) String environment,
             @RequestParam(required = false) String status,
             @RequestParam(required = false) String runId,
+            @RequestParam(required = false) String artifactCode,
+            @RequestParam(required = false) String platformPrincipalId,
+            @RequestParam(required = false) String threadId,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime requestedAfter,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime requestedBefore,
             @RequestParam(required = false) Integer limit,
@@ -83,6 +86,9 @@ public class ExecutionApprovalController {
                                 normalizedEnvironment,
                                 normalizeOptional(status),
                                 normalizeOptional(runId),
+                                normalizeOptional(artifactCode),
+                                normalizeOptional(platformPrincipalId),
+                                normalizeOptional(threadId),
                                 requestedAfter,
                                 requestedBefore,
                                 limit)
@@ -168,4 +174,5 @@ public class ExecutionApprovalController {
         return StringUtils.hasText(value) ? value.trim() : null;
     }
 }
+
 

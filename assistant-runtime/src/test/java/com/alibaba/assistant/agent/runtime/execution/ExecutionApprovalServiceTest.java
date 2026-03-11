@@ -74,10 +74,10 @@ class ExecutionApprovalServiceTest {
         request.setRequestedAt(LocalDateTime.of(2026, 3, 11, 11, 0));
 
         when(platformSpaceService.findActiveByCode("finance-space", "prod")).thenReturn(Optional.of(space));
-        when(executionRunService.listLatestBySpace(11L, null, 20)).thenReturn(List.of(run));
+        when(executionRunService.listBySpace(11L, null, null, null, null, null, null, null, 20)).thenReturn(List.of(run));
         when(approvalRequestService.listByRunIds(List.of("RUN-1"), "WAITING_APPROVAL", null, null, 20)).thenReturn(List.of(request));
 
-        List<ExecutionApprovalRequestView> views = service.listRequests("finance-space", "prod", null, null, null, null, 20);
+        List<ExecutionApprovalRequestView> views = service.listRequests("finance-space", "prod", null, null, null, null, null, null, null, 20);
 
         assertEquals(1, views.size());
         assertEquals("REQ-1", views.get(0).requestId());
@@ -85,7 +85,7 @@ class ExecutionApprovalServiceTest {
     }
 
     @Test
-    void shouldReturnApprovedHistoryWhenStatusRunAndRequestedTimeFiltersProvided() {
+    void shouldReturnApprovedHistoryWhenIdentityAndRequestedTimeFiltersProvided() {
         PlatformSpaceService platformSpaceService = mock(PlatformSpaceService.class);
         ApprovalRequestService approvalRequestService = mock(ApprovalRequestService.class);
         ExecutionRunService executionRunService = mock(ExecutionRunService.class);
@@ -114,7 +114,7 @@ class ExecutionApprovalServiceTest {
         run.setStatus("COMPLETED");
         run.setPausedStepId("submit_approval");
         run.setPlatformPrincipalId("u1001");
-        run.setThreadId("T-2");
+        run.setThreadId("THREAD-2");
         ApprovalRequest request = new ApprovalRequest();
         request.setRequestId("REQ-2");
         request.setRunId("RUN-2");
@@ -125,7 +125,8 @@ class ExecutionApprovalServiceTest {
         request.setRespondedAt(LocalDateTime.of(2026, 3, 11, 9, 5));
 
         when(platformSpaceService.findActiveByCode("finance-space", "prod")).thenReturn(Optional.of(space));
-        when(executionRunService.listLatestBySpace(11L, "RUN-2", 10)).thenReturn(List.of(run));
+        when(executionRunService.listBySpace(11L, "RUN-2", null, "oa.leave.apply", "u1001", "THREAD-2", null, null, 10))
+                .thenReturn(List.of(run));
         when(approvalRequestService.listByRunIds(List.of("RUN-2"), "APPROVED", requestedAfter, requestedBefore, 10))
                 .thenReturn(List.of(request));
 
@@ -134,6 +135,9 @@ class ExecutionApprovalServiceTest {
                 "prod",
                 "APPROVED",
                 "RUN-2",
+                "oa.leave.apply",
+                "u1001",
+                "THREAD-2",
                 requestedAfter,
                 requestedBefore,
                 10);
@@ -142,7 +146,11 @@ class ExecutionApprovalServiceTest {
         assertEquals("REQ-2", views.get(0).requestId());
         assertEquals("APPROVED", views.get(0).status());
         assertEquals("RUN-2", views.get(0).runId());
+        assertEquals("oa.leave.apply", views.get(0).artifactCode());
+        assertEquals("u1001", views.get(0).platformPrincipalId());
+        assertEquals("THREAD-2", views.get(0).threadId());
         assertTrue(views.get(0).respondedAt() != null);
     }
 }
+
 

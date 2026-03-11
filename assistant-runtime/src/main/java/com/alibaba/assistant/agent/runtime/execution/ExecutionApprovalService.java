@@ -69,13 +69,16 @@ public class ExecutionApprovalService {
     }
 
     /**
-     * List approval requests for the target space with optional status and run filters.
+     * List approval requests for the target space with optional status, run, and execution identity filters.
      */
     public List<ExecutionApprovalRequestView> listRequests(
             String spaceCode,
             String environment,
             String status,
             String runId,
+            String artifactCode,
+            String platformPrincipalId,
+            String threadId,
             LocalDateTime requestedAfter,
             LocalDateTime requestedBefore,
             Integer limit) {
@@ -86,7 +89,16 @@ public class ExecutionApprovalService {
         PlatformSpace space = spaceOptional.get();
         String normalizedStatus = normalizeStatus(status);
         String normalizedRunId = normalizeOptional(runId);
-        List<ExecutionRun> runs = executionRunService.listLatestBySpace(space.getId(), normalizedRunId, limit);
+        List<ExecutionRun> runs = executionRunService.listBySpace(
+                space.getId(),
+                normalizedRunId,
+                null,
+                normalizeOptional(artifactCode),
+                normalizeOptional(platformPrincipalId),
+                normalizeOptional(threadId),
+                null,
+                null,
+                limit);
         if (runs == null || runs.isEmpty()) {
             return List.of();
         }
@@ -102,7 +114,8 @@ public class ExecutionApprovalService {
         }
 
         String normalizedEnvironment = normalizeEnvironment(environment);
-        return approvalRequestService.listByRunIds(List.copyOf(runsById.keySet()), normalizedStatus, requestedAfter, requestedBefore, limit).stream()
+        return approvalRequestService.listByRunIds(List.copyOf(runsById.keySet()), normalizedStatus, requestedAfter, requestedBefore, limit)
+                .stream()
                 .map(request -> toRequestView(request, runsById.get(request.getRunId()), space.getSpaceCode(), normalizedEnvironment))
                 .filter(view -> view != null)
                 .toList();
@@ -112,7 +125,7 @@ public class ExecutionApprovalService {
      * List pending approval requests for the target space.
      */
     public List<ExecutionApprovalRequestView> listPendingRequests(String spaceCode, String environment) {
-        return listRequests(spaceCode, environment, null, null, null, null, null);
+        return listRequests(spaceCode, environment, null, null, null, null, null, null, null, null);
     }
 
     /**
@@ -327,4 +340,3 @@ public class ExecutionApprovalService {
             ExecutionRun run) {
     }
 }
-
