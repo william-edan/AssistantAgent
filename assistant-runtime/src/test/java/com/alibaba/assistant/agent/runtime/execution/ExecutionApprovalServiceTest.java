@@ -15,6 +15,8 @@
  */
 package com.alibaba.assistant.agent.runtime.execution;
 
+import com.alibaba.assistant.agent.controlplane.audit.AuditEvent;
+import com.alibaba.assistant.agent.controlplane.audit.AuditEventService;
 import com.alibaba.assistant.agent.controlplane.space.PlatformSpace;
 import com.alibaba.assistant.agent.controlplane.space.PlatformSpaceService;
 import com.alibaba.assistant.agent.execution.persistence.ApprovalRequest;
@@ -25,7 +27,9 @@ import com.alibaba.assistant.agent.execution.persistence.ExecutionStepService;
 import com.alibaba.assistant.agent.runtime.registry.ArtifactPublicationLookupService;
 import com.alibaba.assistant.agent.runtime.compiler.RuntimeArtifact;
 import com.alibaba.assistant.agent.runtime.registry.PublishedToolDescriptor;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -35,6 +39,7 @@ import java.util.Optional;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class ExecutionApprovalServiceTest {
@@ -47,13 +52,16 @@ class ExecutionApprovalServiceTest {
         ExecutionStepService executionStepService = mock(ExecutionStepService.class);
         ArtifactPublicationLookupService artifactPublicationLookupService = mock(ArtifactPublicationLookupService.class);
         ArtifactRuntimeResumeService artifactRuntimeResumeService = mock(ArtifactRuntimeResumeService.class);
+        AuditEventService auditEventService = mock(AuditEventService.class);
         ExecutionApprovalService service = new ExecutionApprovalService(
                 platformSpaceService,
                 approvalRequestService,
                 executionRunService,
                 executionStepService,
                 artifactPublicationLookupService,
-                artifactRuntimeResumeService);
+                artifactRuntimeResumeService,
+                auditEventService,
+                new ObjectMapper());
 
         PlatformSpace space = new PlatformSpace();
         space.setId(11L);
@@ -95,13 +103,16 @@ class ExecutionApprovalServiceTest {
         ExecutionStepService executionStepService = mock(ExecutionStepService.class);
         ArtifactPublicationLookupService artifactPublicationLookupService = mock(ArtifactPublicationLookupService.class);
         ArtifactRuntimeResumeService artifactRuntimeResumeService = mock(ArtifactRuntimeResumeService.class);
+        AuditEventService auditEventService = mock(AuditEventService.class);
         ExecutionApprovalService service = new ExecutionApprovalService(
                 platformSpaceService,
                 approvalRequestService,
                 executionRunService,
                 executionStepService,
                 artifactPublicationLookupService,
-                artifactRuntimeResumeService);
+                artifactRuntimeResumeService,
+                auditEventService,
+                new ObjectMapper());
 
         LocalDateTime requestedAfter = LocalDateTime.of(2026, 3, 11, 8, 0);
         LocalDateTime requestedBefore = LocalDateTime.of(2026, 3, 11, 10, 0);
@@ -163,13 +174,16 @@ class ExecutionApprovalServiceTest {
         ExecutionStepService executionStepService = mock(ExecutionStepService.class);
         ArtifactPublicationLookupService artifactPublicationLookupService = mock(ArtifactPublicationLookupService.class);
         ArtifactRuntimeResumeService artifactRuntimeResumeService = mock(ArtifactRuntimeResumeService.class);
+        AuditEventService auditEventService = mock(AuditEventService.class);
         ExecutionApprovalService service = new ExecutionApprovalService(
                 platformSpaceService,
                 approvalRequestService,
                 executionRunService,
                 executionStepService,
                 artifactPublicationLookupService,
-                artifactRuntimeResumeService);
+                artifactRuntimeResumeService,
+                auditEventService,
+                new ObjectMapper());
 
         PlatformSpace space = new PlatformSpace();
         space.setId(11L);
@@ -190,9 +204,17 @@ class ExecutionApprovalServiceTest {
         request.setStatus("WAITING_APPROVAL");
         request.setApprovalChannel("manual");
         request.setRequestedAt(LocalDateTime.of(2026, 3, 11, 11, 30));
+        ApprovalRequest approvedRequest = new ApprovalRequest();
+        approvedRequest.setRequestId("REQ-3");
+        approvedRequest.setRunId("RUN-3");
+        approvedRequest.setStepId("submit_approval");
+        approvedRequest.setStatus("APPROVED");
+        approvedRequest.setApprovalChannel("manual");
+        approvedRequest.setRequestedAt(LocalDateTime.of(2026, 3, 11, 11, 30));
+        approvedRequest.setRespondedAt(LocalDateTime.of(2026, 3, 11, 11, 32));
 
         when(platformSpaceService.findActiveByCode("finance-space", "prod")).thenReturn(Optional.of(space));
-        when(approvalRequestService.findLatestByRequestId("REQ-3")).thenReturn(Optional.of(request), Optional.of(request));
+        when(approvalRequestService.findLatestByRequestId("REQ-3")).thenReturn(Optional.of(request), Optional.of(approvedRequest));
         when(executionRunService.findLatestByRunId("RUN-3")).thenReturn(Optional.of(run), Optional.of(run));
         when(artifactPublicationLookupService.listPublishedArtifacts(org.mockito.ArgumentMatchers.anyMap()))
                 .thenReturn(List.of(descriptor(11L, "oa.leave.apply")));
@@ -206,8 +228,16 @@ class ExecutionApprovalServiceTest {
                 "u2001");
 
         assertTrue(decision.isPresent());
-        assertEquals("u2001", request.getApproverPrincipalId());
+        assertEquals("u2001", approvedRequest.getApproverPrincipalId());
         assertEquals("u2001", decision.get().approverPrincipalId());
+        ArgumentCaptor<AuditEvent> captor = ArgumentCaptor.forClass(AuditEvent.class);
+        verify(auditEventService).save(captor.capture());
+        AuditEvent event = captor.getValue();
+        assertEquals("APPROVAL_APPROVED", event.getEventType());
+        assertEquals("RUN-3", event.getRunId());
+        assertEquals("submit_approval", event.getStepId());
+        assertEquals("u2001", event.getAssistantUid());
+        assertEquals("APPROVED", event.getStatus());
     }
 
     @Test
@@ -218,13 +248,16 @@ class ExecutionApprovalServiceTest {
         ExecutionStepService executionStepService = mock(ExecutionStepService.class);
         ArtifactPublicationLookupService artifactPublicationLookupService = mock(ArtifactPublicationLookupService.class);
         ArtifactRuntimeResumeService artifactRuntimeResumeService = mock(ArtifactRuntimeResumeService.class);
+        AuditEventService auditEventService = mock(AuditEventService.class);
         ExecutionApprovalService service = new ExecutionApprovalService(
                 platformSpaceService,
                 approvalRequestService,
                 executionRunService,
                 executionStepService,
                 artifactPublicationLookupService,
-                artifactRuntimeResumeService);
+                artifactRuntimeResumeService,
+                auditEventService,
+                new ObjectMapper());
 
         PlatformSpace space = new PlatformSpace();
         space.setId(11L);
@@ -261,6 +294,14 @@ class ExecutionApprovalServiceTest {
         assertTrue(decision.isPresent());
         assertEquals("u3001", request.getApproverPrincipalId());
         assertEquals("u3001", decision.get().approverPrincipalId());
+        ArgumentCaptor<AuditEvent> captor = ArgumentCaptor.forClass(AuditEvent.class);
+        verify(auditEventService).save(captor.capture());
+        AuditEvent event = captor.getValue();
+        assertEquals("APPROVAL_REJECTED", event.getEventType());
+        assertEquals("RUN-4", event.getRunId());
+        assertEquals("submit_approval", event.getStepId());
+        assertEquals("u3001", event.getAssistantUid());
+        assertEquals("REJECTED", event.getStatus());
     }
 
     private PublishedToolDescriptor descriptor(Long spaceId, String artifactCode) {
@@ -289,3 +330,4 @@ class ExecutionApprovalServiceTest {
                 artifact);
     }
 }
+

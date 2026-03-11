@@ -15,6 +15,8 @@
  */
 package com.alibaba.assistant.agent.runtime.execution;
 
+import com.alibaba.assistant.agent.controlplane.audit.AuditEvent;
+import com.alibaba.assistant.agent.controlplane.audit.AuditEventService;
 import com.alibaba.assistant.agent.controlplane.space.PlatformSpace;
 import com.alibaba.assistant.agent.controlplane.space.PlatformSpaceService;
 import com.alibaba.assistant.agent.execution.persistence.ApprovalRequest;
@@ -25,6 +27,9 @@ import com.alibaba.assistant.agent.execution.persistence.ExecutionStep;
 import com.alibaba.assistant.agent.execution.persistence.ExecutionStepService;
 import com.alibaba.assistant.agent.runtime.registry.ArtifactPublicationLookupService;
 import com.alibaba.assistant.agent.runtime.registry.PublishedToolDescriptor;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
@@ -40,11 +45,15 @@ import java.util.Optional;
 @Service
 public class ExecutionApprovalService {
 
+    private static final Logger logger = LoggerFactory.getLogger(ExecutionApprovalService.class);
+
     static final String STATUS_WAITING_APPROVAL = "WAITING_APPROVAL";
     static final String STATUS_APPROVED = "APPROVED";
     static final String STATUS_REJECTED = "REJECTED";
     static final String RUN_STATUS_CANCELLED = "CANCELLED";
     static final String DEFAULT_ENVIRONMENT = "prod";
+    static final String EVENT_TYPE_APPROVAL_APPROVED = "APPROVAL_APPROVED";
+    static final String EVENT_TYPE_APPROVAL_REJECTED = "APPROVAL_REJECTED";
 
     private final PlatformSpaceService platformSpaceService;
     private final ApprovalRequestService approvalRequestService;
@@ -52,6 +61,8 @@ public class ExecutionApprovalService {
     private final ExecutionStepService executionStepService;
     private final ArtifactPublicationLookupService artifactPublicationLookupService;
     private final ArtifactRuntimeResumeService artifactRuntimeResumeService;
+    private final AuditEventService auditEventService;
+    private final ObjectMapper objectMapper;
 
     public ExecutionApprovalService(
             PlatformSpaceService platformSpaceService,
@@ -59,13 +70,17 @@ public class ExecutionApprovalService {
             ExecutionRunService executionRunService,
             ExecutionStepService executionStepService,
             ArtifactPublicationLookupService artifactPublicationLookupService,
-            ArtifactRuntimeResumeService artifactRuntimeResumeService) {
+            ArtifactRuntimeResumeService artifactRuntimeResumeService,
+            AuditEventService auditEventService,
+            ObjectMapper objectMapper) {
         this.platformSpaceService = platformSpaceService;
         this.approvalRequestService = approvalRequestService;
         this.executionRunService = executionRunService;
         this.executionStepService = executionStepService;
         this.artifactPublicationLookupService = artifactPublicationLookupService;
         this.artifactRuntimeResumeService = artifactRuntimeResumeService;
+        this.auditEventService = auditEventService;
+        this.objectMapper = objectMapper;
     }
 
     /**
@@ -171,6 +186,7 @@ public class ExecutionApprovalService {
         }
         ExecutionRun run = executionRunService.findLatestByRunId(resolution.run().getRunId())
                 .orElse(resolution.run());
+        persistDecisionAuditEvent(EVENT_TYPE_APPROVAL_APPROVED, request, run, actorUserId, descriptor);
         return Optional.of(toDecisionView(request, run, resolution.space().getSpaceCode(), resolution.environment()));
     }
 
@@ -206,6 +222,7 @@ public class ExecutionApprovalService {
             executionStepService.updateById(step);
         }
 
+        persistDecisionAuditEvent(EVENT_TYPE_APPROVAL_REJECTED, request, run, actorUserId, null);
         return Optional.of(toDecisionView(request, run, resolution.space().getSpaceCode(), resolution.environment()));
     }
 
@@ -320,6 +337,67 @@ public class ExecutionApprovalService {
                 run.getPlatformPrincipalId(),
                 request.getRequestedAt(),
                 request.getRespondedAt());
+    }
+
+    private void persistDecisionAuditEvent(
+            String eventType,
+            ApprovalRequest request,
+            ExecutionRun run,
+            String actorUserId,
+            PublishedToolDescriptor descriptor) {
+        if (request == null || run == null || !StringUtils.hasText(eventType)) {
+            return;
+        }
+        try {
+            AuditEvent auditEvent = new AuditEvent();
+            auditEvent.setEventId(request.getRequestId() + ":" + eventType);
+            auditEvent.setTraceId(run.getRunId());
+            auditEvent.setExecutionId(run.getRunId());
+            auditEvent.setRunId(run.getRunId());
+            auditEvent.setStepId(normalizeOptional(request.getStepId()));
+            auditEvent.setEventType(eventType);
+            auditEvent.setThreadId(normalizeOptional(run.getThreadId()));
+            auditEvent.setAssistantUid(firstNonBlank(normalizeOptional(actorUserId), normalizeOptional(request.getApproverPrincipalId())));
+            auditEvent.setSystemCode(descriptor != null ? normalizeOptional(descriptor.executionSystemCode()) : null);
+            auditEvent.setToolName(normalizeOptional(run.getArtifactCode()));
+            auditEvent.setAgentPhase(eventType);
+            Map<String, Object> payload = new LinkedHashMap<>();
+            payload.put("requestId", request.getRequestId());
+            payload.put("runId", run.getRunId());
+            payload.put("stepId", request.getStepId());
+            payload.put("decision", request.getStatus());
+            payload.put("approvalChannel", request.getApprovalChannel());
+            payload.put("approverPrincipalId", request.getApproverPrincipalId());
+            auditEvent.setToolOutput(serializePayload(payload));
+            auditEvent.setStatus(normalizeOptional(request.getStatus()));
+            auditEvent.setCreatedAt(request.getRespondedAt() != null ? request.getRespondedAt() : LocalDateTime.now());
+            auditEventService.save(auditEvent);
+        }
+        catch (Exception e) {
+            logger.warn("ExecutionApprovalService#persistDecisionAuditEvent - persist failed, requestId={}, eventType={}",
+                    request.getRequestId(), eventType, e);
+        }
+    }
+
+    private String serializePayload(Map<String, Object> payload) {
+        try {
+            return objectMapper.writeValueAsString(payload);
+        }
+        catch (Exception ignored) {
+            return String.valueOf(payload);
+        }
+    }
+
+    private String firstNonBlank(String... values) {
+        if (values == null) {
+            return null;
+        }
+        for (String value : values) {
+            if (StringUtils.hasText(value)) {
+                return value.trim();
+            }
+        }
+        return null;
     }
 
     private boolean applyApproverPrincipal(ApprovalRequest request, String actorUserId) {
