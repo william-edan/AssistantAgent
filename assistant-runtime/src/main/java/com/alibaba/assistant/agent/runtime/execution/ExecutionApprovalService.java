@@ -115,6 +115,25 @@ public class ExecutionApprovalService {
     }
 
     /**
+     * Load a single approval request detail for operator views.
+     */
+    public Optional<ExecutionApprovalDetailView> findRequest(String spaceCode, String environment, String requestId) {
+        Optional<PlatformSpace> spaceOptional = findSpace(spaceCode, environment);
+        if (spaceOptional.isEmpty() || !StringUtils.hasText(requestId)) {
+            return Optional.empty();
+        }
+        ApprovalRequest request = approvalRequestService.findLatestByRequestId(requestId.trim()).orElse(null);
+        if (request == null) {
+            return Optional.empty();
+        }
+        ExecutionRun run = executionRunService.findLatestByRunId(request.getRunId()).orElse(null);
+        if (run == null || run.getSpaceId() == null || !run.getSpaceId().equals(spaceOptional.get().getId())) {
+            return Optional.empty();
+        }
+        return Optional.of(toDetailView(request, run, spaceOptional.get().getSpaceCode(), normalizeEnvironment(environment)));
+    }
+
+    /**
      * Approve a pending request and resume the paused execution.
      */
     public Optional<ExecutionApprovalDecisionView> approveRequest(
@@ -228,6 +247,31 @@ public class ExecutionApprovalService {
                 environment,
                 request.getStepId(),
                 request.getStatus(),
+                request.getApprovalChannel(),
+                request.getApproverPrincipalId(),
+                run.getPausedStepId(),
+                run.getPlatformPrincipalId(),
+                run.getThreadId(),
+                request.getRequestedAt(),
+                request.getRespondedAt());
+    }
+
+    private ExecutionApprovalDetailView toDetailView(
+            ApprovalRequest request,
+            ExecutionRun run,
+            String spaceCode,
+            String environment) {
+        return new ExecutionApprovalDetailView(
+                request.getRequestId(),
+                run.getRunId(),
+                run.getArtifactCode(),
+                run.getArtifactType(),
+                run.getSpaceId(),
+                spaceCode,
+                environment,
+                request.getStepId(),
+                request.getStatus(),
+                run.getStatus(),
                 request.getApprovalChannel(),
                 request.getApproverPrincipalId(),
                 run.getPausedStepId(),

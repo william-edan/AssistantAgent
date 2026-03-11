@@ -17,12 +17,15 @@ package com.alibaba.assistant.agent.api.controller;
 
 import com.alibaba.assistant.agent.api.controller.dto.ExecutionApprovalDecisionData;
 import com.alibaba.assistant.agent.api.controller.dto.ExecutionApprovalDecisionResponse;
+import com.alibaba.assistant.agent.api.controller.dto.ExecutionApprovalDetailData;
+import com.alibaba.assistant.agent.api.controller.dto.ExecutionApprovalDetailResponse;
 import com.alibaba.assistant.agent.api.controller.dto.ExecutionApprovalListData;
 import com.alibaba.assistant.agent.api.controller.dto.ExecutionApprovalListResponse;
 import com.alibaba.assistant.agent.api.controller.dto.ExecutionApprovalRequestData;
 import com.alibaba.assistant.agent.api.security.AuthenticatedUserContext;
 import com.alibaba.assistant.agent.api.security.MigrationControlPlaneAuthorizationService;
 import com.alibaba.assistant.agent.runtime.execution.ExecutionApprovalDecisionView;
+import com.alibaba.assistant.agent.runtime.execution.ExecutionApprovalDetailView;
 import com.alibaba.assistant.agent.runtime.execution.ExecutionApprovalService;
 import org.springframework.context.annotation.Profile;
 import org.springframework.http.HttpStatus;
@@ -73,6 +76,19 @@ public class ExecutionApprovalController {
                         .toList())));
     }
 
+    @GetMapping("/{requestId}")
+    public ResponseEntity<ExecutionApprovalDetailResponse> getApprovalRequest(
+            @PathVariable String spaceCode,
+            @PathVariable String requestId,
+            @RequestParam(required = false) String environment,
+            Principal principal) {
+        AuthenticatedUserContext authenticatedUser = requireAuthenticatedUser(principal);
+        String normalizedEnvironment = normalizeEnvironment(environment);
+        requireApprovalAccess(authenticatedUser, spaceCode, normalizedEnvironment);
+        return ResponseEntity.ok(ExecutionApprovalDetailResponse.ok(ExecutionApprovalDetailData.from(
+                requireDetail(executionApprovalService.findRequest(spaceCode, normalizedEnvironment, requestId)))));
+    }
+
     @PostMapping("/{requestId}/approve")
     public ResponseEntity<ExecutionApprovalDecisionResponse> approveRequest(
             @PathVariable String spaceCode,
@@ -105,6 +121,10 @@ public class ExecutionApprovalController {
                         normalizedEnvironment,
                         requestId,
                         authenticatedUser.userId())))));
+    }
+
+    private ExecutionApprovalDetailView requireDetail(Optional<ExecutionApprovalDetailView> detailOptional) {
+        return detailOptional.orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "approval_request_not_found"));
     }
 
     private ExecutionApprovalDecisionView requireDecision(Optional<ExecutionApprovalDecisionView> decisionOptional) {

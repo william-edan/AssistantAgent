@@ -16,6 +16,7 @@
 package com.alibaba.assistant.agent.api.security;
 
 import com.alibaba.assistant.agent.api.controller.ExecutionApprovalController;
+import com.alibaba.assistant.agent.runtime.execution.ExecutionApprovalDetailView;
 import com.alibaba.assistant.agent.runtime.execution.ExecutionApprovalService;
 import jakarta.servlet.Filter;
 import org.junit.jupiter.api.BeforeEach;
@@ -37,6 +38,7 @@ import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.web.context.WebApplicationContext;
 import org.springframework.web.servlet.config.annotation.EnableWebMvc;
 
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 
@@ -58,6 +60,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 class ExecutionApprovalControllerSecurityTest {
 
     private static final String LIST_PATH = "/api/controlplane/spaces/finance-space/approval-requests";
+    private static final String DETAIL_PATH = "/api/controlplane/spaces/finance-space/approval-requests/REQ-1";
 
     @Autowired
     private WebApplicationContext webApplicationContext;
@@ -93,6 +96,16 @@ class ExecutionApprovalControllerSecurityTest {
         verify(migrationAuthService, never()).introspect(anyString());
         verify(authorizationService, never()).canManageSpaceExecutionApprovals(any(), anyString(), anyString());
         verify(executionApprovalService, never()).listPendingRequests(anyString(), anyString());
+    }
+
+    @Test
+    void shouldReturnUnauthorizedWhenApprovalDetailBearerMissing() throws Exception {
+        mockMvc.perform(get(DETAIL_PATH))
+                .andExpect(status().isUnauthorized());
+
+        verify(migrationAuthService, never()).introspect(anyString());
+        verify(authorizationService, never()).canManageSpaceExecutionApprovals(any(), anyString(), anyString());
+        verify(executionApprovalService, never()).findRequest(anyString(), anyString(), anyString());
     }
 
     @Test
@@ -136,6 +149,35 @@ class ExecutionApprovalControllerSecurityTest {
         when(executionApprovalService.listPendingRequests("finance-space", "prod")).thenReturn(List.of());
 
         mockMvc.perform(get(LIST_PATH).header(AUTHORIZATION, "Bearer token-space-admin"))
+                .andExpect(status().isOk());
+    }
+
+    @Test
+    void shouldAllowApprovalDetailWhenScopedAdminHasTargetSpace() throws Exception {
+        when(migrationAuthService.introspect("token-space-admin")).thenReturn(Optional.of(controlPlaneUser()));
+        when(authorizationService.canManageSpaceExecutionApprovals(any(AuthenticatedUserContext.class), eq("finance-space"), eq("prod")))
+                .thenReturn(true);
+        when(executionApprovalService.findRequest("finance-space", "prod", "REQ-1"))
+                .thenReturn(Optional.of(new ExecutionApprovalDetailView(
+                        "REQ-1",
+                        "RUN-1",
+                        "oa.leave.apply",
+                        "WORKFLOW",
+                        11L,
+                        "finance-space",
+                        "prod",
+                        "submit_approval",
+                        "WAITING_APPROVAL",
+                        "WAITING_APPROVAL",
+                        "manual",
+                        "u2001",
+                        "submit_approval",
+                        "u1001",
+                        "T-1",
+                        LocalDateTime.of(2026, 3, 10, 23, 0),
+                        null)));
+
+        mockMvc.perform(get(DETAIL_PATH).header(AUTHORIZATION, "Bearer token-space-admin"))
                 .andExpect(status().isOk());
     }
 

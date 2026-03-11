@@ -18,6 +18,7 @@ package com.alibaba.assistant.agent.api.controller;
 import com.alibaba.assistant.agent.api.security.AuthenticatedUserContext;
 import com.alibaba.assistant.agent.api.security.MigrationControlPlaneAuthorizationService;
 import com.alibaba.assistant.agent.runtime.execution.ExecutionApprovalDecisionView;
+import com.alibaba.assistant.agent.runtime.execution.ExecutionApprovalDetailView;
 import com.alibaba.assistant.agent.runtime.execution.ExecutionApprovalRequestView;
 import com.alibaba.assistant.agent.runtime.execution.ExecutionApprovalService;
 import org.junit.jupiter.api.BeforeEach;
@@ -96,6 +97,54 @@ class ExecutionApprovalControllerTest {
                 .andExpect(jsonPath("$.data.requests[0].runId").value("RUN-1"))
                 .andExpect(jsonPath("$.data.requests[0].spaceCode").value("finance-space"))
                 .andExpect(jsonPath("$.data.requests[0].status").value("WAITING_APPROVAL"));
+    }
+
+    @Test
+    void shouldGetApprovalRequestDetailWhenAuthorized() throws Exception {
+        when(authorizationService.canManageSpaceExecutionApprovals(
+                any(AuthenticatedUserContext.class), eq("finance-space"), eq("prod")))
+                .thenReturn(true);
+        when(executionApprovalService.findRequest("finance-space", "prod", "REQ-1"))
+                .thenReturn(Optional.of(new ExecutionApprovalDetailView(
+                        "REQ-1",
+                        "RUN-1",
+                        "oa.leave.apply",
+                        "WORKFLOW",
+                        11L,
+                        "finance-space",
+                        "prod",
+                        "submit_approval",
+                        "WAITING_APPROVAL",
+                        "WAITING_APPROVAL",
+                        "manual",
+                        "u2001",
+                        "submit_approval",
+                        "u1001",
+                        "T-1",
+                        LocalDateTime.of(2026, 3, 10, 23, 0),
+                        null)));
+
+        mockMvc.perform(get("/api/controlplane/spaces/finance-space/approval-requests/REQ-1")
+                        .principal(authenticatedPrincipal()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(0))
+                .andExpect(jsonPath("$.data.requestId").value("REQ-1"))
+                .andExpect(jsonPath("$.data.runId").value("RUN-1"))
+                .andExpect(jsonPath("$.data.status").value("WAITING_APPROVAL"))
+                .andExpect(jsonPath("$.data.runStatus").value("WAITING_APPROVAL"));
+    }
+
+    @Test
+    void shouldReturnNotFoundWhenApprovalRequestDetailMissing() throws Exception {
+        when(authorizationService.canManageSpaceExecutionApprovals(
+                any(AuthenticatedUserContext.class), eq("finance-space"), eq("prod")))
+                .thenReturn(true);
+        when(executionApprovalService.findRequest("finance-space", "prod", "REQ-404"))
+                .thenReturn(Optional.empty());
+
+        mockMvc.perform(get("/api/controlplane/spaces/finance-space/approval-requests/REQ-404")
+                        .principal(authenticatedPrincipal()))
+                .andExpect(status().isNotFound());
     }
 
     @Test
