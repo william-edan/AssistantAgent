@@ -24,6 +24,7 @@ import com.alibaba.assistant.agent.controlplane.space.PlatformSpaceService;
 import com.alibaba.assistant.agent.execution.persistence.ExecutionEventTimelineService;
 import com.alibaba.assistant.agent.execution.persistence.ExecutionEventTimelineView;
 import org.springframework.context.annotation.Profile;
+import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
@@ -35,6 +36,7 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.security.Principal;
+import java.time.LocalDateTime;
 
 /**
  * Control-plane read API for persisted execution event timelines.
@@ -64,10 +66,19 @@ public class ExecutionEventTimelineController {
             @PathVariable String runId,
             @RequestParam(required = false) String environment,
             @RequestParam(required = false) String stepId,
+            @RequestParam(required = false) String eventType,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime occurredAfter,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime occurredBefore,
             @RequestParam(required = false) Integer limit,
             Principal principal) {
         AuthenticatedUserContext authenticatedUser = requireAuthenticatedUser(principal);
-        ExecutionEventTimelineView timelineView = executionEventTimelineService.findTimeline(runId, normalizeOptional(stepId), limit)
+        ExecutionEventTimelineView timelineView = executionEventTimelineService.findTimeline(
+                        runId,
+                        normalizeOptional(stepId),
+                        normalizeOptional(eventType),
+                        occurredAfter,
+                        occurredBefore,
+                        limit)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "execution_run_not_found"));
         PlatformSpace space = requireSpace(timelineView.spaceId());
         requireScopedMatch(space, spaceCode, environment);
@@ -120,3 +131,4 @@ public class ExecutionEventTimelineController {
         return StringUtils.hasText(value) ? value.trim() : null;
     }
 }
+

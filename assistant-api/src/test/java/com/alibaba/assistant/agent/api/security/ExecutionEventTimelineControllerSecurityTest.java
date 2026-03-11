@@ -99,7 +99,7 @@ class ExecutionEventTimelineControllerSecurityTest {
 
         verify(migrationAuthService, never()).introspect(anyString());
         verify(authorizationService, never()).canViewSpaceCatalog(any(), anyString(), anyString());
-        verify(executionEventTimelineService, never()).findTimeline(anyString(), any(), any());
+        verify(executionEventTimelineService, never()).findTimeline(anyString(), any(), any(), any(), any(), any());
     }
 
     @Test
@@ -120,7 +120,7 @@ class ExecutionEventTimelineControllerSecurityTest {
                 .andExpect(status().isForbidden());
 
         verify(authorizationService, never()).canViewSpaceCatalog(any(), anyString(), anyString());
-        verify(executionEventTimelineService, never()).findTimeline(anyString(), any(), any());
+        verify(executionEventTimelineService, never()).findTimeline(anyString(), any(), any(), any(), any(), any());
     }
 
     @Test
@@ -130,7 +130,7 @@ class ExecutionEventTimelineControllerSecurityTest {
         space.setSpaceCode("finance-space");
         space.setEnvironment("prod");
         when(migrationAuthService.introspect("token-space-admin")).thenReturn(Optional.of(controlPlaneUser()));
-        when(executionEventTimelineService.findTimeline("RUN-1", null, null))
+        when(executionEventTimelineService.findTimeline("RUN-1", null, null, null, null, null))
                 .thenReturn(Optional.of(new ExecutionEventTimelineView(
                         "RUN-1",
                         "oa.leave.apply",
@@ -207,3 +207,4 @@ class ExecutionEventTimelineControllerSecurityTest {
         }
     }
 }
+

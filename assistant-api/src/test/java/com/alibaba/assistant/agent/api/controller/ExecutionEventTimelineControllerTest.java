@@ -69,9 +69,17 @@ class ExecutionEventTimelineControllerTest {
     }
 
     @Test
-    void shouldGetExecutionTimelineWhenAuthorized() throws Exception {
+    void shouldPassStepEventTypeAndOccurredTimeFiltersWhenAuthorized() throws Exception {
+        LocalDateTime occurredAfter = LocalDateTime.of(2026, 3, 11, 12, 0);
+        LocalDateTime occurredBefore = LocalDateTime.of(2026, 3, 11, 14, 0);
         PlatformSpace space = space(11L, "finance-space", "test");
-        when(executionEventTimelineService.findTimeline("RUN-1", "submit_approval", 5))
+        when(executionEventTimelineService.findTimeline(
+                "RUN-1",
+                "submit_approval",
+                "STEP_WAITING_APPROVAL",
+                occurredAfter,
+                occurredBefore,
+                5))
                 .thenReturn(Optional.of(timelineView(11L)));
         when(platformSpaceService.getById(11L)).thenReturn(space);
         when(authorizationService.canViewSpaceCatalog(any(AuthenticatedUserContext.class), eq("finance-space"), eq("test")))
@@ -80,6 +88,9 @@ class ExecutionEventTimelineControllerTest {
         mockMvc.perform(get("/api/controlplane/spaces/finance-space/execution-runs/RUN-1/events")
                         .queryParam("environment", "test")
                         .queryParam("stepId", "submit_approval")
+                        .queryParam("eventType", "STEP_WAITING_APPROVAL")
+                        .queryParam("occurredAfter", "2026-03-11T12:00:00")
+                        .queryParam("occurredBefore", "2026-03-11T14:00:00")
                         .queryParam("limit", "5")
                         .principal(authenticatedPrincipal()))
                 .andExpect(status().isOk())
@@ -96,7 +107,7 @@ class ExecutionEventTimelineControllerTest {
     @Test
     void shouldReturnNotFoundWhenScopedTimelineTargetsDifferentSpace() throws Exception {
         PlatformSpace space = space(11L, "finance-space", "prod");
-        when(executionEventTimelineService.findTimeline("RUN-1", null, null))
+        when(executionEventTimelineService.findTimeline("RUN-1", null, null, null, null, null))
                 .thenReturn(Optional.of(timelineView(11L)));
         when(platformSpaceService.getById(11L)).thenReturn(space);
 
@@ -110,7 +121,7 @@ class ExecutionEventTimelineControllerTest {
     @Test
     void shouldReturnForbiddenWhenTimelineScopeDenied() throws Exception {
         PlatformSpace space = space(11L, "finance-space", "prod");
-        when(executionEventTimelineService.findTimeline("RUN-1", null, null))
+        when(executionEventTimelineService.findTimeline("RUN-1", null, null, null, null, null))
                 .thenReturn(Optional.of(timelineView(11L)));
         when(platformSpaceService.getById(11L)).thenReturn(space);
         when(authorizationService.canViewSpaceCatalog(any(AuthenticatedUserContext.class), eq("finance-space"), eq("prod")))
@@ -123,7 +134,7 @@ class ExecutionEventTimelineControllerTest {
 
     @Test
     void shouldReturnNotFoundWhenTimelineMissing() throws Exception {
-        when(executionEventTimelineService.findTimeline("RUN-404", null, null)).thenReturn(Optional.empty());
+        when(executionEventTimelineService.findTimeline("RUN-404", null, null, null, null, null)).thenReturn(Optional.empty());
 
         mockMvc.perform(get("/api/controlplane/spaces/finance-space/execution-runs/RUN-404/events")
                         .principal(authenticatedPrincipal()))
@@ -175,3 +186,4 @@ class ExecutionEventTimelineControllerTest {
                 List.of("assistant:chat", "assistant:controlplane"));
     }
 }
+

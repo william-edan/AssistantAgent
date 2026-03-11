@@ -20,6 +20,7 @@ import com.alibaba.assistant.agent.controlplane.audit.AuditEventService;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 
@@ -43,14 +44,21 @@ public class ExecutionEventTimelineService {
     }
 
     /**
-     * Load persisted execution events for a run with optional step filtering.
+     * Load persisted execution events for a run with optional step, event type, and time filtering.
      */
-    public Optional<ExecutionEventTimelineView> findTimeline(String runId, String stepId, Integer limit) {
+    public Optional<ExecutionEventTimelineView> findTimeline(
+            String runId,
+            String stepId,
+            String eventType,
+            LocalDateTime occurredAfter,
+            LocalDateTime occurredBefore,
+            Integer limit) {
         if (!StringUtils.hasText(runId)) {
             return Optional.empty();
         }
         String normalizedRunId = runId.trim();
         String normalizedStepId = StringUtils.hasText(stepId) ? stepId.trim() : null;
+        String normalizedEventType = StringUtils.hasText(eventType) ? eventType.trim() : null;
         int normalizedLimit = normalizeLimit(limit);
         return executionRunService.findLatestByRunId(normalizedRunId)
                 .map(run -> new ExecutionEventTimelineView(
@@ -61,6 +69,9 @@ public class ExecutionEventTimelineService {
                         auditEventService.lambdaQuery()
                                 .eq(AuditEvent::getRunId, normalizedRunId)
                                 .eq(normalizedStepId != null, AuditEvent::getStepId, normalizedStepId)
+                                .eq(normalizedEventType != null, AuditEvent::getEventType, normalizedEventType)
+                                .ge(occurredAfter != null, AuditEvent::getCreatedAt, occurredAfter)
+                                .le(occurredBefore != null, AuditEvent::getCreatedAt, occurredBefore)
                                 .orderByAsc(AuditEvent::getCreatedAt)
                                 .orderByAsc(AuditEvent::getId)
                                 .list()
@@ -86,3 +97,4 @@ public class ExecutionEventTimelineService {
         return Math.min(limit, 200);
     }
 }
+
