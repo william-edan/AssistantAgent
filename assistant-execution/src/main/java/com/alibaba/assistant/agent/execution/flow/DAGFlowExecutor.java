@@ -26,6 +26,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
+import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -97,7 +98,7 @@ public class DAGFlowExecutor {
 					remaining.remove(stepId);
 					context.setCurrentStepId(stepId);
 
-					if (!shouldExecute(step)) {
+					if (!shouldExecute(step, context)) {
 						StepResult skipped = StepResult.success(Map.of("skipped", true));
 						stepStatuses.put(stepId, StepStatus.SKIPPED);
 						stepResults.put(stepId, skipped);
@@ -204,30 +205,124 @@ public class DAGFlowExecutor {
 		return status == StepStatus.COMPLETED || status == StepStatus.SKIPPED;
 	}
 
-	private boolean shouldExecute(StepDefinition step) {
+	private boolean shouldExecute(StepDefinition step, FlowContext context) {
 		StepConfig config = step.getConfig();
 		if (config == null || config.getConditions() == null) {
 			return true;
 		}
 		Object conditions = config.getConditions();
-		if (conditions instanceof Boolean bool) {
-			return bool;
-		}
-		if (conditions instanceof Number number) {
-			return number.intValue() != 0;
-		}
-		if (conditions instanceof String text) {
-			return parseBoolean(text, true);
-		}
 		if (conditions instanceof Map<?, ?> map) {
 			Object enabled = map.get("enabled");
-			if (enabled != null && !parseBoolean(enabled, true)) {
+			if (enabled != null && !parseBoolean(resolveConditionOperand(enabled, context), true)) {
 				return true;
 			}
 			Object expression = firstNonNull(map.get("expression"), map.get("result"), map.get("value"), map.get("when"));
-			return expression == null || parseBoolean(expression, true);
+			if (expression == null && map.containsKey("operator")) {
+				expression = map;
+			}
+			return expression == null || evaluateConditionExpression(expression, context);
 		}
-		return true;
+		return evaluateConditionExpression(conditions, context);
+	}
+
+	private boolean evaluateConditionExpression(Object expression, FlowContext context) {
+		if (expression instanceof Map<?, ?> map) {
+			Object nested = firstNonNull(map.get("expression"), map.get("result"), map.get("value"), map.get("when"));
+			Object operator = firstNonNull(map.get("operator"), map.get("op"), map.get("matcher"));
+			if (operator == null && nested != null && nested != expression) {
+				return evaluateConditionExpression(nested, context);
+			}
+			return evaluateStructuredCondition(map, context, operator);
+		}
+		return parseBoolean(resolveConditionOperand(expression, context), true);
+	}
+
+	private boolean evaluateStructuredCondition(Map<?, ?> conditionMap, FlowContext context, Object operator) {
+		String normalizedOperator = operator != null
+				? String.valueOf(operator).trim().toLowerCase(Locale.ROOT)
+				: "exists";
+		Object left = resolveConditionOperand(
+				firstNonNull(conditionMap.get("left"), conditionMap.get("source"), conditionMap.get("actual"), conditionMap.get("value")),
+				context);
+		Object right = resolveConditionOperand(
+				firstNonNull(conditionMap.get("right"), conditionMap.get("expected"), conditionMap.get("equals")),
+				context);
+		return switch (normalizedOperator) {
+			case "exists" -> left != null && (!(left instanceof String text) || !text.isBlank());
+			case "missing", "not_exists", "not-exists" -> left == null || (left instanceof String text && text.isBlank());
+			case "eq", "equals", "==" -> conditionEquals(left, right);
+			case "neq", "not_equals", "not-equals", "!=" -> !conditionEquals(left, right);
+			case "gt", ">" -> compareConditionValues(left, right) > 0;
+			case "gte", ">=" -> compareConditionValues(left, right) >= 0;
+			case "lt", "<" -> compareConditionValues(left, right) < 0;
+			case "lte", "<=" -> compareConditionValues(left, right) <= 0;
+			default -> parseBoolean(resolveConditionOperand(firstNonNull(conditionMap.get("value"), conditionMap.get("left")), context), true);
+		};
+	}
+
+	private Object resolveConditionOperand(Object operand, FlowContext context) {
+		if (operand instanceof String text && context != null) {
+			return context.resolve(text);
+		}
+		return operand;
+	}
+
+	private boolean conditionEquals(Object left, Object right) {
+		if (left == null || right == null) {
+			return left == right;
+		}
+		BigDecimal leftDecimal = toBigDecimal(left);
+		BigDecimal rightDecimal = toBigDecimal(right);
+		if (leftDecimal != null && rightDecimal != null) {
+			return leftDecimal.compareTo(rightDecimal) == 0;
+		}
+		if (isBooleanLike(left) && isBooleanLike(right)) {
+			return parseBoolean(left, false) == parseBoolean(right, false);
+		}
+		return String.valueOf(left).equals(String.valueOf(right));
+	}
+
+	private int compareConditionValues(Object left, Object right) {
+		BigDecimal leftDecimal = toBigDecimal(left);
+		BigDecimal rightDecimal = toBigDecimal(right);
+		if (leftDecimal != null && rightDecimal != null) {
+			return leftDecimal.compareTo(rightDecimal);
+		}
+		String leftText = left != null ? String.valueOf(left) : "";
+		String rightText = right != null ? String.valueOf(right) : "";
+		return leftText.compareTo(rightText);
+	}
+
+	private BigDecimal toBigDecimal(Object candidate) {
+		if (candidate == null) {
+			return null;
+		}
+		try {
+			return new BigDecimal(String.valueOf(candidate).trim());
+		}
+		catch (NumberFormatException ignored) {
+			return null;
+		}
+	}
+
+	private boolean isBooleanLike(Object candidate) {
+		if (candidate instanceof Boolean) {
+			return true;
+		}
+		if (candidate == null) {
+			return false;
+		}
+		String normalized = String.valueOf(candidate).trim().toLowerCase(Locale.ROOT);
+		return normalized.equals("1")
+				|| normalized.equals("0")
+				|| normalized.equals("true")
+				|| normalized.equals("false")
+				|| normalized.equals("yes")
+				|| normalized.equals("no")
+				|| normalized.equals("on")
+				|| normalized.equals("off")
+				|| normalized.equals("y")
+				|| normalized.equals("n");
 	}
 
 	private boolean requiresApproval(StepDefinition step) {

@@ -225,6 +225,51 @@ class DAGFlowExecutorTest {
         assertEquals(StepStatus.WAITING_APPROVAL, result.getStepStatuses().get("submit"));
         assertEquals(0, mockWebServer.getRequestCount());
     }
+
+    @Test
+    void shouldSkipStepWhenSlotConditionDoesNotMatchContext() throws Exception {
+        mockWebServer.enqueue(jsonResponse("{\"code\":0,\"msg\":\"primary\",\"data\":{\"id\":1}}"));
+        mockWebServer.enqueue(jsonResponse("{\"code\":0,\"msg\":\"conditional\",\"data\":{}}"));
+        mockWebServer.enqueue(jsonResponse("{\"code\":0,\"msg\":\"merge\",\"data\":{}}"));
+
+        FlowExecutionResult result = dagFlowExecutor.execute(buildSlotConditionalFlow(), createFlowContext(baseInputs()));
+
+        assertTrue(result.isSuccess());
+        assertEquals(StepStatus.COMPLETED, result.getStepStatuses().get("primary"));
+        assertEquals(StepStatus.SKIPPED, result.getStepStatuses().get("conditional"));
+        assertEquals(StepStatus.COMPLETED, result.getStepStatuses().get("merge"));
+        assertEquals(2, mockWebServer.getRequestCount());
+
+        RecordedRequest first = mockWebServer.takeRequest(1, TimeUnit.SECONDS);
+        RecordedRequest second = mockWebServer.takeRequest(1, TimeUnit.SECONDS);
+        assertNotNull(first);
+        assertNotNull(second);
+        assertEquals("/primary", first.getPath());
+        assertEquals("/merge", second.getPath());
+    }
+
+    @Test
+    void shouldSkipStepWhenPreviousOutputConditionDoesNotMatchContext() throws Exception {
+        mockWebServer.enqueue(jsonResponse("{\"code\":0,\"msg\":\"created\",\"data\":{\"id\":1}}"));
+        mockWebServer.enqueue(jsonResponse("{\"code\":0,\"msg\":\"submitted\",\"data\":{}}"));
+        mockWebServer.enqueue(jsonResponse("{\"code\":0,\"msg\":\"merge\",\"data\":{}}"));
+
+        FlowExecutionResult result = dagFlowExecutor.execute(buildPreviousOutputConditionalFlow(), createFlowContext(baseInputs()));
+
+        assertTrue(result.isSuccess());
+        assertEquals(StepStatus.COMPLETED, result.getStepStatuses().get("create"));
+        assertEquals(StepStatus.SKIPPED, result.getStepStatuses().get("submit"));
+        assertEquals(StepStatus.COMPLETED, result.getStepStatuses().get("merge"));
+        assertEquals(2, mockWebServer.getRequestCount());
+
+        RecordedRequest first = mockWebServer.takeRequest(1, TimeUnit.SECONDS);
+        RecordedRequest second = mockWebServer.takeRequest(1, TimeUnit.SECONDS);
+        assertNotNull(first);
+        assertNotNull(second);
+        assertEquals("/create", first.getPath());
+        assertEquals("/merge", second.getPath());
+    }
+
     private FlowDefinition buildDependencyFlow() {
         StepDefinition create = httpStep("create", "/create");
         StepDefinition review = httpStep("review", "/review");
@@ -260,6 +305,55 @@ class DAGFlowExecutorTest {
                 "merge", merge,
                 "optional", optional,
                 "primary", primary));
+        return flow;
+    }
+
+    private FlowDefinition buildSlotConditionalFlow() {
+        StepDefinition primary = httpStep("primary", "/primary");
+        StepDefinition conditional = httpStep("conditional", "/conditional");
+        conditional.getConfig().setConditions(Map.of(
+                "enabled", true,
+                "expression", Map.of(
+                        "left", "${types}",
+                        "operator", "eq",
+                        "right", 9)));
+        StepDefinition merge = httpStep("merge", "/merge");
+        merge.setDependsOn(List.of("primary", "conditional"));
+        merge.setJoinType(JoinType.ANY);
+
+        FlowDefinition flow = new FlowDefinition();
+        flow.setVersion("2.0");
+        flow.setEntry(List.of("merge", "primary", "conditional"));
+        flow.setTerminal(List.of("merge"));
+        flow.setSteps(Map.of(
+                "merge", merge,
+                "conditional", conditional,
+                "primary", primary));
+        return flow;
+    }
+
+    private FlowDefinition buildPreviousOutputConditionalFlow() {
+        StepDefinition create = httpStep("create", "/create");
+        StepDefinition submit = httpStep("submit", "/submit");
+        submit.setDependsOn(List.of("create"));
+        submit.getConfig().setConditions(Map.of(
+                "enabled", true,
+                "expression", Map.of(
+                        "left", "${create.message}",
+                        "operator", "eq",
+                        "right", "approved")));
+        StepDefinition merge = httpStep("merge", "/merge");
+        merge.setDependsOn(List.of("create", "submit"));
+        merge.setJoinType(JoinType.ANY);
+
+        FlowDefinition flow = new FlowDefinition();
+        flow.setVersion("2.0");
+        flow.setEntry(List.of("merge", "submit", "create"));
+        flow.setTerminal(List.of("merge"));
+        flow.setSteps(Map.of(
+                "merge", merge,
+                "submit", submit,
+                "create", create));
         return flow;
     }
 
@@ -380,5 +474,3 @@ class DAGFlowExecutorTest {
         }
     }
 }
-
-
