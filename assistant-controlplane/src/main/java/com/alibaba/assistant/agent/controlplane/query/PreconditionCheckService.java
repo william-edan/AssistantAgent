@@ -21,6 +21,7 @@ import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
+import java.util.List;
 import java.util.Optional;
 
 @Service
@@ -40,6 +41,19 @@ public class PreconditionCheckService extends ServiceImpl<PreconditionCheckMappe
 		query.orderByDesc(PreconditionCheck::getVersion);
 		query.orderByDesc(PreconditionCheck::getId);
 		return Optional.ofNullable(getOne(query, false));
+	}
+
+	public List<PreconditionCheck> listEnabledByConnector(Long connectorId) {
+		if (connectorId == null) {
+			return List.of();
+		}
+		LambdaQueryWrapper<PreconditionCheck> query = new LambdaQueryWrapper<>();
+		query.eq(PreconditionCheck::getConnectorId, connectorId);
+		query.eq(PreconditionCheck::getStatus, STATUS_ENABLED);
+		query.orderByAsc(PreconditionCheck::getCheckCode);
+		query.orderByDesc(PreconditionCheck::getVersion);
+		query.orderByDesc(PreconditionCheck::getId);
+		return list(query);
 	}
 
 }
