@@ -18,6 +18,7 @@ package com.alibaba.assistant.agent.execution.persistence;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 
@@ -71,6 +72,8 @@ public class ExecutionHistoryService {
             String artifactCode,
             String platformPrincipalId,
             String threadId,
+            LocalDateTime startedAfter,
+            LocalDateTime startedBefore,
             Integer limit) {
         if (spaceId == null) {
             return List.of();
@@ -82,6 +85,8 @@ public class ExecutionHistoryService {
                         normalizeOptional(artifactCode),
                         normalizeOptional(platformPrincipalId),
                         normalizeOptional(threadId),
+                        startedAfter,
+                        startedBefore,
                         limit)
                 .stream()
                 .map(run -> new ExecutionHistoryRunSummaryView(

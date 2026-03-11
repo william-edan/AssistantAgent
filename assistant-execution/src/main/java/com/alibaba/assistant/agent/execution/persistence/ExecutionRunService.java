@@ -21,6 +21,7 @@ import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 
@@ -75,6 +76,8 @@ public class ExecutionRunService extends ServiceImpl<ExecutionRunMapper, Executi
             String artifactCode,
             String platformPrincipalId,
             String threadId,
+            LocalDateTime startedAfter,
+            LocalDateTime startedBefore,
             Integer limit) {
         if (spaceId == null) {
             return List.of();
@@ -88,6 +91,8 @@ public class ExecutionRunService extends ServiceImpl<ExecutionRunMapper, Executi
                 .eq(StringUtils.hasText(platformPrincipalId), ExecutionRun::getPlatformPrincipalId,
                         platformPrincipalId != null ? platformPrincipalId.trim() : null)
                 .eq(StringUtils.hasText(threadId), ExecutionRun::getThreadId, threadId != null ? threadId.trim() : null)
+                .ge(startedAfter != null, ExecutionRun::getStartedAt, startedAfter)
+                .le(startedBefore != null, ExecutionRun::getStartedAt, startedBefore)
                 .orderByDesc(ExecutionRun::getStartedAt)
                 .orderByDesc(ExecutionRun::getId)
                 .list()

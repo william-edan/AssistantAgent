@@ -32,6 +32,8 @@ class ExecutionHistoryServiceTest {
         ExecutionStepService executionStepService = mock(ExecutionStepService.class);
         ExecutionHistoryService service = new ExecutionHistoryService(executionRunService, executionStepService);
 
+        LocalDateTime startedAfter = LocalDateTime.of(2026, 3, 11, 12, 0);
+        LocalDateTime startedBefore = LocalDateTime.of(2026, 3, 11, 13, 0);
         ExecutionRun run = new ExecutionRun();
         run.setRunId("RUN-2");
         run.setArtifactCode("oa.leave.apply");
@@ -40,9 +42,18 @@ class ExecutionHistoryServiceTest {
         run.setPlatformPrincipalId("u2002");
         run.setThreadId("THREAD-9");
         run.setStatus("COMPLETED");
-        run.setStartedAt(LocalDateTime.of(2026, 3, 11, 12, 0));
-        run.setCompletedAt(LocalDateTime.of(2026, 3, 11, 12, 3));
-        when(executionRunService.listBySpace(11L, "RUN-2", "COMPLETED", "oa.leave.apply", "u2002", "THREAD-9", 5))
+        run.setStartedAt(LocalDateTime.of(2026, 3, 11, 12, 15));
+        run.setCompletedAt(LocalDateTime.of(2026, 3, 11, 12, 18));
+        when(executionRunService.listBySpace(
+                11L,
+                "RUN-2",
+                "COMPLETED",
+                "oa.leave.apply",
+                "u2002",
+                "THREAD-9",
+                startedAfter,
+                startedBefore,
+                5))
                 .thenReturn(List.of(run));
 
         List<ExecutionHistoryRunSummaryView> views = service.listRuns(
@@ -52,11 +63,14 @@ class ExecutionHistoryServiceTest {
                 "oa.leave.apply",
                 "u2002",
                 "THREAD-9",
+                startedAfter,
+                startedBefore,
                 5);
 
         assertEquals(1, views.size());
         assertEquals("RUN-2", views.get(0).runId());
         assertEquals("u2002", views.get(0).platformPrincipalId());
         assertEquals("THREAD-9", views.get(0).threadId());
+        assertEquals(LocalDateTime.of(2026, 3, 11, 12, 15), views.get(0).startedAt());
     }
 }

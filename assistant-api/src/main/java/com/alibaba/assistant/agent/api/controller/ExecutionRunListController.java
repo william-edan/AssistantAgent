@@ -24,6 +24,7 @@ import com.alibaba.assistant.agent.controlplane.space.PlatformSpace;
 import com.alibaba.assistant.agent.controlplane.space.PlatformSpaceService;
 import com.alibaba.assistant.agent.execution.persistence.ExecutionHistoryService;
 import org.springframework.context.annotation.Profile;
+import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
@@ -36,6 +37,7 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.security.Principal;
+import java.time.LocalDateTime;
 
 /**
  * Control-plane API for execution run list views.
@@ -69,6 +71,8 @@ public class ExecutionRunListController {
             @RequestParam(required = false) String artifactCode,
             @RequestParam(required = false) String platformPrincipalId,
             @RequestParam(required = false) String threadId,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime startedAfter,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime startedBefore,
             @RequestParam(required = false) Integer limit,
             Principal principal) {
         AuthenticatedUserContext authenticatedUser = requireAuthenticatedUser(principal);
@@ -86,6 +90,8 @@ public class ExecutionRunListController {
                                 normalizeOptional(artifactCode),
                                 normalizeOptional(platformPrincipalId),
                                 normalizeOptional(threadId),
+                                startedAfter,
+                                startedBefore,
                                 limit)
                         .stream()
                         .map(run -> ExecutionRunSummaryData.from(run, space.getSpaceCode(), normalizedEnvironment))

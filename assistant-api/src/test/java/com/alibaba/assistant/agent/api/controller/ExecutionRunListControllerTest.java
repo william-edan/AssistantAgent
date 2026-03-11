@@ -75,7 +75,7 @@ class ExecutionRunListControllerTest {
         when(platformSpaceService.findActiveByCode("finance-space", "test")).thenReturn(java.util.Optional.of(space));
         when(authorizationService.canViewSpaceCatalog(any(AuthenticatedUserContext.class), eq("finance-space"), eq("test")))
                 .thenReturn(true);
-        when(executionHistoryService.listRuns(11L, null, "WAITING_APPROVAL", "oa.leave.apply", null, null, 10))
+        when(executionHistoryService.listRuns(11L, null, "WAITING_APPROVAL", "oa.leave.apply", null, null, null, null, 10))
                 .thenReturn(List.of(new ExecutionHistoryRunSummaryView(
                         "RUN-1",
                         "oa.leave.apply",
@@ -105,15 +105,26 @@ class ExecutionRunListControllerTest {
     }
 
     @Test
-    void shouldPassIdentityAndThreadFiltersToExecutionRunList() throws Exception {
+    void shouldPassIdentityThreadAndTimeFiltersToExecutionRunList() throws Exception {
         PlatformSpace space = new PlatformSpace();
         space.setId(11L);
         space.setSpaceCode("finance-space");
         space.setEnvironment("prod");
+        LocalDateTime startedAfter = LocalDateTime.of(2026, 3, 11, 12, 0);
+        LocalDateTime startedBefore = LocalDateTime.of(2026, 3, 11, 13, 0);
         when(platformSpaceService.findActiveByCode("finance-space", "prod")).thenReturn(java.util.Optional.of(space));
         when(authorizationService.canViewSpaceCatalog(any(AuthenticatedUserContext.class), eq("finance-space"), eq("prod")))
                 .thenReturn(true);
-        when(executionHistoryService.listRuns(11L, "RUN-2", "COMPLETED", "oa.leave.apply", "u2002", "THREAD-9", 5))
+        when(executionHistoryService.listRuns(
+                11L,
+                "RUN-2",
+                "COMPLETED",
+                "oa.leave.apply",
+                "u2002",
+                "THREAD-9",
+                startedAfter,
+                startedBefore,
+                5))
                 .thenReturn(List.of(new ExecutionHistoryRunSummaryView(
                         "RUN-2",
                         "oa.leave.apply",
@@ -124,8 +135,8 @@ class ExecutionRunListControllerTest {
                         "COMPLETED",
                         null,
                         null,
-                        LocalDateTime.of(2026, 3, 11, 12, 0),
-                        LocalDateTime.of(2026, 3, 11, 12, 3))));
+                        LocalDateTime.of(2026, 3, 11, 12, 15),
+                        LocalDateTime.of(2026, 3, 11, 12, 18))));
 
         mockMvc.perform(get("/api/controlplane/spaces/finance-space/execution-runs")
                         .param("runId", "RUN-2")
@@ -133,6 +144,8 @@ class ExecutionRunListControllerTest {
                         .param("artifactCode", "oa.leave.apply")
                         .param("platformPrincipalId", "u2002")
                         .param("threadId", "THREAD-9")
+                        .param("startedAfter", "2026-03-11T12:00:00")
+                        .param("startedBefore", "2026-03-11T13:00:00")
                         .param("limit", "5")
                         .principal(authenticatedPrincipal()))
                 .andExpect(status().isOk())
@@ -155,7 +168,7 @@ class ExecutionRunListControllerTest {
                         .principal(authenticatedPrincipal()))
                 .andExpect(status().isForbidden());
 
-        verify(executionHistoryService, never()).listRuns(11L, null, null, null, null, null, 20);
+        verify(executionHistoryService, never()).listRuns(11L, null, null, null, null, null, null, null, 20);
     }
 
     private Principal authenticatedPrincipal() {
