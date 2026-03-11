@@ -21,6 +21,7 @@ import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
+import java.util.List;
 import java.util.Optional;
 
 @Service
@@ -40,6 +41,19 @@ public class InteractionSpecService extends ServiceImpl<InteractionSpecMapper, I
 		query.orderByDesc(InteractionSpec::getVersion);
 		query.orderByDesc(InteractionSpec::getId);
 		return Optional.ofNullable(getOne(query, false));
+	}
+
+	public List<InteractionSpec> listEnabledBySpace(Long spaceId) {
+		if (spaceId == null) {
+			return List.of();
+		}
+		LambdaQueryWrapper<InteractionSpec> query = new LambdaQueryWrapper<>();
+		query.eq(InteractionSpec::getSpaceId, spaceId);
+		query.eq(InteractionSpec::getStatus, STATUS_ENABLED);
+		query.orderByAsc(InteractionSpec::getInteractionCode);
+		query.orderByDesc(InteractionSpec::getVersion);
+		query.orderByDesc(InteractionSpec::getId);
+		return list(query);
 	}
 
 }
