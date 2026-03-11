@@ -15,8 +15,12 @@
  */
 package com.alibaba.assistant.agent.api.controller;
 
+import com.alibaba.assistant.agent.api.controlplane.ControlPlaneExecutionOverview;
+import com.alibaba.assistant.agent.api.controlplane.ControlPlaneExecutionOverviewService;
 import com.alibaba.assistant.agent.api.controller.dto.ControlPlaneCatalogOverviewData;
 import com.alibaba.assistant.agent.api.controller.dto.ControlPlaneCatalogOverviewResponse;
+import com.alibaba.assistant.agent.api.controller.dto.ControlPlaneExecutionOverviewData;
+import com.alibaba.assistant.agent.api.controller.dto.ControlPlaneExecutionOverviewResponse;
 import com.alibaba.assistant.agent.api.controller.dto.ControlPlaneSpaceListData;
 import com.alibaba.assistant.agent.api.controller.dto.ControlPlaneSpaceListResponse;
 import com.alibaba.assistant.agent.api.security.AuthenticatedUserContext;
@@ -51,12 +55,16 @@ public class ControlPlaneCatalogController {
 
     private final ControlPlaneCatalogService controlPlaneCatalogService;
 
+    private final ControlPlaneExecutionOverviewService controlPlaneExecutionOverviewService;
+
     private final MigrationControlPlaneAuthorizationService authorizationService;
 
     public ControlPlaneCatalogController(
             ControlPlaneCatalogService controlPlaneCatalogService,
+            ControlPlaneExecutionOverviewService controlPlaneExecutionOverviewService,
             MigrationControlPlaneAuthorizationService authorizationService) {
         this.controlPlaneCatalogService = controlPlaneCatalogService;
+        this.controlPlaneExecutionOverviewService = controlPlaneExecutionOverviewService;
         this.authorizationService = authorizationService;
     }
 
@@ -90,6 +98,26 @@ public class ControlPlaneCatalogController {
         return ResponseEntity.ok(ControlPlaneCatalogOverviewResponse.ok(ControlPlaneCatalogOverviewData.from(overview)));
     }
 
+    @GetMapping("/spaces/{spaceCode}/execution-overview")
+    public ResponseEntity<ControlPlaneExecutionOverviewResponse> getExecutionOverview(
+            @PathVariable String spaceCode,
+            @RequestParam(value = "environment", required = false) String environment,
+            @RequestParam(value = "recentRunLimit", required = false) Integer recentRunLimit,
+            @RequestParam(value = "pendingApprovalLimit", required = false) Integer pendingApprovalLimit,
+            Principal principal) {
+        String normalizedEnvironment = normalizeEnvironment(environment);
+        AuthenticatedUserContext authenticatedUser = requireAuthenticatedUser(principal);
+        requireCatalogAccess(authenticatedUser, spaceCode, normalizedEnvironment);
+        boolean approvalAccess = authorizationService.canManageSpaceExecutionApprovals(
+                authenticatedUser,
+                spaceCode,
+                normalizedEnvironment);
+        ControlPlaneExecutionOverview overview = controlPlaneExecutionOverviewService
+                .getOverview(spaceCode, normalizedEnvironment, recentRunLimit, pendingApprovalLimit, approvalAccess)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "space_execution_overview_not_found"));
+        return ResponseEntity.ok(ControlPlaneExecutionOverviewResponse.ok(ControlPlaneExecutionOverviewData.from(overview)));
+    }
+
     private AuthenticatedUserContext requireAuthenticatedUser(Principal principal) {
         if (principal instanceof Authentication authentication
                 && authentication.getPrincipal() instanceof AuthenticatedUserContext authenticatedUser) {
@@ -108,4 +136,3 @@ public class ControlPlaneCatalogController {
         return StringUtils.hasText(environment) ? environment.trim() : DEFAULT_ENVIRONMENT;
     }
 }
-

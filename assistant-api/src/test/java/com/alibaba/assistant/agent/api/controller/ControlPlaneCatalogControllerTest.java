@@ -15,6 +15,8 @@
  */
 package com.alibaba.assistant.agent.api.controller;
 
+import com.alibaba.assistant.agent.api.controlplane.ControlPlaneExecutionOverview;
+import com.alibaba.assistant.agent.api.controlplane.ControlPlaneExecutionOverviewService;
 import com.alibaba.assistant.agent.api.security.AuthenticatedUserContext;
 import com.alibaba.assistant.agent.api.security.MigrationControlPlaneAuthorizationService;
 import com.alibaba.assistant.agent.controlplane.catalog.ControlPlaneCatalogOverview;
@@ -55,12 +57,16 @@ class ControlPlaneCatalogControllerTest {
     private ControlPlaneCatalogService controlPlaneCatalogService;
 
     @Mock
+    private ControlPlaneExecutionOverviewService controlPlaneExecutionOverviewService;
+
+    @Mock
     private MigrationControlPlaneAuthorizationService authorizationService;
 
     @BeforeEach
     void setUp() {
         ControlPlaneCatalogController controller = new ControlPlaneCatalogController(
                 controlPlaneCatalogService,
+                controlPlaneExecutionOverviewService,
                 authorizationService);
         mockMvc = MockMvcBuilders.standaloneSetup(controller).build();
     }
@@ -122,6 +128,53 @@ class ControlPlaneCatalogControllerTest {
                 .andExpect(status().isForbidden());
 
         verify(controlPlaneCatalogService, never()).getOverview("finance-space", "prod", null);
+    }
+
+    @Test
+    void shouldGetExecutionOverviewWhenApprovalAccessGranted() throws Exception {
+        when(authorizationService.canViewSpaceCatalog(any(AuthenticatedUserContext.class), eq("finance-space"), eq("prod")))
+                .thenReturn(true);
+        when(authorizationService.canManageSpaceExecutionApprovals(any(AuthenticatedUserContext.class), eq("finance-space"), eq("prod")))
+                .thenReturn(true);
+        when(controlPlaneExecutionOverviewService.getOverview("finance-space", "prod", 3, 2, true))
+                .thenReturn(Optional.of(new ControlPlaneExecutionOverview(
+                        "finance-space",
+                        "prod",
+                        new ControlPlaneExecutionOverview.Summary(1, 1, true),
+                        List.of(),
+                        List.of())));
+
+        mockMvc.perform(get("/api/controlplane/spaces/finance-space/execution-overview")
+                        .param("recentRunLimit", "3")
+                        .param("pendingApprovalLimit", "2")
+                        .principal(authenticatedPrincipal()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(0))
+                .andExpect(jsonPath("$.data.spaceCode").value("finance-space"))
+                .andExpect(jsonPath("$.data.summary.recentRunCount").value(1))
+                .andExpect(jsonPath("$.data.summary.pendingApprovalCount").value(1))
+                .andExpect(jsonPath("$.data.summary.approvalAccess").value(true));
+    }
+
+    @Test
+    void shouldReturnExecutionOverviewWithoutPendingApprovalsWhenApprovalAccessDenied() throws Exception {
+        when(authorizationService.canViewSpaceCatalog(any(AuthenticatedUserContext.class), eq("finance-space"), eq("prod")))
+                .thenReturn(true);
+        when(authorizationService.canManageSpaceExecutionApprovals(any(AuthenticatedUserContext.class), eq("finance-space"), eq("prod")))
+                .thenReturn(false);
+        when(controlPlaneExecutionOverviewService.getOverview("finance-space", "prod", null, null, false))
+                .thenReturn(Optional.of(new ControlPlaneExecutionOverview(
+                        "finance-space",
+                        "prod",
+                        new ControlPlaneExecutionOverview.Summary(0, 0, false),
+                        List.of(),
+                        List.of())));
+
+        mockMvc.perform(get("/api/controlplane/spaces/finance-space/execution-overview")
+                        .principal(authenticatedPrincipal()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.summary.approvalAccess").value(false))
+                .andExpect(jsonPath("$.data.pendingApprovals.length()").value(0));
     }
 
     private Principal authenticatedPrincipal() {
