@@ -21,6 +21,7 @@ import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
+import java.util.List;
 import java.util.Optional;
 
 @Service
@@ -39,6 +40,18 @@ public class AgentAppService extends ServiceImpl<AgentAppMapper, AgentApp> {
 		query.eq(AgentApp::getStatus, STATUS_ACTIVE);
 		query.orderByDesc(AgentApp::getId);
 		return Optional.ofNullable(getOne(query, false));
+	}
+
+	public List<AgentApp> listActiveBySpace(Long spaceId) {
+		if (spaceId == null) {
+			return List.of();
+		}
+		LambdaQueryWrapper<AgentApp> query = new LambdaQueryWrapper<>();
+		query.eq(AgentApp::getSpaceId, spaceId);
+		query.eq(AgentApp::getStatus, STATUS_ACTIVE);
+		query.orderByAsc(AgentApp::getAgentAppCode);
+		query.orderByDesc(AgentApp::getId);
+		return list(query);
 	}
 
 }
