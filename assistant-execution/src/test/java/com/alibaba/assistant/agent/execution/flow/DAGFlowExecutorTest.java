@@ -270,6 +270,70 @@ class DAGFlowExecutorTest {
         assertEquals("/merge", second.getPath());
     }
 
+    @Test
+    void shouldIgnoreOrphanStepThatIsNotReachableFromEntry() throws Exception {
+        mockWebServer.enqueue(jsonResponse("{\"code\":0,\"msg\":\"create\",\"data\":{}}"));
+        mockWebServer.enqueue(jsonResponse("{\"code\":0,\"msg\":\"orphan\",\"data\":{}}"));
+
+        FlowExecutionResult result = dagFlowExecutor.execute(buildFlowWithOrphan(), createFlowContext(baseInputs()));
+
+        assertTrue(result.isSuccess());
+        assertEquals(StepStatus.COMPLETED, result.getStepStatuses().get("create"));
+        assertFalse(result.getStepStatuses().containsKey("orphan"));
+        assertEquals(1, mockWebServer.getRequestCount());
+
+        RecordedRequest first = mockWebServer.takeRequest(1, TimeUnit.SECONDS);
+        assertNotNull(first);
+        assertEquals("/create", first.getPath());
+    }
+
+    @Test
+    void shouldExecuteDependencyChainWhenEntryPointsAtTerminalStep() throws Exception {
+        mockWebServer.enqueue(jsonResponse("{\"code\":0,\"msg\":\"create\",\"data\":{}}"));
+        mockWebServer.enqueue(jsonResponse("{\"code\":0,\"msg\":\"review\",\"data\":{}}"));
+        mockWebServer.enqueue(jsonResponse("{\"code\":0,\"msg\":\"notify\",\"data\":{}}"));
+
+        FlowExecutionResult result = dagFlowExecutor.execute(buildTerminalEntryDependencyFlow(), createFlowContext(baseInputs()));
+
+        assertTrue(result.isSuccess());
+        assertEquals(StepStatus.COMPLETED, result.getStepStatuses().get("create"));
+        assertEquals(StepStatus.COMPLETED, result.getStepStatuses().get("review"));
+        assertEquals(StepStatus.COMPLETED, result.getStepStatuses().get("notify"));
+        assertEquals(3, mockWebServer.getRequestCount());
+    }
+
+    private FlowDefinition buildTerminalEntryDependencyFlow() {
+        StepDefinition create = httpStep("create", "/create");
+        StepDefinition review = httpStep("review", "/review");
+        review.setDependsOn(List.of("create"));
+        StepDefinition notify = httpStep("notify", "/notify");
+        notify.setDependsOn(List.of("review"));
+
+        FlowDefinition flow = new FlowDefinition();
+        flow.setVersion("2.0");
+        flow.setEntry(List.of("notify"));
+        flow.setTerminal(List.of("notify"));
+        flow.setSteps(Map.of(
+                "notify", notify,
+                "review", review,
+                "create", create));
+        return flow;
+    }
+
+    private FlowDefinition buildFlowWithOrphan() {
+        StepDefinition create = httpStep("create", "/create");
+        StepDefinition orphan = httpStep("orphan", "/orphan");
+
+        FlowDefinition flow = new FlowDefinition();
+        flow.setVersion("2.0");
+        flow.setEntry(List.of("create"));
+        flow.setTerminal(List.of("create"));
+        flow.setSteps(Map.of(
+                "create", create,
+                "orphan", orphan));
+        return flow;
+    }
+
     private FlowDefinition buildDependencyFlow() {
         StepDefinition create = httpStep("create", "/create");
         StepDefinition review = httpStep("review", "/review");

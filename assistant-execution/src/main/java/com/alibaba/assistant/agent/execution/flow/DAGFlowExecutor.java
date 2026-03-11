@@ -179,16 +179,79 @@ public class DAGFlowExecutor {
 	}
 
 	private List<String> orderedCandidates(FlowDefinition flow) {
+		if (flow == null || flow.getSteps() == null || flow.getSteps().isEmpty()) {
+			return List.of();
+		}
+		Map<String, StepDefinition> steps = flow.getSteps();
+		LinkedHashSet<String> reachable = reachableStepIds(flow, steps);
 		LinkedHashSet<String> ordered = new LinkedHashSet<>();
 		if (flow.getEntry() != null) {
-			ordered.addAll(flow.getEntry());
+			for (String stepId : flow.getEntry()) {
+				if (reachable.contains(stepId)) {
+					ordered.add(stepId);
+				}
+			}
 		}
-		if (flow.getSteps() != null) {
-			ordered.addAll(flow.getSteps().keySet());
+		for (String stepId : steps.keySet()) {
+			if (reachable.contains(stepId)) {
+				ordered.add(stepId);
+			}
 		}
 		return new ArrayList<>(ordered);
 	}
 
+	private LinkedHashSet<String> reachableStepIds(FlowDefinition flow, Map<String, StepDefinition> steps) {
+		if (flow.getEntry() == null || flow.getEntry().isEmpty()) {
+			return new LinkedHashSet<>(steps.keySet());
+		}
+		Map<String, List<String>> dependents = dependentIndex(steps);
+		LinkedHashSet<String> reachable = new LinkedHashSet<>();
+		List<String> frontier = new ArrayList<>(flow.getEntry());
+		for (int index = 0; index < frontier.size(); index++) {
+			String stepId = frontier.get(index);
+			if (!steps.containsKey(stepId) || !reachable.add(stepId)) {
+				continue;
+			}
+			StepDefinition step = steps.get(stepId);
+			if (step.getDependsOn() != null) {
+				for (String dependency : step.getDependsOn()) {
+					if (steps.containsKey(dependency)) {
+						frontier.add(dependency);
+					}
+				}
+			}
+			if (step.getNext() != null) {
+				for (String nextStep : step.getNext()) {
+					if (steps.containsKey(nextStep)) {
+						frontier.add(nextStep);
+					}
+				}
+			}
+			for (String dependent : dependents.getOrDefault(stepId, List.of())) {
+				frontier.add(dependent);
+			}
+		}
+		return reachable;
+	}
+
+	private Map<String, List<String>> dependentIndex(Map<String, StepDefinition> steps) {
+		Map<String, List<String>> dependents = new LinkedHashMap<>();
+		for (String stepId : steps.keySet()) {
+			dependents.put(stepId, new ArrayList<>());
+		}
+		for (Map.Entry<String, StepDefinition> entry : steps.entrySet()) {
+			StepDefinition step = entry.getValue();
+			if (step == null || step.getDependsOn() == null) {
+				continue;
+			}
+			for (String dependency : step.getDependsOn()) {
+				if (steps.containsKey(dependency)) {
+					dependents.computeIfAbsent(dependency, ignored -> new ArrayList<>()).add(entry.getKey());
+				}
+			}
+		}
+		return dependents;
+	}
 	private boolean isStepReady(StepDefinition step, Map<String, StepStatus> stepStatuses) {
 		List<String> dependsOn = step.getDependsOn();
 		if (dependsOn == null || dependsOn.isEmpty()) {
