@@ -107,7 +107,7 @@ public class ExecutionRuntimePersistenceRecorder {
         run.setPausedStepId(normalize(flowResult.getPausedStepId()));
         run.setApprovalRequestId(normalize(flowResult.getApprovalRequestId()));
         run.setContextSnapshotJson(serializeSnapshot(flowContext, flowResult));
-        run.setStartedAt(resolveRunTimestamp(executionEvents, ExecutionEventType.RUN_STARTED, ExecutionEventType.RUN_RESUMED));
+        run.setStartedAt(resolveRunStartedAt(run.getStartedAt(), executionEvents));
         run.setCompletedAt(resolveRunCompletedAt(executionEvents, flowResult));
         saveOrUpdateRun(run);
     }
@@ -244,6 +244,17 @@ public class ExecutionRuntimePersistenceRecorder {
             }
         }
         return null;
+    }
+
+    private LocalDateTime resolveRunStartedAt(LocalDateTime existingStartedAt, List<ExecutionEvent> executionEvents) {
+        LocalDateTime startedAt = resolveRunTimestamp(executionEvents, ExecutionEventType.RUN_STARTED);
+        if (startedAt != null) {
+            return startedAt;
+        }
+        if (existingStartedAt != null) {
+            return existingStartedAt;
+        }
+        return resolveRunTimestamp(executionEvents, ExecutionEventType.RUN_RESUMED);
     }
 
     private LocalDateTime resolveRunCompletedAt(List<ExecutionEvent> executionEvents, FlowExecutionResult flowResult) {

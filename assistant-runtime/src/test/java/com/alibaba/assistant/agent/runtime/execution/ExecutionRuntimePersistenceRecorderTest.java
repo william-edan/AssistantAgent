@@ -35,6 +35,7 @@ import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
 import java.time.Instant;
+import java.time.LocalDateTime;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -156,6 +157,46 @@ class ExecutionRuntimePersistenceRecorderTest {
         assertEquals("RUN-1:submit_approval", approvalCaptor.getValue().getRequestId());
         assertEquals("WAITING_APPROVAL", approvalCaptor.getValue().getStatus());
         assertEquals("submit_approval", approvalCaptor.getValue().getStepId());
+    }
+    @Test
+    void shouldPreserveOriginalRunStartWhenPersistingResumedExecution() {
+        ExecutionRunService executionRunService = mock(ExecutionRunService.class);
+        ExecutionStepService executionStepService = mock(ExecutionStepService.class);
+        ApprovalRequestService approvalRequestService = mock(ApprovalRequestService.class);
+        AuditEventService auditEventService = mock(AuditEventService.class);
+        ExecutionRuntimePersistenceRecorder recorder = new ExecutionRuntimePersistenceRecorder(
+                executionRunService,
+                executionStepService,
+                approvalRequestService,
+                auditEventService,
+                new ObjectMapper());
+
+        LocalDateTime originalStartedAt = LocalDateTime.of(2026, 3, 10, 18, 0);
+        ExecutionRun existingRun = new ExecutionRun();
+        existingRun.setId(10L);
+        existingRun.setRunId("RUN-1");
+        existingRun.setStatus("WAITING_APPROVAL");
+        existingRun.setPausedStepId("submit_approval");
+        existingRun.setApprovalRequestId("RUN-1:submit_approval");
+        existingRun.setStartedAt(originalStartedAt);
+        existingRun.setContextSnapshotJson("{\"resume\":true}");
+        ExecutionStep existingStep = new ExecutionStep();
+        existingStep.setId(20L);
+        existingStep.setRunId("RUN-1");
+        existingStep.setStepId("submit_approval");
+        existingStep.setStatus("WAITING_APPROVAL");
+        when(executionRunService.findLatestByRunId("RUN-1")).thenReturn(Optional.of(existingRun));
+        when(executionStepService.findByRunIdAndStepId("RUN-1", "submit_approval")).thenReturn(Optional.of(existingStep));
+
+        recorder.record(descriptor(), flowContext(), resumedResult(), resumedEvents());
+
+        ArgumentCaptor<ExecutionRun> runCaptor = ArgumentCaptor.forClass(ExecutionRun.class);
+        verify(executionRunService).updateById(runCaptor.capture());
+        assertEquals(originalStartedAt, runCaptor.getValue().getStartedAt());
+        assertEquals("COMPLETED", runCaptor.getValue().getStatus());
+        assertEquals(null, runCaptor.getValue().getPausedStepId());
+        assertEquals(null, runCaptor.getValue().getApprovalRequestId());
+        assertEquals(null, runCaptor.getValue().getContextSnapshotJson());
     }
 
     private PublishedToolDescriptor descriptor() {
@@ -346,5 +387,31 @@ class ExecutionRuntimePersistenceRecorderTest {
                         ExecutionEventType.STEP_FAILED, ExecutionLifecycleStatus.FAILED, base.plusSeconds(2), Map.of("stepName", "提交审批", "error", "submit failed")),
                 new ExecutionEvent("RUN-1", "oa.leave.apply", "WORKFLOW", null, 4L,
                         ExecutionEventType.RUN_FAILED, ExecutionLifecycleStatus.FAILED, base.plusSeconds(3), Map.of("error", "submit failed")));
+    }
+    private FlowExecutionResult resumedResult() {
+        FlowExecutionResult result = new FlowExecutionResult();
+        result.setSuccess(true);
+        result.setLifecycleStatus("COMPLETED");
+        LinkedHashMap<String, StepStatus> stepStatuses = new LinkedHashMap<>();
+        stepStatuses.put("submit_approval", StepStatus.COMPLETED);
+        result.setStepStatuses(stepStatuses);
+        LinkedHashMap<String, StepResult> stepResults = new LinkedHashMap<>();
+        stepResults.put("submit_approval", StepResult.success(Map.of("message", "approved")));
+        result.setStepResults(stepResults);
+        result.setFinalOutputs(Map.of("message", "approved"));
+        return result;
+    }
+
+    private List<ExecutionEvent> resumedEvents() {
+        Instant base = Instant.parse("2026-03-10T10:10:00Z");
+        return List.of(
+                new ExecutionEvent("RUN-1", "oa.leave.apply", "WORKFLOW", null, 1L,
+                        ExecutionEventType.RUN_RESUMED, ExecutionLifecycleStatus.RUNNING, base, Map.of("source", "artifact-runtime")),
+                new ExecutionEvent("RUN-1", "oa.leave.apply", "WORKFLOW", "submit_approval", 2L,
+                        ExecutionEventType.STEP_STARTED, ExecutionLifecycleStatus.RUNNING, base.plusSeconds(1), Map.of("stepName", "提交审批")),
+                new ExecutionEvent("RUN-1", "oa.leave.apply", "WORKFLOW", "submit_approval", 3L,
+                        ExecutionEventType.STEP_COMPLETED, ExecutionLifecycleStatus.COMPLETED, base.plusSeconds(2), Map.of("stepName", "提交审批")),
+                new ExecutionEvent("RUN-1", "oa.leave.apply", "WORKFLOW", null, 4L,
+                        ExecutionEventType.RUN_COMPLETED, ExecutionLifecycleStatus.COMPLETED, base.plusSeconds(3), Map.of("finalOutputs", Map.of("message", "approved"))));
     }
 }
