@@ -96,6 +96,16 @@ public class MigrationControlPlaneAuthorizationService {
     }
 
     /**
+     * Whether the authenticated user can manage approval queue operations in the target space.
+     */
+    public boolean canManageSpaceExecutionApprovals(
+            AuthenticatedUserContext authenticatedUser,
+            String spaceCode,
+            String environment) {
+        return canViewSpaceCatalog(authenticatedUser, spaceCode, environment);
+    }
+
+    /**
      * Whether the authenticated user can manage local-user control-plane grants in the target space.
      */
     public boolean canManageLocalUserControlPlaneAccessPolicy(
@@ -147,3 +157,4 @@ public class MigrationControlPlaneAuthorizationService {
         return StringUtils.hasText(value) ? value.trim() : "";
     }
 }
+
