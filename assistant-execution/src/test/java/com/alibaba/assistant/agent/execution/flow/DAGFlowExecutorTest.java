@@ -302,6 +302,23 @@ class DAGFlowExecutorTest {
         assertEquals(3, mockWebServer.getRequestCount());
     }
 
+    @Test
+    void shouldNotExecuteSiblingDependentBranchWhenEntryTargetsTerminalPath() throws Exception {
+        mockWebServer.enqueue(jsonResponse("{\"code\":0,\"msg\":\"create\",\"data\":{}}"));
+        mockWebServer.enqueue(jsonResponse("{\"code\":0,\"msg\":\"review\",\"data\":{}}"));
+        mockWebServer.enqueue(jsonResponse("{\"code\":0,\"msg\":\"notify\",\"data\":{}}"));
+        mockWebServer.enqueue(jsonResponse("{\"code\":0,\"msg\":\"audit\",\"data\":{}}"));
+
+        FlowExecutionResult result = dagFlowExecutor.execute(buildTerminalEntryWithSiblingDependentFlow(), createFlowContext(baseInputs()));
+
+        assertTrue(result.isSuccess());
+        assertEquals(StepStatus.COMPLETED, result.getStepStatuses().get("create"));
+        assertEquals(StepStatus.COMPLETED, result.getStepStatuses().get("review"));
+        assertEquals(StepStatus.COMPLETED, result.getStepStatuses().get("notify"));
+        assertFalse(result.getStepStatuses().containsKey("audit"));
+        assertEquals(3, mockWebServer.getRequestCount());
+    }
+
     private FlowDefinition buildTerminalEntryDependencyFlow() {
         StepDefinition create = httpStep("create", "/create");
         StepDefinition review = httpStep("review", "/review");
@@ -331,6 +348,27 @@ class DAGFlowExecutorTest {
         flow.setSteps(Map.of(
                 "create", create,
                 "orphan", orphan));
+        return flow;
+    }
+
+    private FlowDefinition buildTerminalEntryWithSiblingDependentFlow() {
+        StepDefinition create = httpStep("create", "/create");
+        StepDefinition review = httpStep("review", "/review");
+        review.setDependsOn(List.of("create"));
+        StepDefinition notify = httpStep("notify", "/notify");
+        notify.setDependsOn(List.of("review"));
+        StepDefinition audit = httpStep("audit", "/audit");
+        audit.setDependsOn(List.of("create"));
+
+        FlowDefinition flow = new FlowDefinition();
+        flow.setVersion("2.0");
+        flow.setEntry(List.of("notify"));
+        flow.setTerminal(List.of("notify"));
+        flow.setSteps(Map.of(
+                "notify", notify,
+                "review", review,
+                "create", create,
+                "audit", audit));
         return flow;
     }
 

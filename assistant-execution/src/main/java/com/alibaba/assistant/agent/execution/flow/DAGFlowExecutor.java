@@ -204,6 +204,11 @@ public class DAGFlowExecutor {
 		if (flow.getEntry() == null || flow.getEntry().isEmpty()) {
 			return new LinkedHashSet<>(steps.keySet());
 		}
+		LinkedHashSet<String> forwardReachable = forwardReachableStepIds(flow, steps);
+		return includeDependencies(forwardReachable, steps);
+	}
+
+	private LinkedHashSet<String> forwardReachableStepIds(FlowDefinition flow, Map<String, StepDefinition> steps) {
 		Map<String, List<String>> dependents = dependentIndex(steps);
 		LinkedHashSet<String> reachable = new LinkedHashSet<>();
 		List<String> frontier = new ArrayList<>(flow.getEntry());
@@ -213,13 +218,6 @@ public class DAGFlowExecutor {
 				continue;
 			}
 			StepDefinition step = steps.get(stepId);
-			if (step.getDependsOn() != null) {
-				for (String dependency : step.getDependsOn()) {
-					if (steps.containsKey(dependency)) {
-						frontier.add(dependency);
-					}
-				}
-			}
 			if (step.getNext() != null) {
 				for (String nextStep : step.getNext()) {
 					if (steps.containsKey(nextStep)) {
@@ -229,6 +227,27 @@ public class DAGFlowExecutor {
 			}
 			for (String dependent : dependents.getOrDefault(stepId, List.of())) {
 				frontier.add(dependent);
+			}
+		}
+		return reachable;
+	}
+
+	private LinkedHashSet<String> includeDependencies(Set<String> seeds, Map<String, StepDefinition> steps) {
+		LinkedHashSet<String> reachable = new LinkedHashSet<>();
+		List<String> frontier = new ArrayList<>(seeds);
+		for (int index = 0; index < frontier.size(); index++) {
+			String stepId = frontier.get(index);
+			if (!steps.containsKey(stepId) || !reachable.add(stepId)) {
+				continue;
+			}
+			StepDefinition step = steps.get(stepId);
+			if (step.getDependsOn() == null) {
+				continue;
+			}
+			for (String dependency : step.getDependsOn()) {
+				if (steps.containsKey(dependency)) {
+					frontier.add(dependency);
+				}
 			}
 		}
 		return reachable;
