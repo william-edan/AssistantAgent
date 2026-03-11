@@ -15,6 +15,8 @@
  */
 package com.alibaba.assistant.agent.runtime.execution;
 
+import org.springframework.util.StringUtils;
+
 import java.util.LinkedHashMap;
 import java.util.Map;
 
@@ -22,11 +24,13 @@ import java.util.Map;
  * Serializable runtime snapshot used to resume paused artifact executions.
  */
 public record ExecutionContextSnapshot(
+        String systemCode,
         Map<String, Object> initialInputs,
         Map<String, Map<String, Object>> stepOutputs,
         Map<String, String> stepStatuses) {
 
     public ExecutionContextSnapshot {
+        systemCode = StringUtils.hasText(systemCode) ? systemCode.trim() : null;
         initialInputs = initialInputs != null ? Map.copyOf(new LinkedHashMap<>(initialInputs)) : Map.of();
         if (stepOutputs != null) {
             Map<String, Map<String, Object>> normalized = new LinkedHashMap<>();

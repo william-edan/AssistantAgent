@@ -270,6 +270,8 @@ class ExecutionApprovalServiceTest {
         run.setSpaceId(11L);
         run.setStatus("WAITING_APPROVAL");
         run.setPausedStepId("submit_approval");
+        run.setApprovalRequestId("REQ-4");
+        run.setContextSnapshotJson("{\"resume\":true}");
         run.setPlatformPrincipalId("u1002");
         ApprovalRequest request = new ApprovalRequest();
         request.setId(88L);
@@ -294,6 +296,10 @@ class ExecutionApprovalServiceTest {
         assertTrue(decision.isPresent());
         assertEquals("u3001", request.getApproverPrincipalId());
         assertEquals("u3001", decision.get().approverPrincipalId());
+        assertEquals("CANCELLED", run.getStatus());
+        assertEquals(null, run.getPausedStepId());
+        assertEquals(null, run.getApprovalRequestId());
+        assertEquals(null, run.getContextSnapshotJson());
         ArgumentCaptor<AuditEvent> captor = ArgumentCaptor.forClass(AuditEvent.class);
         verify(auditEventService).save(captor.capture());
         AuditEvent event = captor.getValue();

@@ -138,7 +138,7 @@ public class ExecutionRuntimePersistenceRecorder {
                 step.setAuthProfileCode(resolveAuthProfileCode(stepBinding));
             }
             step.setStatus(aggregate.status);
-            step.setStartedAt(aggregate.startedAt);
+            step.setStartedAt(resolveStepStartedAt(step.getStartedAt(), aggregate.startedAt));
             step.setCompletedAt(aggregate.completedAt);
             step.setErrorMessage(aggregate.errorMessage);
             saveOrUpdateStep(step);
@@ -299,6 +299,10 @@ public class ExecutionRuntimePersistenceRecorder {
         }
     }
 
+    private LocalDateTime resolveStepStartedAt(LocalDateTime existingStartedAt, LocalDateTime aggregateStartedAt) {
+        return existingStartedAt != null ? existingStartedAt : aggregateStartedAt;
+    }
+
     private String resolveAuthProfileCode(RuntimeArtifact.StepBinding stepBinding) {
         if (stepBinding == null) {
             return null;
@@ -325,6 +329,7 @@ public class ExecutionRuntimePersistenceRecorder {
             }
         }
         ExecutionContextSnapshot snapshot = new ExecutionContextSnapshot(
+                flowContext.getSystemCode(),
                 flowContext.getInitialInputs(),
                 flowContext.getStepOutputsSnapshot(),
                 stepStatuses);

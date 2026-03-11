@@ -212,6 +212,9 @@ public class ExecutionApprovalService {
         ExecutionRun run = resolution.run();
         run.setStatus(RUN_STATUS_CANCELLED);
         run.setCompletedAt(now);
+        run.setPausedStepId(null);
+        run.setApprovalRequestId(null);
+        run.setContextSnapshotJson(null);
         executionRunService.updateById(run);
 
         Optional<ExecutionStep> stepOptional = executionStepService.findByRunIdAndStepId(run.getRunId(), request.getStepId());

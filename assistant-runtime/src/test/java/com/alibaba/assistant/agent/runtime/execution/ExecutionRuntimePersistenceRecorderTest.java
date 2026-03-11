@@ -36,6 +36,7 @@ import org.mockito.ArgumentCaptor;
 
 import java.time.Instant;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -151,6 +152,7 @@ class ExecutionRuntimePersistenceRecorderTest {
         assertEquals("submit_approval", runCaptor.getValue().getPausedStepId());
         assertEquals("RUN-1:submit_approval", runCaptor.getValue().getApprovalRequestId());
         assertTrue(runCaptor.getValue().getContextSnapshotJson().contains("create_leave"));
+        assertTrue(runCaptor.getValue().getContextSnapshotJson().contains("gougu_oa"));
 
         ArgumentCaptor<ApprovalRequest> approvalCaptor = ArgumentCaptor.forClass(ApprovalRequest.class);
         verify(approvalRequestService).save(approvalCaptor.capture());
@@ -185,6 +187,8 @@ class ExecutionRuntimePersistenceRecorderTest {
         existingStep.setRunId("RUN-1");
         existingStep.setStepId("submit_approval");
         existingStep.setStatus("WAITING_APPROVAL");
+        existingStep.setStartedAt(LocalDateTime.of(2026, 3, 10, 18, 5));
+        existingStep.setCompletedAt(LocalDateTime.of(2026, 3, 10, 18, 6));
         when(executionRunService.findLatestByRunId("RUN-1")).thenReturn(Optional.of(existingRun));
         when(executionStepService.findByRunIdAndStepId("RUN-1", "submit_approval")).thenReturn(Optional.of(existingStep));
 
@@ -197,6 +201,12 @@ class ExecutionRuntimePersistenceRecorderTest {
         assertEquals(null, runCaptor.getValue().getPausedStepId());
         assertEquals(null, runCaptor.getValue().getApprovalRequestId());
         assertEquals(null, runCaptor.getValue().getContextSnapshotJson());
+
+        ArgumentCaptor<ExecutionStep> stepCaptor = ArgumentCaptor.forClass(ExecutionStep.class);
+        verify(executionStepService).updateById(stepCaptor.capture());
+        assertEquals(LocalDateTime.of(2026, 3, 10, 18, 5), stepCaptor.getValue().getStartedAt());
+        assertEquals(LocalDateTime.ofInstant(resumedEvents().get(2).occurredAt(), ZoneId.systemDefault()), stepCaptor.getValue().getCompletedAt());
+        assertEquals("COMPLETED", stepCaptor.getValue().getStatus());
     }
 
     private PublishedToolDescriptor descriptor() {

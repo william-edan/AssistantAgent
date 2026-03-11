@@ -30,10 +30,12 @@ import java.util.Map;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -55,7 +57,7 @@ class ArtifactRuntimeResumeServiceTest {
         run.setRunId("RUN-1");
         run.setPlatformPrincipalId("u1");
         run.setThreadId("T-1");
-        run.setContextSnapshotJson("{\"initialInputs\":{\"reason\":\"事假\"},\"stepOutputs\":{\"create_leave\":{\"leave_id\":\"L-1\"}},\"stepStatuses\":{\"create_leave\":\"COMPLETED\"}}");
+        run.setContextSnapshotJson("{\"systemCode\":\"gougu_oa\",\"initialInputs\":{\"reason\":\"事假\"},\"stepOutputs\":{\"create_leave\":{\"leave_id\":\"L-1\"}},\"stepStatuses\":{\"create_leave\":\"COMPLETED\"}}");
         ApprovalRequest approvalRequest = new ApprovalRequest();
         approvalRequest.setId(100L);
         approvalRequest.setRequestId("RUN-1:submit_approval");
@@ -79,8 +81,49 @@ class ArtifactRuntimeResumeServiceTest {
         assertEquals("RUN-1", contextCaptor.getValue().getRunId());
         assertEquals("u1", contextCaptor.getValue().getAssistantUid());
         assertEquals("T-1", contextCaptor.getValue().getThreadId());
+        assertEquals("gougu_oa", contextCaptor.getValue().getSystemCode());
         assertTrue(contextCaptor.getValue().isStepApproved("submit_approval"));
         assertEquals(Map.of("success", true, "runId", "RUN-1"), result);
+    }
+
+    @Test
+    void shouldKeepApprovalWaitingWhenResumeFails() {
+        ExecutionRunService executionRunService = mock(ExecutionRunService.class);
+        ApprovalRequestService approvalRequestService = mock(ApprovalRequestService.class);
+        ArtifactRuntimeExecutor artifactRuntimeExecutor = mock(ArtifactRuntimeExecutor.class);
+        ArtifactRuntimeResumeService resumeService = new ArtifactRuntimeResumeService(
+                executionRunService,
+                approvalRequestService,
+                artifactRuntimeExecutor,
+                new ObjectMapper());
+
+        PublishedToolDescriptor descriptor = descriptor();
+        ExecutionRun run = new ExecutionRun();
+        run.setRunId("RUN-2");
+        run.setPlatformPrincipalId("u2");
+        run.setThreadId("T-2");
+        run.setContextSnapshotJson("{\"initialInputs\":{\"reason\":\"事假\"}}");
+        ApprovalRequest approvalRequest = new ApprovalRequest();
+        approvalRequest.setId(200L);
+        approvalRequest.setRequestId("RUN-2:submit_approval");
+        approvalRequest.setRunId("RUN-2");
+        approvalRequest.setStepId("submit_approval");
+        approvalRequest.setStatus("WAITING_APPROVAL");
+
+        when(approvalRequestService.findLatestByRequestId("RUN-2:submit_approval"))
+                .thenReturn(Optional.of(approvalRequest));
+        when(executionRunService.findLatestByRunId("RUN-2")).thenReturn(Optional.of(run));
+        when(artifactRuntimeExecutor.resume(eq(descriptor), any(FlowContext.class)))
+                .thenThrow(new IllegalStateException("resume_failed"));
+
+        IllegalStateException exception = assertThrows(
+                IllegalStateException.class,
+                () -> resumeService.approveAndResume(descriptor, "RUN-2:submit_approval"));
+
+        assertEquals("resume_failed", exception.getMessage());
+        assertEquals("WAITING_APPROVAL", approvalRequest.getStatus());
+        assertEquals(null, approvalRequest.getRespondedAt());
+        verify(approvalRequestService, never()).updateById(approvalRequest);
     }
 
     private PublishedToolDescriptor descriptor() {

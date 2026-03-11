@@ -63,10 +63,11 @@ public class ArtifactRuntimeResumeService {
             throw new IllegalStateException("execution_context_snapshot_missing");
         }
         FlowContext flowContext = restoreContext(run, approvalRequest);
+        Map<String, Object> result = artifactRuntimeExecutor.resume(descriptor, flowContext);
         approvalRequest.setStatus("APPROVED");
         approvalRequest.setRespondedAt(LocalDateTime.now());
         approvalRequestService.updateById(approvalRequest);
-        return artifactRuntimeExecutor.resume(descriptor, flowContext);
+        return result;
     }
 
     private FlowContext restoreContext(ExecutionRun run, ApprovalRequest approvalRequest) {
@@ -74,6 +75,7 @@ public class ArtifactRuntimeResumeService {
             ExecutionContextSnapshot snapshot = objectMapper.readValue(run.getContextSnapshotJson(), ExecutionContextSnapshot.class);
             FlowContext flowContext = new FlowContext(snapshot.initialInputs());
             flowContext.setRunId(run.getRunId());
+            flowContext.setSystemCode(snapshot.systemCode());
             flowContext.setAssistantUid(run.getPlatformPrincipalId());
             flowContext.setThreadId(run.getThreadId());
             if (snapshot.stepOutputs() != null) {
