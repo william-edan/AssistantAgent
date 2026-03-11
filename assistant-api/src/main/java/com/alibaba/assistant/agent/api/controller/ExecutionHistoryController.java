@@ -30,7 +30,7 @@ import org.springframework.security.core.Authentication;
 import org.springframework.util.StringUtils;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
-import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
 
@@ -41,7 +41,6 @@ import java.security.Principal;
  */
 @RestController
 @Profile("migration")
-@RequestMapping("/api/controlplane/execution-runs")
 public class ExecutionHistoryController {
 
     private final ExecutionHistoryService executionHistoryService;
@@ -59,14 +58,32 @@ public class ExecutionHistoryController {
         this.authorizationService = authorizationService;
     }
 
-    @GetMapping("/{runId}")
+    @GetMapping("/api/controlplane/execution-runs/{runId}")
     public ResponseEntity<ExecutionHistoryDetailResponse> getExecutionRun(
             @PathVariable String runId,
             Principal principal) {
+        return buildExecutionRunResponse(runId, principal, null, null);
+    }
+
+    @GetMapping("/api/controlplane/spaces/{spaceCode}/execution-runs/{runId}")
+    public ResponseEntity<ExecutionHistoryDetailResponse> getScopedExecutionRun(
+            @PathVariable String spaceCode,
+            @PathVariable String runId,
+            @RequestParam(required = false) String environment,
+            Principal principal) {
+        return buildExecutionRunResponse(runId, principal, spaceCode, environment);
+    }
+
+    private ResponseEntity<ExecutionHistoryDetailResponse> buildExecutionRunResponse(
+            String runId,
+            Principal principal,
+            String requestedSpaceCode,
+            String requestedEnvironment) {
         AuthenticatedUserContext authenticatedUser = requireAuthenticatedUser(principal);
         ExecutionHistoryDetailView detailView = executionHistoryService.findDetailByRunId(runId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "execution_run_not_found"));
         PlatformSpace space = requireSpace(detailView.spaceId());
+        requireScopedMatch(space, requestedSpaceCode, requestedEnvironment);
         requireCatalogAccess(authenticatedUser, space);
         return ResponseEntity.ok(ExecutionHistoryDetailResponse.ok(ExecutionHistoryDetailData.from(
                 detailView,
@@ -88,6 +105,20 @@ public class ExecutionHistoryController {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "execution_space_not_found");
         }
         return space;
+    }
+
+    private void requireScopedMatch(PlatformSpace space, String requestedSpaceCode, String requestedEnvironment) {
+        if (!StringUtils.hasText(requestedSpaceCode)) {
+            return;
+        }
+        String normalizedRequestedSpaceCode = requestedSpaceCode.trim();
+        String actualSpaceCode = space.getSpaceCode().trim();
+        String normalizedRequestedEnvironment = normalizeEnvironment(requestedEnvironment);
+        String actualEnvironment = normalizeEnvironment(space.getEnvironment());
+        if (!normalizedRequestedSpaceCode.equals(actualSpaceCode)
+                || !normalizedRequestedEnvironment.equals(actualEnvironment)) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "execution_run_not_found");
+        }
     }
 
     private void requireCatalogAccess(AuthenticatedUserContext authenticatedUser, PlatformSpace space) {

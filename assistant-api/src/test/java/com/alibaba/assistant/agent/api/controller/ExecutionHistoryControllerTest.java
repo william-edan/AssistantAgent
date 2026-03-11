@@ -70,29 +70,8 @@ class ExecutionHistoryControllerTest {
 
     @Test
     void shouldGetExecutionRunDetailWhenAuthorized() throws Exception {
-        PlatformSpace space = new PlatformSpace();
-        space.setId(11L);
-        space.setSpaceCode("finance-space");
-        space.setEnvironment("prod");
-        when(executionHistoryService.findDetailByRunId("RUN-1")).thenReturn(Optional.of(new ExecutionHistoryDetailView(
-                "RUN-1",
-                "oa.leave.apply",
-                "WORKFLOW",
-                11L,
-                "u1001",
-                "T-1",
-                "COMPLETED",
-                LocalDateTime.of(2026, 3, 10, 12, 0),
-                LocalDateTime.of(2026, 3, 10, 12, 1),
-                List.of(new ExecutionStepView(
-                        "create_leave",
-                        "创建请假记录",
-                        21L,
-                        "oa_user_delegated",
-                        "COMPLETED",
-                        null,
-                        LocalDateTime.of(2026, 3, 10, 12, 0),
-                        LocalDateTime.of(2026, 3, 10, 12, 0, 10))))));
+        PlatformSpace space = space(11L, "finance-space", "prod");
+        when(executionHistoryService.findDetailByRunId("RUN-1")).thenReturn(Optional.of(detailView(11L)));
         when(platformSpaceService.getById(11L)).thenReturn(space);
         when(authorizationService.canViewSpaceCatalog(any(AuthenticatedUserContext.class), eq("finance-space"), eq("prod")))
                 .thenReturn(true);
@@ -108,11 +87,39 @@ class ExecutionHistoryControllerTest {
     }
 
     @Test
+    void shouldGetExecutionRunDetailWhenScopedPathMatchesSpace() throws Exception {
+        PlatformSpace space = space(11L, "finance-space", "test");
+        when(executionHistoryService.findDetailByRunId("RUN-1")).thenReturn(Optional.of(detailView(11L)));
+        when(platformSpaceService.getById(11L)).thenReturn(space);
+        when(authorizationService.canViewSpaceCatalog(any(AuthenticatedUserContext.class), eq("finance-space"), eq("test")))
+                .thenReturn(true);
+
+        mockMvc.perform(get("/api/controlplane/spaces/finance-space/execution-runs/RUN-1")
+                        .queryParam("environment", "test")
+                        .principal(authenticatedPrincipal()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(0))
+                .andExpect(jsonPath("$.data.runId").value("RUN-1"))
+                .andExpect(jsonPath("$.data.spaceCode").value("finance-space"))
+                .andExpect(jsonPath("$.data.environment").value("test"));
+    }
+
+    @Test
+    void shouldReturnNotFoundWhenScopedPathTargetsDifferentSpace() throws Exception {
+        PlatformSpace space = space(11L, "finance-space", "prod");
+        when(executionHistoryService.findDetailByRunId("RUN-1")).thenReturn(Optional.of(detailView(11L)));
+        when(platformSpaceService.getById(11L)).thenReturn(space);
+
+        mockMvc.perform(get("/api/controlplane/spaces/hr-space/execution-runs/RUN-1")
+                        .principal(authenticatedPrincipal()))
+                .andExpect(status().isNotFound());
+
+        verify(authorizationService, never()).canViewSpaceCatalog(any(AuthenticatedUserContext.class), any(), any());
+    }
+
+    @Test
     void shouldRejectExecutionRunDetailWhenUnauthorized() throws Exception {
-        PlatformSpace space = new PlatformSpace();
-        space.setId(11L);
-        space.setSpaceCode("finance-space");
-        space.setEnvironment("prod");
+        PlatformSpace space = space(11L, "finance-space", "prod");
         when(executionHistoryService.findDetailByRunId("RUN-1")).thenReturn(Optional.of(new ExecutionHistoryDetailView(
                 "RUN-1",
                 "oa.leave.apply",
@@ -144,6 +151,36 @@ class ExecutionHistoryControllerTest {
                 .andExpect(status().isNotFound());
 
         verify(platformSpaceService, never()).getById(any());
+    }
+
+    private ExecutionHistoryDetailView detailView(Long spaceId) {
+        return new ExecutionHistoryDetailView(
+                "RUN-1",
+                "oa.leave.apply",
+                "WORKFLOW",
+                spaceId,
+                "u1001",
+                "T-1",
+                "COMPLETED",
+                LocalDateTime.of(2026, 3, 10, 12, 0),
+                LocalDateTime.of(2026, 3, 10, 12, 1),
+                List.of(new ExecutionStepView(
+                        "create_leave",
+                        "创建请假记录",
+                        21L,
+                        "oa_user_delegated",
+                        "COMPLETED",
+                        null,
+                        LocalDateTime.of(2026, 3, 10, 12, 0),
+                        LocalDateTime.of(2026, 3, 10, 12, 0, 10))));
+    }
+
+    private PlatformSpace space(Long id, String spaceCode, String environment) {
+        PlatformSpace space = new PlatformSpace();
+        space.setId(id);
+        space.setSpaceCode(spaceCode);
+        space.setEnvironment(environment);
+        return space;
     }
 
     private Principal authenticatedPrincipal() {
