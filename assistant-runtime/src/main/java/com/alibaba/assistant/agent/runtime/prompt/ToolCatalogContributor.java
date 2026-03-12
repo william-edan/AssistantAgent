@@ -17,12 +17,14 @@ package com.alibaba.assistant.agent.runtime.prompt;
 
 import com.alibaba.assistant.agent.controlplane.toolregistry.ToolMeta;
 import com.alibaba.assistant.agent.controlplane.toolregistry.ToolMetaService;
-import com.alibaba.assistant.agent.runtime.config.RuntimeConfigCompatibilityAdapter;
 import com.alibaba.assistant.agent.prompt.PromptContribution;
 import com.alibaba.assistant.agent.prompt.PromptContributor;
 import com.alibaba.assistant.agent.prompt.PromptContributorContext;
+import com.alibaba.assistant.agent.runtime.config.RuntimeConfigCompatibilityAdapter;
 import com.alibaba.assistant.agent.runtime.registry.ArtifactPublicationLookupService;
+import com.alibaba.assistant.agent.runtime.registry.PublicationScopeResolver;
 import com.alibaba.assistant.agent.runtime.registry.PublishedToolDescriptor;
+import com.alibaba.assistant.agent.runtime.registry.ToolPublicationProvider;
 import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Component;
@@ -41,19 +43,25 @@ public class ToolCatalogContributor implements PromptContributor {
 
     private static final String DEFAULT_TENANT = "default";
 
+    private static final String LEGACY_BRIDGE_SOURCE_ID = "legacy-bridge";
+
     private final ArtifactPublicationLookupService artifactPublicationLookupService;
 
     private final ToolMetaService toolMetaService;
 
     private final RuntimeConfigCompatibilityAdapter compatibilityAdapter;
 
+    private final PublicationScopeResolver publicationScopeResolver;
+
     public ToolCatalogContributor(
             ArtifactPublicationLookupService artifactPublicationLookupService,
             ToolMetaService toolMetaService,
-            RuntimeConfigCompatibilityAdapter compatibilityAdapter) {
+            RuntimeConfigCompatibilityAdapter compatibilityAdapter,
+            PublicationScopeResolver publicationScopeResolver) {
         this.artifactPublicationLookupService = artifactPublicationLookupService;
         this.toolMetaService = toolMetaService;
         this.compatibilityAdapter = compatibilityAdapter;
+        this.publicationScopeResolver = publicationScopeResolver;
     }
 
     @Override
@@ -84,6 +92,10 @@ public class ToolCatalogContributor implements PromptContributor {
                     .build();
         }
 
+        if (!shouldFallbackToLegacyCatalog(context)) {
+            return PromptContribution.empty();
+        }
+
         String tenantId = resolveTenantId(context);
         String systemCode = resolveSystemCode(context);
         List<ToolMeta> source = toolMetaService.listEnabledByTenantAndSystem(tenantId, systemCode);
@@ -97,6 +109,36 @@ public class ToolCatalogContributor implements PromptContributor {
         return PromptContribution.builder()
                 .append(new UserMessage(renderLegacyCatalogText(tools, truncated, source.size())))
                 .build();
+    }
+
+    private boolean shouldFallbackToLegacyCatalog(PromptContributorContext context) {
+        ToolPublicationProvider.PublicationScope scope = publicationScopeResolver.resolve(context.getAttributes());
+        if (scope == null) {
+            return true;
+        }
+        boolean scopedAgentAppCall = scope.spaceId() != null && StringUtils.hasText(scope.agentAppCode());
+        if (!scopedAgentAppCall) {
+            return true;
+        }
+        if (containsLegacyBridge(scope.blockedSourceIds())) {
+            return false;
+        }
+        if (scope.sourceSelectionMode() == ToolPublicationProvider.SourceSelectionMode.EXCLUSIVE) {
+            return containsLegacyBridge(scope.requestedSourceIds());
+        }
+        return true;
+    }
+
+    private boolean containsLegacyBridge(List<String> sourceIds) {
+        if (sourceIds == null || sourceIds.isEmpty()) {
+            return false;
+        }
+        for (String sourceId : sourceIds) {
+            if (LEGACY_BRIDGE_SOURCE_ID.equalsIgnoreCase(sourceId)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private String resolveTenantId(PromptContributorContext context) {
