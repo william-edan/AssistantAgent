@@ -26,7 +26,10 @@ import com.alibaba.assistant.agent.runtime.registry.ArtifactPublicationLookupSer
 import com.alibaba.assistant.agent.runtime.registry.PublicationScopeResolver;
 import com.alibaba.assistant.agent.runtime.registry.PublishedToolDescriptor;
 import com.alibaba.assistant.agent.runtime.registry.ToolPublicationProvider;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import org.junit.jupiter.api.Test;
+import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.messages.Message;
 import org.springframework.ai.chat.messages.SystemMessage;
 import org.springframework.ai.chat.messages.UserMessage;
@@ -35,6 +38,7 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.stream.Collectors;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -204,6 +208,60 @@ class ToolCatalogContributorTest {
         verify(toolMetaService, times(1)).listEnabledByTenantAndSystem("default", "gougu_oa");
     }
 
+    @Test
+    void shouldLogWarningWhenScopedCallFallsBackToLegacyCatalog() {
+        ArtifactPublicationLookupService artifactLookupService = mock(ArtifactPublicationLookupService.class);
+        ToolMetaService toolMetaService = mock(ToolMetaService.class);
+        RuntimeConfigCompatibilityAdapter adapter = mock(RuntimeConfigCompatibilityAdapter.class);
+        PublicationScopeResolver publicationScopeResolver = mock(PublicationScopeResolver.class);
+        when(adapter.promptDynamicEnabled()).thenReturn(true);
+        when(adapter.promptMaxToolsInPrompt()).thenReturn(5);
+        when(artifactLookupService.listPublishedArtifacts(anyMap())).thenReturn(List.of());
+        when(publicationScopeResolver.resolve(anyMap())).thenReturn(scope(
+                "default",
+                9L,
+                "prod",
+                "finance-agent",
+                ToolPublicationProvider.SourceSelectionMode.MERGE,
+                List.of("artifact-catalog"),
+                List.of()));
+        when(toolMetaService.listEnabledByTenantAndSystem(eq("default"), eq("gougu_oa")))
+                .thenReturn(List.of(tool("gougu_oa.leave_apply", "请假申请", null)));
+
+        ch.qos.logback.classic.Logger logger =
+                (ch.qos.logback.classic.Logger) LoggerFactory.getLogger(ToolCatalogContributor.class);
+        ListAppender<ILoggingEvent> appender = new ListAppender<>();
+        appender.start();
+        logger.addAppender(appender);
+
+        try {
+            ToolCatalogContributor contributor = new ToolCatalogContributor(
+                    artifactLookupService,
+                    toolMetaService,
+                    adapter,
+                    publicationScopeResolver);
+            PromptContribution contribution = contributor.contribute(context(Map.of(
+                    "tenant_id", "default",
+                    "space_id", 9L,
+                    "environment", "prod",
+                    "agent_app_code", "finance-agent",
+                    "allow_legacy_fallback", true,
+                    "system_code", "gougu_oa")));
+
+            assertEquals(1, contribution.messagesToAppend().size());
+            String logs = appender.list.stream()
+                    .map(ILoggingEvent::getFormattedMessage)
+                    .collect(Collectors.joining("\n"));
+            assertTrue(logs.contains("ToolCatalogContributor#contribute - compatibility fallback to legacy prompt catalog"));
+            assertTrue(logs.contains("mode=fallback"));
+            assertTrue(logs.contains("toolCode=gougu_oa.leave_apply"));
+        }
+        finally {
+            logger.detachAppender(appender);
+            appender.stop();
+        }
+    }
+
     private ToolPublicationProvider.PublicationScope scope(
             String tenantId,
             Long spaceId,
@@ -284,3 +342,4 @@ class ToolCatalogContributorTest {
     }
 
 }
+

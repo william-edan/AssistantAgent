@@ -22,9 +22,12 @@ import com.alibaba.assistant.agent.prompt.PromptContributor;
 import com.alibaba.assistant.agent.prompt.PromptContributorContext;
 import com.alibaba.assistant.agent.runtime.config.RuntimeConfigCompatibilityAdapter;
 import com.alibaba.assistant.agent.runtime.registry.ArtifactPublicationLookupService;
+import com.alibaba.assistant.agent.runtime.registry.LegacyCompatibilityLogHelper;
 import com.alibaba.assistant.agent.runtime.registry.PublicationScopeResolver;
 import com.alibaba.assistant.agent.runtime.registry.PublishedToolDescriptor;
 import com.alibaba.assistant.agent.runtime.registry.ToolPublicationProvider;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Component;
@@ -40,6 +43,8 @@ import java.util.Map;
 @Component
 @Profile("migration")
 public class ToolCatalogContributor implements PromptContributor {
+
+    private static final Logger logger = LoggerFactory.getLogger(ToolCatalogContributor.class);
 
     private static final String DEFAULT_TENANT = "default";
 
@@ -92,7 +97,8 @@ public class ToolCatalogContributor implements PromptContributor {
                     .build();
         }
 
-        if (!shouldFallbackToLegacyCatalog(context)) {
+        ToolPublicationProvider.PublicationScope scope = resolvePublicationScope(context);
+        if (!shouldFallbackToLegacyCatalog(scope)) {
             return PromptContribution.empty();
         }
 
@@ -103,6 +109,14 @@ public class ToolCatalogContributor implements PromptContributor {
             return PromptContribution.empty();
         }
 
+        LegacyCompatibilityLogHelper.logFallback(
+                logger,
+                "ToolCatalogContributor#contribute",
+                "legacy prompt catalog",
+                scope,
+                tenantId,
+                source.get(0).getToolCode());
+
         int limit = Math.max(1, compatibilityAdapter.promptMaxToolsInPrompt());
         boolean truncated = source.size() > limit;
         List<ToolMeta> tools = new ArrayList<>(source.subList(0, Math.min(limit, source.size())));
@@ -111,8 +125,11 @@ public class ToolCatalogContributor implements PromptContributor {
                 .build();
     }
 
-    private boolean shouldFallbackToLegacyCatalog(PromptContributorContext context) {
-        ToolPublicationProvider.PublicationScope scope = publicationScopeResolver.resolve(context.getAttributes());
+    private ToolPublicationProvider.PublicationScope resolvePublicationScope(PromptContributorContext context) {
+        return publicationScopeResolver.resolve(context.getAttributes());
+    }
+
+    private boolean shouldFallbackToLegacyCatalog(ToolPublicationProvider.PublicationScope scope) {
         if (scope == null) {
             return true;
         }
@@ -227,3 +244,4 @@ public class ToolCatalogContributor implements PromptContributor {
         return null;
     }
 }
+

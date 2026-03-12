@@ -24,6 +24,16 @@ Pin the remaining `legacy-bridge` visibility to explicit compatibility cases now
 - `mode=fallback`
 - `mode=scoped_compatibility`
 
+
+Runtime fallback warnings are also emitted when scoped artifact-first flows actually degrade to legacy metadata at these entrypoints:
+
+- `ToolCatalogContributor#contribute`
+- `AssistantFastIntentHook#resolveBestOperationTarget`
+- `ToolExecutor#execute`
+- `PolicyGuardToolInterceptor#resolveGovernanceRule`
+- `SlotCollectTool#resolveToolMetaSnapshot`
+- `SlotCollectTool#resolveDependencySteps`
+
 Operational intent:
 
 - `fallback` should trend down as app policies move to artifact-only defaults.
@@ -35,3 +45,4 @@ Operational intent:
 1. Prefer app-level publication-source policy over request-time legacy fallback.
 2. Treat `allow_legacy_fallback` as a temporary migration control, not a product default.
 3. Remove unscoped legacy entrypoints only after artifact-first routing is the default in all UI and API callers.
+

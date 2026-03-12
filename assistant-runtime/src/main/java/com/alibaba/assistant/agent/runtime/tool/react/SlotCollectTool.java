@@ -1092,7 +1092,8 @@ public class SlotCollectTool implements BiFunction<SlotCollectTool.Request, Tool
         }
 
         String targetToolCode = snapshot.getToolCode().trim();
-        boolean allowLegacyFallback = allowsLegacyToolMetaFallback(state, toolContext);
+        ToolPublicationProvider.PublicationScope scope = resolvePublicationScope(state, toolContext);
+        boolean allowLegacyFallback = allowsLegacyToolMetaFallback(scope);
         ToolMeta rootMeta = new ToolMeta();
         rootMeta.setToolCode(targetToolCode);
         rootMeta.setDescription(targetToolCode);
@@ -1103,6 +1104,13 @@ public class SlotCollectTool implements BiFunction<SlotCollectTool.Request, Tool
         if (!StringUtils.hasText(rootMeta.getInteractionPolicy()) && allowLegacyFallback && toolMetaService != null) {
             ToolMeta legacyRootMeta = toolMetaService.findLatestEnabledByToolCode(tenantId, targetToolCode).orElse(null);
             if (legacyRootMeta != null) {
+                LegacyCompatibilityLogHelper.logFallback(
+                        logger,
+                        "SlotCollectTool#resolveDependencySteps",
+                        "legacy dependency root ToolMeta",
+                        scope,
+                        tenantId,
+                        targetToolCode);
                 rootMeta = legacyRootMeta;
                 if (!StringUtils.hasText(rootMeta.getInteractionPolicy())
                         && StringUtils.hasText(snapshot.getBehaviorConfig())) {
@@ -1124,7 +1132,15 @@ public class SlotCollectTool implements BiFunction<SlotCollectTool.Request, Tool
             if (!allowLegacyFallback || toolMetaService == null) {
                 return Optional.empty();
             }
-            return toolMetaService.findLatestEnabledByToolCode(tenantId, toolCode);
+            Optional<ToolMeta> legacyMeta = toolMetaService.findLatestEnabledByToolCode(tenantId, toolCode);
+            legacyMeta.ifPresent(meta -> LegacyCompatibilityLogHelper.logFallback(
+                    logger,
+                    "SlotCollectTool#resolveDependencySteps",
+                    "legacy dependency ToolMeta",
+                    scope,
+                    tenantId,
+                    toolCode));
+            return legacyMeta;
         });
     }
 
@@ -1617,3 +1633,4 @@ public class SlotCollectTool implements BiFunction<SlotCollectTool.Request, Tool
         public String options;
     }
 }
+
