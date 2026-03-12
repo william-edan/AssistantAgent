@@ -60,7 +60,7 @@ public class MysqlCheckpointSaver implements BaseCheckpointSaver {
 	public Collection<Checkpoint> list(RunnableConfig config) {
 		String threadId = resolveThreadId(config);
 		List<Checkpoint> results = jdbcTemplate.query(
-				"SELECT checkpoint_id, state_json, parent_id FROM checkpoint WHERE thread_id = ? ORDER BY created_at DESC",
+				"SELECT checkpoint_id, state_json, parent_id FROM checkpoint WHERE thread_id = ? ORDER BY created_at DESC, id DESC",
 				(rs, rowNum) -> mapRowToCheckpoint(rs), threadId);
 		logger.debug("MysqlCheckpointSaver#list - threadId={}, count={}", threadId, results.size());
 		return results;
@@ -78,7 +78,7 @@ public class MysqlCheckpointSaver implements BaseCheckpointSaver {
 		}
 		// Return latest checkpoint
 		List<Checkpoint> results = jdbcTemplate.query(
-				"SELECT checkpoint_id, state_json, parent_id FROM checkpoint WHERE thread_id = ? ORDER BY created_at DESC LIMIT 1",
+				"SELECT checkpoint_id, state_json, parent_id FROM checkpoint WHERE thread_id = ? ORDER BY created_at DESC, id DESC LIMIT 1",
 				(rs, rowNum) -> mapRowToCheckpoint(rs), threadId);
 		return results.isEmpty() ? Optional.empty() : Optional.of(results.get(0));
 	}
@@ -102,7 +102,7 @@ public class MysqlCheckpointSaver implements BaseCheckpointSaver {
 		else {
 			// Get parent_id from previous latest checkpoint
 			List<String> parentIds = jdbcTemplate.query(
-					"SELECT checkpoint_id FROM checkpoint WHERE thread_id = ? ORDER BY created_at DESC LIMIT 1",
+					"SELECT checkpoint_id FROM checkpoint WHERE thread_id = ? ORDER BY created_at DESC, id DESC LIMIT 1",
 					(rs, rowNum) -> rs.getString("checkpoint_id"), threadId);
 			String parentId = parentIds.isEmpty() ? null : parentIds.get(0);
 

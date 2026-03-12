@@ -99,6 +99,21 @@ class MysqlCheckpointSaverTest {
 	}
 
 	@Test
+	void shouldPreferNewestRowWhenCreatedAtTies() {
+		jdbcTemplate.update(
+				"INSERT INTO checkpoint (thread_id, checkpoint_id, state_json, parent_id, created_at) VALUES (?, ?, ?, ?, ?)",
+				"thread-tie", "cp-1", "{\"round\":1}", null, java.sql.Timestamp.valueOf("2026-03-11 22:30:00"));
+		jdbcTemplate.update(
+				"INSERT INTO checkpoint (thread_id, checkpoint_id, state_json, parent_id, created_at) VALUES (?, ?, ?, ?, ?)",
+				"thread-tie", "cp-2", "{\"round\":2}", "cp-1", java.sql.Timestamp.valueOf("2026-03-11 22:30:00"));
+
+		Optional<Checkpoint> latest = saver.get(RunnableConfig.builder().threadId("thread-tie").build());
+
+		assertTrue(latest.isPresent());
+		assertEquals("cp-2", latest.get().getId());
+		assertEquals(2, latest.get().getState().get("round"));
+	}
+	@Test
 	void shouldListAllCheckpointsForThread() throws Exception {
 		RunnableConfig config = RunnableConfig.builder().threadId("thread-3").build();
 		saver.put(config,
