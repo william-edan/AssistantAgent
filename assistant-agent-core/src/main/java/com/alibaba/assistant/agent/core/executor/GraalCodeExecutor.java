@@ -28,6 +28,7 @@ import com.alibaba.assistant.agent.core.model.GeneratedCode;
 import com.alibaba.assistant.agent.core.model.ToolCallRecord;
 import com.alibaba.assistant.agent.core.tool.CodeactToolRegistry;
 import com.alibaba.assistant.agent.core.tool.DefaultToolRegistryBridgeFactory;
+import com.alibaba.assistant.agent.core.tool.ToolRegistryScopeAdapters;
 import com.alibaba.assistant.agent.core.tool.ToolRegistryBridge;
 import com.alibaba.assistant.agent.core.tool.ToolRegistryBridgeFactory;
 import com.alibaba.cloud.ai.graph.OverAllState;
@@ -675,14 +676,16 @@ public class GraalCodeExecutor {
 		logger.info("GraalCodeExecutor#injectCodeactTools - reason=effectiveToolContext构建完成, keys={}",
 				effectiveToolContext.getContext() != null ? effectiveToolContext.getContext().keySet() : "null");
 
+		CodeactToolRegistry effectiveRegistry = ToolRegistryScopeAdapters.resolve(registry, effectiveToolContext);
+
 		// Create and inject ToolRegistryBridge using factory
-		ToolRegistryBridge bridge = toolRegistryBridgeFactory.create(registry, effectiveToolContext);
+		ToolRegistryBridge bridge = toolRegistryBridgeFactory.create(effectiveRegistry, effectiveToolContext);
 		context.getBindings("python").putMember("__tool_registry__", bridge);
 		logger.debug("GraalCodeExecutor#injectCodeactTools - reason=ToolRegistryBridge注入完成, bridgeClass={}",
 				bridge.getClass().getSimpleName());
 
 		// Get all tools for this language
-		List<CodeactTool> tools = registry.getToolsForLanguage(language);
+		List<CodeactTool> tools = effectiveRegistry.getToolsForLanguage(language);
 
 		if (tools.isEmpty()) {
 			logger.debug("GraalCodeExecutor#injectCodeactTools - reason=没有支持该语言的工具, language={}", language);
