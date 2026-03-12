@@ -93,6 +93,40 @@ class ActionBriefContributorTest {
 	}
 
 	@Test
+	void shouldPreserveArtifactSnapshotMapFieldsForActionBrief() {
+		RuntimeConfigCompatibilityAdapter adapter = mock(RuntimeConfigCompatibilityAdapter.class);
+		SlotSchemaParser parser = mock(SlotSchemaParser.class);
+		when(adapter.promptDynamicEnabled()).thenReturn(true);
+
+		SlotDefinition reason = slot("reason", "请假事由", "请假原因", "如有事可填个人事务", SlotPriority.CORE, true);
+		when(parser.parse(any(ToolMetaSnapshot.class))).thenReturn(List.of(reason));
+
+		Map<String, Object> matchedSnapshot = new java.util.LinkedHashMap<>();
+		matchedSnapshot.put("toolCode", "oa.leave.apply");
+		matchedSnapshot.put("toolName", "请假申请");
+		matchedSnapshot.put("description", "发起请假流程");
+		matchedSnapshot.put("systemCode", "oa");
+		matchedSnapshot.put("slotSchema", "{\"slots\":[{\"name\":\"reason\",\"type\":\"string\",\"required\":true}]}");
+		matchedSnapshot.put("requestSchema", null);
+		matchedSnapshot.put("riskLevel", "HIGH");
+		matchedSnapshot.put("requiresConfirm", true);
+
+		ActionBriefContributor contributor = new ActionBriefContributor(adapter, parser, new ObjectMapper());
+		PromptContribution contribution = contributor.contribute(context(Map.of(
+				AssistantStateKeys.MATCHED_TOOL_META, matchedSnapshot,
+				AssistantStateKeys.CONVERSATION_PHASE, "COLLECTING")));
+
+		assertFalse(contribution.messagesToAppend().isEmpty());
+		String text = contribution.messagesToAppend().get(0).getText();
+		assertTrue(text.contains("请假申请"));
+		assertTrue(text.contains("发起请假流程"));
+		assertTrue(text.contains("风险等级：HIGH"));
+		assertTrue(text.contains("是否需要确认：是"));
+		assertTrue(text.contains("参数定义："));
+		assertTrue(text.contains("reason"));
+	}
+
+	@Test
 	void shouldDeferInferredSlotUntilSourcesAreCollected() {
 		RuntimeConfigCompatibilityAdapter adapter = mock(RuntimeConfigCompatibilityAdapter.class);
 		SlotSchemaParser parser = mock(SlotSchemaParser.class);

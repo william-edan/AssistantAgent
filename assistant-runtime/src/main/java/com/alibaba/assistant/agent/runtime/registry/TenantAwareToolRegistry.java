@@ -105,29 +105,18 @@ public class TenantAwareToolRegistry implements ToolContextScopedCodeactToolRegi
      */
     public DefaultCodeactToolRegistry createSessionRegistry(ToolPublicationProvider.PublicationScope scope) {
         ToolPublicationProvider.PublicationScope effectiveScope = normalizeScope(scope);
-        String cacheKey = cacheKey(effectiveScope);
-        SnapshotEntry snapshot = snapshotCache.compute(cacheKey, (key, existing) -> {
-            if (existing != null && !existing.isExpired()) {
-                return existing;
-            }
-            List<PublishedToolDescriptor> descriptors = new ArrayList<>();
-            List<ToolPublicationProvider> selectedProviders = toolPublicationProviderSelector
-                    .selectProviders(effectiveScope, publicationProviders);
-            for (ToolPublicationProvider provider : selectedProviders) {
-                if (provider == null) {
-                    continue;
-                }
-                descriptors.addAll(provider.listPublishedTools(effectiveScope));
-            }
-            List<CodeactTool> tools = toolPublicationMaterializer.materialize(descriptors);
-            return new SnapshotEntry(Instant.now(), tools);
-        });
+        SnapshotEntry snapshot = resolveSnapshot(effectiveScope);
 
         DefaultCodeactToolRegistry registry = new DefaultCodeactToolRegistry();
         for (CodeactTool tool : snapshot.tools()) {
             registry.register(tool);
         }
         return registry;
+    }
+
+    public List<CodeactTool> getReactAccessibleTools() {
+        return resolveSnapshot(new ToolPublicationProvider.PublicationScope("default", null, null, null))
+                .reactAccessibleTools();
     }
 
     @Override
@@ -199,6 +188,34 @@ public class TenantAwareToolRegistry implements ToolContextScopedCodeactToolRegi
         return delegate.getReturnSchemaRegistry();
     }
 
+    private SnapshotEntry resolveSnapshot(ToolPublicationProvider.PublicationScope scope) {
+        ToolPublicationProvider.PublicationScope effectiveScope = normalizeScope(scope);
+        String cacheKey = cacheKey(effectiveScope);
+        return snapshotCache.compute(cacheKey, (key, existing) -> {
+            if (existing != null && !existing.isExpired()) {
+                return existing;
+            }
+            List<PublishedToolDescriptor> descriptors = new ArrayList<>();
+            List<ToolPublicationProvider> selectedProviders = toolPublicationProviderSelector
+                    .selectProviders(effectiveScope, publicationProviders);
+            for (ToolPublicationProvider provider : selectedProviders) {
+                if (provider == null) {
+                    continue;
+                }
+                descriptors.addAll(provider.listPublishedTools(effectiveScope));
+            }
+            List<CodeactTool> tools = toolPublicationMaterializer.materialize(descriptors);
+            return new SnapshotEntry(Instant.now(), descriptors, tools);
+        });
+    }
+
+    private static boolean isReactAccessiblePublication(PublishedToolDescriptor descriptor) {
+        return descriptor != null
+                && descriptor.isDirectToolPublication()
+                && descriptor.directTool() != null
+                && !"legacy-bridge".equalsIgnoreCase(descriptor.sourceType());
+    }
+
     private ToolPublicationProvider.PublicationScope normalizeScope(ToolPublicationProvider.PublicationScope scope) {
         if (scope == null) {
             return new ToolPublicationProvider.PublicationScope("default", null, null, null);
@@ -227,10 +244,22 @@ public class TenantAwareToolRegistry implements ToolContextScopedCodeactToolRegi
                 + String.join(",", scope.blockedSourceIds());
     }
 
-    private record SnapshotEntry(Instant loadedAt, List<CodeactTool> tools) {
-        private SnapshotEntry(Instant loadedAt, List<CodeactTool> tools) {
+    private record SnapshotEntry(Instant loadedAt, List<PublishedToolDescriptor> descriptors, List<CodeactTool> tools) {
+        private SnapshotEntry(Instant loadedAt, List<PublishedToolDescriptor> descriptors, List<CodeactTool> tools) {
             this.loadedAt = loadedAt;
+            this.descriptors = descriptors != null ? List.copyOf(new ArrayList<>(descriptors)) : List.of();
             this.tools = tools != null ? List.copyOf(new ArrayList<>(tools)) : List.of();
+        }
+
+        private List<CodeactTool> reactAccessibleTools() {
+            List<CodeactTool> accessibleTools = new ArrayList<>();
+            for (PublishedToolDescriptor descriptor : descriptors) {
+                if (!isReactAccessiblePublication(descriptor)) {
+                    continue;
+                }
+                accessibleTools.add(descriptor.directTool());
+            }
+            return List.copyOf(accessibleTools);
         }
 
         private boolean isExpired() {
@@ -244,3 +273,4 @@ public class TenantAwareToolRegistry implements ToolContextScopedCodeactToolRegi
     public record ToolPublishedEvent(String tenantId) {
     }
 }
+

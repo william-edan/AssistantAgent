@@ -24,6 +24,11 @@ import com.alibaba.assistant.agent.controlplane.toolregistry.ToolMetaService;
 import com.alibaba.assistant.agent.extension.experience.model.Experience;
 import com.alibaba.assistant.agent.extension.experience.model.ExperienceArtifact;
 import com.alibaba.assistant.agent.runtime.agent.AssistantStateKeys;
+import com.alibaba.assistant.agent.runtime.compiler.RuntimeArtifact;
+import com.alibaba.assistant.agent.runtime.registry.ArtifactPublicationLookupService;
+import com.alibaba.assistant.agent.runtime.registry.PublicationScopeResolver;
+import com.alibaba.assistant.agent.runtime.registry.PublishedToolDescriptor;
+import com.alibaba.assistant.agent.runtime.registry.ToolPublicationProvider;
 import com.alibaba.cloud.ai.graph.KeyStrategy;
 import com.alibaba.assistant.agent.slot.model.SlotValue;
 import com.alibaba.cloud.ai.graph.OverAllState;
@@ -33,6 +38,7 @@ import com.alibaba.cloud.ai.graph.agent.hook.AgentHook;
 import com.alibaba.cloud.ai.graph.agent.hook.HookPosition;
 import com.alibaba.cloud.ai.graph.agent.hook.HookPositions;
 import com.alibaba.cloud.ai.graph.agent.hook.JumpTo;
+import com.alibaba.cloud.ai.graph.agent.tools.ToolContextConstants;
 import com.alibaba.cloud.ai.graph.state.strategy.ReplaceStrategy;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
@@ -40,6 +46,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.messages.AssistantMessage;
+import org.springframework.ai.chat.model.ToolContext;
 import org.springframework.ai.chat.messages.Message;
 import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -126,17 +133,40 @@ public class AssistantFastIntentHook extends AgentHook implements Prioritized {
 	@Nullable
 	private final ToolMetaService toolMetaService;
 
+	@Nullable
+	private final PublicationScopeResolver publicationScopeResolver;
+
+	@Nullable
+	private final ArtifactPublicationLookupService artifactPublicationLookupService;
+
 	private final boolean forceDisableStreaming;
 
 	public AssistantFastIntentHook(AssistantIntentRouter intentRouter, ObjectMapper objectMapper) {
-		this(intentRouter, objectMapper, null, false);
+		this(intentRouter, objectMapper, null, false, null, null);
 	}
 
 	public AssistantFastIntentHook(
 			AssistantIntentRouter intentRouter,
 			ObjectMapper objectMapper,
 			@Nullable ToolMetaService toolMetaService) {
-		this(intentRouter, objectMapper, toolMetaService, false);
+		this(intentRouter, objectMapper, toolMetaService, false, null, null);
+	}
+
+	public AssistantFastIntentHook(
+			AssistantIntentRouter intentRouter,
+			ObjectMapper objectMapper,
+			@Nullable ToolMetaService toolMetaService,
+			boolean forceDisableStreaming) {
+		this(intentRouter, objectMapper, toolMetaService, forceDisableStreaming, null, null);
+	}
+
+	public AssistantFastIntentHook(
+			AssistantIntentRouter intentRouter,
+			ObjectMapper objectMapper,
+			@Nullable ToolMetaService toolMetaService,
+			boolean forceDisableStreaming,
+			@Nullable PublicationScopeResolver publicationScopeResolver) {
+		this(intentRouter, objectMapper, toolMetaService, forceDisableStreaming, publicationScopeResolver, null);
 	}
 
 	@Autowired
@@ -145,11 +175,15 @@ public class AssistantFastIntentHook extends AgentHook implements Prioritized {
 			ObjectMapper objectMapper,
 			@Nullable ToolMetaService toolMetaService,
 			@Value("${assistant.runtime.fast-intent.force-disable-streaming:false}")
-			boolean forceDisableStreaming) {
+			boolean forceDisableStreaming,
+			@Nullable PublicationScopeResolver publicationScopeResolver,
+			@Nullable ArtifactPublicationLookupService artifactPublicationLookupService) {
 		this.intentRouter = intentRouter;
 		this.objectMapper = objectMapper;
 		this.toolMetaService = toolMetaService;
 		this.forceDisableStreaming = forceDisableStreaming;
+		this.publicationScopeResolver = publicationScopeResolver;
+		this.artifactPublicationLookupService = artifactPublicationLookupService;
 	}
 
 	@Override
@@ -329,23 +363,30 @@ public class AssistantFastIntentHook extends AgentHook implements Prioritized {
 		}
 
 		List<String> allowlist = resolveAllowlist(state);
-		String executeToolName = resolveExecuteToolName(matchedToolCode, allowlist);
+		String executeToolName = resolveExecuteToolName(state, matchedToolCode, allowlist);
 		if (!StringUtils.hasText(executeToolName)) {
 			logger.warn(
 					"AssistantFastIntentHook#tryBuildConfirmationExecutionUpdates - failed to resolve execute tool name, toolCode={}",
 					matchedToolCode);
 			return Map.of();
 		}
-		if (!isAllowedByNameWhitelist(state, executeToolName)) {
+		boolean allowlistExplicitlyConfigured = isAllowlistExplicitlyConfigured(state);
+		boolean allowlistHasExecuteTool = containsIgnoreCase(allowlist, executeToolName);
+		boolean canAutoGrantExecuteTool = canAutoGrantConfirmationExecuteTool(state, executeToolName);
+		if (allowlistExplicitlyConfigured && allowlist.isEmpty()) {
+			logger.warn(
+					"AssistantFastIntentHook#tryBuildConfirmationExecutionUpdates - execute tool blocked by empty allowlist, toolName={}",
+					executeToolName);
+			return Map.of();
+		}
+		if (allowlistExplicitlyConfigured && !allowlistHasExecuteTool && !canAutoGrantExecuteTool) {
 			logger.warn(
 					"AssistantFastIntentHook#tryBuildConfirmationExecutionUpdates - execute tool blocked by allowlist, toolName={}",
 					executeToolName);
 			return Map.of();
 		}
 
-		Map<String, Object> executeArgs = resolveCollectedSlots(state);
-		executeArgs.put("confirmed", true);
-		executeArgs.putIfAbsent("confirm", true);
+		Map<String, Object> executeArgs = buildExecuteArgs(executeToolName, matchedToolCode, state);
 
 		try {
 			String toolCallId = "assistant_confirm_exec_" + UUID.randomUUID().toString().substring(0, 8);
@@ -364,7 +405,7 @@ public class AssistantFastIntentHook extends AgentHook implements Prioritized {
 			updates.put(AssistantStateKeys.EXECUTION_CONFIRM_GRANTED, true);
 			updates.put(AssistantStateKeys.EXECUTION_CONFIRM_TOOL_NAME, executeToolName);
 			updates.put(AssistantStateKeys.EXECUTION_CONFIRM_USER_INPUT, resolvedInput);
-			if (!allowlist.isEmpty() && !containsIgnoreCase(allowlist, executeToolName)) {
+			if (allowlistExplicitlyConfigured && !allowlist.isEmpty() && !allowlistHasExecuteTool) {
 				List<String> mergedAllowlist = new ArrayList<>(allowlist);
 				mergedAllowlist.add(executeToolName);
 				updates.put(CodeactStateKeys.AVAILABLE_TOOL_NAMES, mergedAllowlist);
@@ -392,14 +433,14 @@ public class AssistantFastIntentHook extends AgentHook implements Prioritized {
 			return Map.of();
 		}
 
-		ToolMeta matchedTool = resolveBestOperationTool(state, input);
-		if (matchedTool == null || !StringUtils.hasText(matchedTool.getToolCode())) {
+		OperationTarget matchedTool = resolveBestOperationTarget(state, input);
+		if (matchedTool == null || !StringUtils.hasText(matchedTool.toolCode())) {
 			return Map.of();
 		}
 
 		try {
 			Map<String, Object> collectArgs = new LinkedHashMap<>();
-			collectArgs.put("toolCode", matchedTool.getToolCode());
+			collectArgs.put("toolCode", matchedTool.toolCode());
 			collectArgs.put("extractedSlots", Collections.emptyMap());
 
 			String toolCallId = "assistant_op_collect_" + UUID.randomUUID().toString().substring(0, 8);
@@ -415,14 +456,14 @@ public class AssistantFastIntentHook extends AgentHook implements Prioritized {
 			Map<String, Object> fastIntentState = new LinkedHashMap<>();
 			fastIntentState.put("hit", true);
 			fastIntentState.put("route_type", "OPERATION_COLLECT");
-			fastIntentState.put("tool_code", matchedTool.getToolCode());
+			fastIntentState.put("tool_code", matchedTool.toolCode());
 
 			Map<String, Object> updates = new LinkedHashMap<>();
 			updates.put("messages", List.of(assistantMessage));
 			updates.put("jump_to", JumpTo.tool);
 			updates.put("fast_intent", fastIntentState);
 			updates.put("current_date", LocalDate.now().toString());
-			updates.put(AssistantStateKeys.MATCHED_TOOL_META, buildMatchedToolMetaSnapshot(matchedTool));
+			updates.put(AssistantStateKeys.MATCHED_TOOL_META, matchedTool.snapshot());
 			return updates;
 		}
 		catch (Exception e) {
@@ -448,7 +489,115 @@ public class AssistantFastIntentHook extends AgentHook implements Prioritized {
 		return true;
 	}
 
-	private ToolMeta resolveBestOperationTool(OverAllState state, String input) {
+	private OperationTarget resolveBestOperationTarget(OverAllState state, String input) {
+		if (!StringUtils.hasText(input)) {
+			return null;
+		}
+		ToolPublicationProvider.PublicationScope scope = resolvePublicationScope(state);
+		if (shouldTryArtifactOperationRouting(scope)) {
+			OperationTarget publishedTarget = resolveBestPublishedOperationTool(state, input);
+			if (publishedTarget != null) {
+				return publishedTarget;
+			}
+			if (!allowsLegacyOperationFallback(scope)) {
+				return null;
+			}
+		}
+		ToolMeta matchedTool = resolveBestLegacyOperationTool(state, input);
+		if (matchedTool == null || !StringUtils.hasText(matchedTool.getToolCode())) {
+			return null;
+		}
+		return new OperationTarget(matchedTool.getToolCode(), buildMatchedToolMetaSnapshot(matchedTool));
+	}
+
+	@Nullable
+	private ToolPublicationProvider.PublicationScope resolvePublicationScope(OverAllState state) {
+		if (publicationScopeResolver == null || state == null) {
+			return null;
+		}
+		return publicationScopeResolver.resolve(Map.of(ToolContextConstants.AGENT_STATE_CONTEXT_KEY, state));
+	}
+
+	private boolean shouldTryArtifactOperationRouting(@Nullable ToolPublicationProvider.PublicationScope scope) {
+		return scope != null && containsIgnoreCase(scope.requestedSourceIds(), "artifact-catalog");
+	}
+
+	private boolean allowsLegacyOperationFallback(@Nullable ToolPublicationProvider.PublicationScope scope) {
+		if (scope == null) {
+			return true;
+		}
+		if (containsIgnoreCase(scope.requestedSourceIds(), "legacy-bridge")) {
+			return true;
+		}
+		if (containsIgnoreCase(scope.blockedSourceIds(), "legacy-bridge")) {
+			return false;
+		}
+		return scope.sourceSelectionMode() != ToolPublicationProvider.SourceSelectionMode.EXCLUSIVE;
+	}
+
+	private OperationTarget resolveBestPublishedOperationTool(OverAllState state, String input) {
+		if (artifactPublicationLookupService == null || state == null || !StringUtils.hasText(input)) {
+			return null;
+		}
+		try {
+			ToolContext toolContext = new ToolContext(Map.of(ToolContextConstants.AGENT_STATE_CONTEXT_KEY, state));
+			List<PublishedToolDescriptor> candidates = artifactPublicationLookupService.listPublishedArtifacts(toolContext);
+			if (candidates == null || candidates.isEmpty()) {
+				return null;
+			}
+			String normalizedInput = normalizeForMatch(input);
+			String systemCode = resolveSystemCode(state);
+			ScoredOperationTarget best = null;
+			ScoredOperationTarget second = null;
+			for (PublishedToolDescriptor candidate : candidates) {
+				if (candidate == null || candidate.artifact() == null
+						|| !StringUtils.hasText(candidate.artifact().getArtifactCode())) {
+					continue;
+				}
+				if (StringUtils.hasText(systemCode)
+						&& StringUtils.hasText(candidate.executionSystemCode())
+						&& !systemCode.equalsIgnoreCase(candidate.executionSystemCode())) {
+					continue;
+				}
+				int score = scorePublishedArtifact(candidate, normalizedInput);
+				if (score <= 0) {
+					continue;
+				}
+				OperationTarget target = new OperationTarget(
+						candidate.artifact().getArtifactCode(),
+						buildMatchedToolMetaSnapshot(candidate));
+				ScoredOperationTarget scored = new ScoredOperationTarget(target, score);
+				if (best == null || score > best.score()) {
+					second = best;
+					best = scored;
+				}
+				else if (second == null || score > second.score()) {
+					second = scored;
+				}
+			}
+			if (best == null || best.score() < OPERATION_MIN_SCORE) {
+				return null;
+			}
+			if (second != null && (best.score() - second.score()) < OPERATION_MIN_MARGIN) {
+				logger.info(
+						"AssistantFastIntentHook#resolveBestPublishedOperationTool - ambiguous match, best={}, second={}, bestScore={}, secondScore={}",
+						best.target().toolCode(),
+						second.target().toolCode(),
+						best.score(),
+						second.score());
+				return null;
+			}
+			logger.info("AssistantFastIntentHook#resolveBestPublishedOperationTool - matched artifactCode={}, score={}",
+					best.target().toolCode(), best.score());
+			return best.target();
+		}
+		catch (Exception e) {
+			logger.warn("AssistantFastIntentHook#resolveBestPublishedOperationTool - failed, error={}", e.getMessage());
+			return null;
+		}
+	}
+
+	private ToolMeta resolveBestLegacyOperationTool(OverAllState state, String input) {
 		if (toolMetaService == null || !StringUtils.hasText(input)) {
 			return null;
 		}
@@ -484,19 +633,19 @@ public class AssistantFastIntentHook extends AgentHook implements Prioritized {
 			}
 			if (second != null && (best.score() - second.score()) < OPERATION_MIN_MARGIN) {
 				logger.info(
-						"AssistantFastIntentHook#resolveBestOperationTool - ambiguous match, best={}, second={}, bestScore={}, secondScore={}",
+						"AssistantFastIntentHook#resolveBestLegacyOperationTool - ambiguous match, best={}, second={}, bestScore={}, secondScore={}",
 						best.tool().getToolCode(),
 						second.tool().getToolCode(),
 						best.score(),
 						second.score());
 				return null;
 			}
-			logger.info("AssistantFastIntentHook#resolveBestOperationTool - matched toolCode={}, score={}",
+			logger.info("AssistantFastIntentHook#resolveBestLegacyOperationTool - matched toolCode={}, score={}",
 					best.tool().getToolCode(), best.score());
 			return best.tool();
 		}
 		catch (Exception e) {
-			logger.warn("AssistantFastIntentHook#resolveBestOperationTool - failed, error={}", e.getMessage());
+			logger.warn("AssistantFastIntentHook#resolveBestLegacyOperationTool - failed, error={}", e.getMessage());
 			return null;
 		}
 	}
@@ -521,6 +670,34 @@ public class AssistantFastIntentHook extends AgentHook implements Prioritized {
 			score -= 2;
 		}
 		if (isLikelyWriteTool(meta)) {
+			score += 1;
+		}
+		return Math.max(score, 0);
+	}
+
+	private int scorePublishedArtifact(PublishedToolDescriptor descriptor, String normalizedInput) {
+		int score = 0;
+		boolean strongOperationIntent = containsAny(normalizedInput, STRONG_OPERATION_HINT_KEYWORDS);
+		boolean queryIntent = containsAny(normalizedInput, QUERY_HINT_KEYWORDS);
+		score += scoreTextMatch(normalizedInput, resolvePublishedDisplayName(descriptor), 6, 2);
+		score += scoreTextMatch(normalizedInput, resolvePublishedDescription(descriptor), 4, 1);
+		score += scoreTextMatch(normalizedInput,
+				descriptor != null && descriptor.artifact() != null ? descriptor.artifact().getArtifactCode() : null,
+				4,
+				1);
+		if (strongOperationIntent && isLikelyWriteArtifact(descriptor)) {
+			score += 3;
+		}
+		if (strongOperationIntent && isLikelyQueryArtifact(descriptor)) {
+			score -= 3;
+		}
+		if (queryIntent && !strongOperationIntent && isLikelyQueryArtifact(descriptor)) {
+			score += 2;
+		}
+		if (isLikelyQueryArtifact(descriptor) && !containsAny(normalizedInput, STRONG_OPERATION_HINT_KEYWORDS)) {
+			score -= 2;
+		}
+		if (isLikelyWriteArtifact(descriptor)) {
 			score += 1;
 		}
 		return Math.max(score, 0);
@@ -612,6 +789,43 @@ public class AssistantFastIntentHook extends AgentHook implements Prioritized {
 				"修改", "删除", "审批", "报销", "请假");
 	}
 
+	private boolean isLikelyQueryArtifact(PublishedToolDescriptor descriptor) {
+		String text = normalizeForMatch(firstNonBlank(
+				resolvePublishedDisplayName(descriptor),
+				resolvePublishedDescription(descriptor),
+				descriptor != null && descriptor.artifact() != null ? descriptor.artifact().getArtifactCode() : null));
+		return containsAny(text, "query", "search", "list", "read", "lookup", "查询", "检索", "列表", "统计", "获取");
+	}
+
+	private boolean isLikelyWriteArtifact(PublishedToolDescriptor descriptor) {
+		String text = normalizeForMatch(firstNonBlank(
+				resolvePublishedDisplayName(descriptor),
+				resolvePublishedDescription(descriptor),
+				descriptor != null && descriptor.artifact() != null ? descriptor.artifact().getArtifactCode() : null));
+		return containsAny(text, "create", "update", "delete", "submit", "approve", "apply", "发起", "申请", "提交",
+				"修改", "删除", "审批", "报销", "请假");
+	}
+
+	private String resolvePublishedDisplayName(PublishedToolDescriptor descriptor) {
+		if (descriptor == null) {
+			return null;
+		}
+		return firstNonBlank(
+				descriptor.displayName(),
+				descriptor.artifact() != null ? descriptor.artifact().getDisplayName() : null,
+				descriptor.artifact() != null ? descriptor.artifact().getArtifactCode() : null);
+	}
+
+	private String resolvePublishedDescription(PublishedToolDescriptor descriptor) {
+		if (descriptor == null) {
+			return null;
+		}
+		return firstNonBlank(
+				descriptor.targetClassDescription(),
+				descriptor.targetClassName(),
+				descriptor.publicationKey());
+	}
+
 	private String resolveTenantId(OverAllState state) {
 		String tenantId = firstNonBlank(readStateString(state, "tenant_id"), readStateString(state, "tenantId"));
 		return StringUtils.hasText(tenantId) ? tenantId : DEFAULT_TENANT;
@@ -645,6 +859,85 @@ public class AssistantFastIntentHook extends AgentHook implements Prioritized {
 		snapshot.put("riskLevel", tool.getRiskLevel());
 		snapshot.put("requiresConfirm", tool.getRequiresConfirm());
 		return snapshot;
+	}
+
+	private Map<String, Object> buildMatchedToolMetaSnapshot(PublishedToolDescriptor descriptor) {
+		Map<String, Object> snapshot = new LinkedHashMap<>();
+		RuntimeArtifact artifact = descriptor != null ? descriptor.artifact() : null;
+		RuntimeArtifact.Interaction interaction = artifact != null ? artifact.getInteraction() : null;
+		String publishedRiskLevel = resolvePublishedRiskLevel(descriptor);
+		String toolCode = artifact != null ? artifact.getArtifactCode() : null;
+		snapshot.put("toolCode", toolCode);
+		snapshot.put("toolName", resolvePublishedDisplayName(descriptor));
+		snapshot.put("description", resolvePublishedDescription(descriptor));
+		snapshot.put("systemCode", descriptor != null ? descriptor.executionSystemCode() : null);
+		if (interaction != null) {
+			snapshot.put("slotSchema", interaction.slotSchemaJson());
+			snapshot.put("requestSchema", null);
+			snapshot.put("behaviorConfig", interaction.askStrategyJson());
+			snapshot.put("requiresConfirm", requiresPublishedConfirmation(artifact, interaction, publishedRiskLevel));
+		}
+		else {
+			snapshot.put("slotSchema", null);
+			snapshot.put("requestSchema", null);
+			snapshot.put("behaviorConfig", null);
+			snapshot.put("requiresConfirm", requiresPublishedConfirmation(artifact, null, publishedRiskLevel));
+		}
+		snapshot.put("executionPlan", null);
+		snapshot.put("riskLevel", publishedRiskLevel);
+		return snapshot;
+	}
+
+	private String resolvePublishedRiskLevel(PublishedToolDescriptor descriptor) {
+		RuntimeArtifact artifact = descriptor != null ? descriptor.artifact() : null;
+		if (artifact == null || artifact.getActions() == null || artifact.getActions().isEmpty()) {
+			return null;
+		}
+		String highest = null;
+		for (RuntimeArtifact.ActionBinding action : artifact.getActions().values()) {
+			String candidate = action != null ? normalizeRiskLevel(action.riskLevel()) : null;
+			if (riskPriority(candidate) > riskPriority(highest)) {
+				highest = candidate;
+			}
+		}
+		return highest;
+	}
+
+	private boolean requiresPublishedConfirmation(RuntimeArtifact artifact,
+			RuntimeArtifact.Interaction interaction,
+			String publishedRiskLevel) {
+		if (interaction != null && StringUtils.hasText(interaction.confirmationPolicyJson())) {
+			return true;
+		}
+		if (artifact != null && artifact.getActions() != null) {
+			for (RuntimeArtifact.ActionBinding action : artifact.getActions().values()) {
+				if (action != null && action.approvalPolicyId() != null) {
+					return true;
+				}
+			}
+		}
+		return riskPriority(publishedRiskLevel) >= 2;
+	}
+
+	private String normalizeRiskLevel(String riskLevel) {
+		if (!StringUtils.hasText(riskLevel)) {
+			return null;
+		}
+		return riskLevel.trim().toUpperCase(Locale.ROOT);
+	}
+
+	private int riskPriority(String riskLevel) {
+		String normalized = normalizeRiskLevel(riskLevel);
+		if (normalized == null) {
+			return 0;
+		}
+		return switch (normalized) {
+			case "LOW" -> 1;
+			case "MEDIUM" -> 2;
+			case "HIGH" -> 3;
+			case "CRITICAL" -> 4;
+			default -> 0;
+		};
 	}
 
 	private boolean containsAny(String source, String... keywords) {
@@ -750,7 +1043,10 @@ public class AssistantFastIntentHook extends AgentHook implements Prioritized {
 		return null;
 	}
 
-	private String resolveExecuteToolName(String toolCode, List<String> allowlist) {
+	private String resolveExecuteToolName(OverAllState state, String toolCode, List<String> allowlist) {
+		if (shouldPreferArtifactExecute(state, toolCode)) {
+			return "artifact_execute";
+		}
 		String candidate = normalizeIdentifier(toolCode) + "_execute";
 		if (allowlist == null || allowlist.isEmpty()) {
 			return candidate;
@@ -773,6 +1069,57 @@ public class AssistantFastIntentHook extends AgentHook implements Prioritized {
 			return singleExecute;
 		}
 		return candidate;
+	}
+
+	private boolean isAllowlistExplicitlyConfigured(OverAllState state) {
+		if (state == null) {
+			return false;
+		}
+		return state.value(CodeactStateKeys.AVAILABLE_TOOL_NAMES).orElse(null) instanceof List<?>;
+	}
+
+	private boolean canAutoGrantConfirmationExecuteTool(OverAllState state, String executeToolName) {
+		return isArtifactExecuteToolName(executeToolName);
+	}
+
+	private boolean isArtifactExecuteToolName(String toolName) {
+		return StringUtils.hasText(toolName) && "artifact_execute".equalsIgnoreCase(toolName.trim());
+	}
+
+	private boolean shouldPreferArtifactExecute(OverAllState state, String matchedToolCode) {
+		if (publicationScopeResolver == null || artifactPublicationLookupService == null || state == null
+				|| !StringUtils.hasText(matchedToolCode)) {
+			return false;
+		}
+		ToolPublicationProvider.PublicationScope scope = publicationScopeResolver.resolve(
+				Map.of(ToolContextConstants.AGENT_STATE_CONTEXT_KEY, state));
+		if (scope == null) {
+			return false;
+		}
+		boolean artifactRequested = containsIgnoreCase(scope.requestedSourceIds(), "artifact-catalog");
+		boolean legacyRequested = containsIgnoreCase(scope.requestedSourceIds(), "legacy-bridge");
+		boolean legacyHidden = (scope.sourceSelectionMode() == ToolPublicationProvider.SourceSelectionMode.EXCLUSIVE
+				&& !legacyRequested)
+				|| containsIgnoreCase(scope.blockedSourceIds(), "legacy-bridge");
+		if (!artifactRequested || !legacyHidden) {
+			return false;
+		}
+		ToolContext toolContext = new ToolContext(Map.of(ToolContextConstants.AGENT_STATE_CONTEXT_KEY, state));
+		return artifactPublicationLookupService.findPublishedArtifact(matchedToolCode, toolContext).isPresent();
+	}
+
+	private Map<String, Object> buildExecuteArgs(String executeToolName, String matchedToolCode, OverAllState state) {
+		Map<String, Object> collectedSlots = resolveCollectedSlots(state);
+		if (isArtifactExecuteToolName(executeToolName)) {
+			Map<String, Object> executeArgs = new LinkedHashMap<>();
+			executeArgs.put("toolCode", matchedToolCode);
+			executeArgs.put("params", collectedSlots);
+			executeArgs.put("confirmed", true);
+			return executeArgs;
+		}
+		collectedSlots.put("confirmed", true);
+		collectedSlots.putIfAbsent("confirm", true);
+		return collectedSlots;
 	}
 
 	private String findExecuteToolFromAllowlist(List<String> allowlist, String candidate) {
@@ -1070,6 +1417,10 @@ public class AssistantFastIntentHook extends AgentHook implements Prioritized {
 	private record ScoredTool(ToolMeta tool, int score) {
 	}
 
+	private record OperationTarget(String toolCode, Map<String, Object> snapshot) {
+	}
+
+	private record ScoredOperationTarget(OperationTarget target, int score) {
+	}
+
 }
-
-

@@ -17,6 +17,7 @@ package com.alibaba.assistant.agent.runtime.interceptor;
 
 import com.alibaba.assistant.agent.controlplane.toolregistry.ToolMeta;
 import com.alibaba.assistant.agent.runtime.agent.AssistantStateKeys;
+import com.alibaba.assistant.agent.runtime.planner.ToolExecutor;
 import com.alibaba.cloud.ai.graph.OverAllState;
 import com.alibaba.cloud.ai.graph.RunnableConfig;
 import com.alibaba.cloud.ai.graph.agent.interceptor.ToolCallExecutionContext;
@@ -91,4 +92,34 @@ class HumanInTheLoopToolInterceptorTest {
 		verify(handler, times(1)).call(any());
 	}
 
+
+	@Test
+	void shouldSkipHumanConfirmationForInternalDependencyCall() {
+		HumanInTheLoopToolInterceptor interceptor = new HumanInTheLoopToolInterceptor(new ObjectMapper());
+		ToolCallHandler handler = mock(ToolCallHandler.class);
+		when(handler.call(any())).thenReturn(ToolCallResponse.of("current_user", "call-1", "{\"ok\":true}"));
+
+		OverAllState state = new OverAllState();
+		ToolMeta toolMeta = new ToolMeta();
+		toolMeta.setRiskLevel("HIGH");
+		toolMeta.setRequiresConfirm(true);
+		state.updateState(Map.of(AssistantStateKeys.MATCHED_TOOL_META, toolMeta));
+
+		ToolCallRequest request = ToolCallRequest.builder()
+				.toolName("current_user")
+				.toolCallId("call-1")
+				.arguments("{\"employeeId\":\"E001\"}")
+				.context(Map.of(ToolExecutor.INTERNAL_DEPENDENCY_CALL_KEY, true))
+				.executionContext(new ToolCallExecutionContext(
+						RunnableConfig.builder().threadId("thread-1").build(),
+						state))
+				.build();
+
+		ToolCallResponse response = interceptor.interceptToolCall(request, handler);
+
+		assertTrue(!response.isError());
+		verify(handler, times(1)).call(any());
+	}
 }
+
+

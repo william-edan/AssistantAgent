@@ -132,7 +132,24 @@ public class ActionBriefContributor implements PromptContributor {
 		if (rawMeta instanceof ToolMetaSnapshot snapshot) {
 			return Optional.of(fromSnapshot(snapshot));
 		}
+		if (rawMeta instanceof Map<?, ?> rawMap) {
+			Optional<ActionMeta> actionMeta = fromMap(rawMap);
+			if (actionMeta.isPresent()) {
+				return actionMeta;
+			}
+		}
 		if (rawMeta instanceof String jsonText && StringUtils.hasText(jsonText)) {
+			try {
+				Map<String, Object> rawMap = objectMapper.readValue(jsonText, new TypeReference<Map<String, Object>>() {
+				});
+				Optional<ActionMeta> actionMeta = fromMap(rawMap);
+				if (actionMeta.isPresent()) {
+					return actionMeta;
+				}
+			}
+			catch (Exception ignored) {
+				// Ignore and fallback to ToolMetaSnapshot conversion.
+			}
 			try {
 				ToolMetaSnapshot snapshot = objectMapper.readValue(jsonText, ToolMetaSnapshot.class);
 				if (StringUtils.hasText(snapshot.getToolCode())) {
@@ -140,7 +157,7 @@ public class ActionBriefContributor implements PromptContributor {
 				}
 			}
 			catch (Exception ignored) {
-				return Optional.empty();
+				// Ignore and fallback to generic conversion.
 			}
 		}
 
@@ -188,6 +205,44 @@ public class ActionBriefContributor implements PromptContributor {
 				snapshot.getRequestSchema(),
 				null,
 				null);
+	}
+
+	private Optional<ActionMeta> fromMap(Map<?, ?> rawMeta) {
+		if (rawMeta == null || rawMeta.isEmpty()) {
+			return Optional.empty();
+		}
+		String toolCode = firstNonEmpty(asText(rawMeta.get("toolCode")), asText(rawMeta.get("tool_code")));
+		String toolName = firstNonEmpty(asText(rawMeta.get("toolName")), asText(rawMeta.get("tool_name")));
+		String description = firstNonEmpty(
+				asText(rawMeta.get("description")),
+				asText(rawMeta.get("toolDescription")),
+				asText(rawMeta.get("tool_description")));
+		String systemCode = firstNonEmpty(asText(rawMeta.get("systemCode")), asText(rawMeta.get("system_code")));
+		String parameterSchema = firstNonEmpty(
+				asText(rawMeta.get("parameterSchema")),
+				asText(rawMeta.get("parameter_schema")));
+		String slotSchema = firstNonEmpty(
+				asText(rawMeta.get("slotSchema")),
+				asText(rawMeta.get("slot_schema")),
+				parameterSchema);
+		String requestSchema = firstNonEmpty(
+				asText(rawMeta.get("requestSchema")),
+				asText(rawMeta.get("request_schema")),
+				parameterSchema);
+		String riskLevel = firstNonEmpty(asText(rawMeta.get("riskLevel")), asText(rawMeta.get("risk_level")));
+		Boolean requiresConfirm = asBoolean(firstNonNull(rawMeta.get("requiresConfirm"), rawMeta.get("requires_confirm")));
+		if (!StringUtils.hasText(toolCode) && !StringUtils.hasText(toolName)) {
+			return Optional.empty();
+		}
+		return Optional.of(new ActionMeta(
+				toolCode,
+				toolName,
+				description,
+				systemCode,
+				slotSchema,
+				requestSchema,
+				riskLevel,
+				requiresConfirm));
 	}
 
 	private List<SlotDefinition> resolveSlotDefinitions(ActionMeta actionMeta) {
@@ -543,6 +598,35 @@ public class ActionBriefContributor implements PromptContributor {
 		}
 		String text = String.valueOf(value).trim();
 		return StringUtils.hasText(text) ? text : null;
+	}
+
+	private String firstNonEmpty(String... values) {
+		if (values == null || values.length == 0) {
+			return null;
+		}
+		for (String value : values) {
+			if (StringUtils.hasText(value)) {
+				return value;
+			}
+		}
+		return null;
+	}
+
+	private Boolean asBoolean(Object value) {
+		if (value instanceof Boolean booleanValue) {
+			return booleanValue;
+		}
+		String text = asText(value);
+		if (!StringUtils.hasText(text)) {
+			return null;
+		}
+		if ("true".equalsIgnoreCase(text)) {
+			return true;
+		}
+		if ("false".equalsIgnoreCase(text)) {
+			return false;
+		}
+		return null;
 	}
 
 	private Object firstNonNull(Object... values) {

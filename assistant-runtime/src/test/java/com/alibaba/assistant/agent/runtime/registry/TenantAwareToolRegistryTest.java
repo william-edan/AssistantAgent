@@ -36,6 +36,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -101,6 +103,70 @@ class TenantAwareToolRegistryTest {
         verify(artifactProvider, times(2)).listPublishedTools(scope);
         verify(legacyProvider, times(2)).listPublishedTools(scope);
     }
+
+    @Test
+    void shouldExcludeLegacyBridgeDirectToolsFromReactAccessibleTools() {
+        ToolPublicationProvider artifactProvider = mock(ToolPublicationProvider.class);
+        ToolPublicationProvider legacyProvider = mock(ToolPublicationProvider.class);
+        ToolPublicationProvider mcpProvider = mock(ToolPublicationProvider.class);
+        ToolPublicationProviderSelector selector = new ToolPublicationProviderSelector();
+        ToolPublicationMaterializer materializer = new ToolPublicationMaterializer(new ArtifactToolFactory(new ObjectMapper()));
+        RuntimeArtifact artifact = new RuntimeArtifact(
+                1L,
+                "oa.leave.apply",
+                RuntimeArtifact.ArtifactType.WORKFLOW,
+                "请假申请",
+                1,
+                null,
+                null,
+                null,
+                null,
+                null,
+                new FlowDefinition(),
+                Map.of(),
+                Map.of());
+        CodeactTool legacyTool = mockCodeactTool("leave_application_execute");
+        CodeactTool mcpTool = mockCodeactTool("kb_search");
+        PublishedToolDescriptor artifactDescriptor = new PublishedToolDescriptor(
+                "artifact-catalog",
+                "workflow:oa.leave.apply",
+                "请假申请",
+                "oa_tools",
+                "OA workflow tools",
+                false,
+                null,
+                artifact);
+        PublishedToolDescriptor legacyDescriptor = PublishedToolDescriptor.forDirectTool(
+                "legacy-bridge",
+                "legacy:leave_application_execute",
+                "请假审批",
+                legacyTool);
+        PublishedToolDescriptor mcpDescriptor = PublishedToolDescriptor.forDirectTool(
+                "mcp",
+                "mcp:kb_search",
+                "知识库搜索",
+                mcpTool);
+        ToolPublicationProvider.PublicationScope scope = new ToolPublicationProvider.PublicationScope("default", null, null, null);
+        when(artifactProvider.providerId()).thenReturn("artifact-catalog");
+        when(legacyProvider.providerId()).thenReturn("legacy-bridge");
+        when(mcpProvider.providerId()).thenReturn("mcp");
+        when(artifactProvider.listPublishedTools(scope)).thenReturn(List.of(artifactDescriptor));
+        when(legacyProvider.listPublishedTools(scope)).thenReturn(List.of(legacyDescriptor));
+        when(mcpProvider.listPublishedTools(scope)).thenReturn(List.of(mcpDescriptor));
+
+        TenantAwareToolRegistry registry = new TenantAwareToolRegistry(
+                List.of(artifactProvider, legacyProvider, mcpProvider), materializer, null, selector);
+        List<String> reactToolNames = registry.getReactAccessibleTools().stream()
+                .map(tool -> tool.getToolDefinition().name())
+                .toList();
+
+        assertTrue(registry.getTool("leave_application_execute").isPresent());
+        assertEquals(1, reactToolNames.size());
+        assertTrue(reactToolNames.contains("kb_search"));
+        assertFalse(reactToolNames.contains("leave_application_execute"));
+        assertFalse(reactToolNames.contains("oa_leave_apply_execute"));
+    }
+
 
     @Test
     void shouldCreateScopedRegistryFromToolContext() {
@@ -333,4 +399,6 @@ class TenantAwareToolRegistryTest {
         return tool;
     }
 }
+
+
 

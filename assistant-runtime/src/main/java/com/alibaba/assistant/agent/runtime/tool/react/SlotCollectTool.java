@@ -19,7 +19,9 @@ import com.alibaba.assistant.agent.controlplane.toolregistry.ToolMeta;
 import com.alibaba.assistant.agent.controlplane.toolregistry.ToolMetaService;
 import com.alibaba.assistant.agent.runtime.agent.AssistantStateKeys;
 import com.alibaba.assistant.agent.runtime.registry.ArtifactPublicationLookupService;
+import com.alibaba.assistant.agent.runtime.registry.PublicationScopeResolver;
 import com.alibaba.assistant.agent.runtime.registry.PublishedToolDescriptor;
+import com.alibaba.assistant.agent.runtime.registry.ToolPublicationProvider;
 import com.alibaba.assistant.agent.runtime.planner.DependencyResolver;
 import com.alibaba.assistant.agent.runtime.planner.FieldMappingProcessor;
 import com.alibaba.assistant.agent.runtime.planner.ToolExecutor;
@@ -108,6 +110,7 @@ public class SlotCollectTool implements BiFunction<SlotCollectTool.Request, Tool
     private final FieldMappingProcessor fieldMappingProcessor;
     private final ToolExecutor toolExecutor;
     private final ArtifactPublicationLookupService artifactPublicationLookupService;
+    private final PublicationScopeResolver publicationScopeResolver;
 
         public SlotCollectTool(SlotCollectorService slotCollectorService,
                            SlotEnricherService slotEnricherService,
@@ -115,7 +118,7 @@ public class SlotCollectTool implements BiFunction<SlotCollectTool.Request, Tool
                            SlotSchemaParser slotSchemaParser,
                            ObjectMapper objectMapper) {
         this(slotCollectorService, slotEnricherService, computedFieldProcessor, slotSchemaParser, objectMapper,
-                null, null, null, null, null);
+                null, null, null, null, null, null);
     }
 
     public SlotCollectTool(SlotCollectorService slotCollectorService,
@@ -125,7 +128,7 @@ public class SlotCollectTool implements BiFunction<SlotCollectTool.Request, Tool
                            ObjectMapper objectMapper,
                            ToolMetaService toolMetaService) {
         this(slotCollectorService, slotEnricherService, computedFieldProcessor, slotSchemaParser, objectMapper,
-                toolMetaService, null, null, null, null);
+                toolMetaService, null, null, null, null, null);
     }
 
     public SlotCollectTool(SlotCollectorService slotCollectorService,
@@ -138,7 +141,7 @@ public class SlotCollectTool implements BiFunction<SlotCollectTool.Request, Tool
                            FieldMappingProcessor fieldMappingProcessor,
                            ToolExecutor toolExecutor) {
         this(slotCollectorService, slotEnricherService, computedFieldProcessor, slotSchemaParser, objectMapper,
-                toolMetaService, dependencyResolver, fieldMappingProcessor, toolExecutor, null);
+                toolMetaService, dependencyResolver, fieldMappingProcessor, toolExecutor, null, null);
     }
 
     @Autowired
@@ -151,7 +154,8 @@ public class SlotCollectTool implements BiFunction<SlotCollectTool.Request, Tool
                            @Nullable DependencyResolver dependencyResolver,
                            @Nullable FieldMappingProcessor fieldMappingProcessor,
                            @Nullable ToolExecutor toolExecutor,
-                           @Nullable ArtifactPublicationLookupService artifactPublicationLookupService) {
+                           @Nullable ArtifactPublicationLookupService artifactPublicationLookupService,
+                           @Nullable PublicationScopeResolver publicationScopeResolver) {
         this.slotCollectorService = slotCollectorService;
         this.slotEnricherService = slotEnricherService;
         this.computedFieldProcessor = computedFieldProcessor;
@@ -162,7 +166,9 @@ public class SlotCollectTool implements BiFunction<SlotCollectTool.Request, Tool
         this.fieldMappingProcessor = fieldMappingProcessor != null ? fieldMappingProcessor : new FieldMappingProcessor();
         this.toolExecutor = toolExecutor;
         this.artifactPublicationLookupService = artifactPublicationLookupService;
+        this.publicationScopeResolver = publicationScopeResolver;
     }
+
     public static ToolCallback createToolCallback(SlotCollectTool tool) {
         return FunctionToolCallback.builder("slot_collect", tool)
                 .description("Collect and enrich workflow slots, then return COLLECTING/COMPLETE result.")
@@ -861,14 +867,20 @@ public class SlotCollectTool implements BiFunction<SlotCollectTool.Request, Tool
         if (state != null) {
             Object raw = state.value(AssistantStateKeys.MATCHED_TOOL_META, Object.class).orElse(null);
             if (raw != null) {
-                if (raw instanceof ToolMetaSnapshot snapshot) {
+                if (raw instanceof ToolMetaSnapshot snapshot && hasUsableSchema(snapshot)) {
                     return snapshot;
                 }
                 if (raw instanceof ToolMeta toolMeta) {
-                    return convertFromToolMeta(toolMeta);
+                    ToolMetaSnapshot snapshot = convertFromToolMeta(toolMeta);
+                    if (hasUsableSchema(snapshot)) {
+                        return snapshot;
+                    }
                 }
                 try {
-                    return objectMapper.convertValue(raw, ToolMetaSnapshot.class);
+                    ToolMetaSnapshot snapshot = objectMapper.convertValue(raw, ToolMetaSnapshot.class);
+                    if (hasUsableSchema(snapshot)) {
+                        return snapshot;
+                    }
                 }
                 catch (Exception e) {
                     logger.warn("SlotCollectTool#resolveToolMetaSnapshot - cannot convert state meta, error={}",
@@ -876,18 +888,7 @@ public class SlotCollectTool implements BiFunction<SlotCollectTool.Request, Tool
                 }
             }
         }
-
-        // Priority 2: Lookup ToolMeta from database by toolCode
-        if (StringUtils.hasText(request.toolCode) && toolMetaService != null) {
-            ToolMeta toolMeta = lookupToolMetaByCode(resolveTenantId(state, request), request.toolCode);
-            if (toolMeta != null) {
-                logger.info("SlotCollectTool#resolveToolMetaSnapshot - reason=从数据库找到ToolMeta, toolCode={}",
-                        request.toolCode);
-                return convertFromToolMeta(toolMeta);
-            }
-        }
-
-        // Priority 3: Lookup published artifact interaction by toolCode
+        // Priority 2: Lookup published artifact interaction by toolCode
         if (StringUtils.hasText(request.toolCode) && artifactPublicationLookupService != null) {
             Optional<PublishedToolDescriptor> publishedArtifact = artifactPublicationLookupService
                     .findPublishedArtifact(request.toolCode, toolContext);
@@ -895,6 +896,17 @@ public class SlotCollectTool implements BiFunction<SlotCollectTool.Request, Tool
                 logger.info("SlotCollectTool#resolveToolMetaSnapshot - reason=从artifact publication找到交互定义, toolCode={}",
                         request.toolCode);
                 return convertFromPublishedArtifact(publishedArtifact.get());
+            }
+        }
+
+        // Priority 3: Lookup ToolMeta from database by toolCode only when compatibility fallback is allowed
+        if (StringUtils.hasText(request.toolCode) && toolMetaService != null
+                && allowsLegacyToolMetaFallback(state, toolContext)) {
+            ToolMeta toolMeta = lookupToolMetaByCode(resolveTenantId(state, request), request.toolCode);
+            if (toolMeta != null) {
+                logger.info("SlotCollectTool#resolveToolMetaSnapshot - reason=从数据库找到ToolMeta, toolCode={}",
+                        request.toolCode);
+                return convertFromToolMeta(toolMeta);
             }
         }
 
@@ -910,6 +922,51 @@ public class SlotCollectTool implements BiFunction<SlotCollectTool.Request, Tool
         }
 
         return null;
+    }
+
+    private boolean hasUsableSchema(ToolMetaSnapshot snapshot) {
+        return snapshot != null
+                && (StringUtils.hasText(snapshot.getSlotSchema()) || StringUtils.hasText(snapshot.getRequestSchema()));
+    }
+
+    private boolean allowsLegacyToolMetaFallback(OverAllState state, ToolContext toolContext) {
+        ToolPublicationProvider.PublicationScope scope = resolvePublicationScope(state, toolContext);
+        if (scope == null) {
+            return true;
+        }
+        if (containsIgnoreCase(scope.requestedSourceIds(), "legacy-bridge")) {
+            return true;
+        }
+        if (containsIgnoreCase(scope.blockedSourceIds(), "legacy-bridge")) {
+            return false;
+        }
+        return scope.sourceSelectionMode() != ToolPublicationProvider.SourceSelectionMode.EXCLUSIVE;
+    }
+
+    @Nullable
+    private ToolPublicationProvider.PublicationScope resolvePublicationScope(OverAllState state, ToolContext toolContext) {
+        if (publicationScopeResolver == null) {
+            return null;
+        }
+        if (toolContext != null) {
+            return publicationScopeResolver.resolve(toolContext);
+        }
+        if (state == null) {
+            return null;
+        }
+        return publicationScopeResolver.resolve(Map.of(ToolContextConstants.AGENT_STATE_CONTEXT_KEY, state));
+    }
+
+    private boolean containsIgnoreCase(List<String> source, String target) {
+        if (source == null || source.isEmpty() || !StringUtils.hasText(target)) {
+            return false;
+        }
+        for (String item : source) {
+            if (item != null && target.equalsIgnoreCase(item.trim())) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private ToolMeta lookupToolMetaByCode(String tenantId, String toolCode) {
@@ -963,7 +1020,7 @@ public class SlotCollectTool implements BiFunction<SlotCollectTool.Request, Tool
                                                               String assistantUid,
                                                               OverAllState state,
                                                               ToolContext toolContext) {
-        List<DependencyResolver.ResolvedStep> steps = resolveDependencySteps(snapshot, tenantId);
+        List<DependencyResolver.ResolvedStep> steps = resolveDependencySteps(snapshot, tenantId, state, toolContext);
         if (steps.isEmpty()) {
             return new DependencyExecution(
                     cachedDependencyResults != null ? cachedDependencyResults : Collections.emptyMap(),
@@ -1009,26 +1066,32 @@ public class SlotCollectTool implements BiFunction<SlotCollectTool.Request, Tool
         return new DependencyExecution(results, mappings);
     }
 
-    private List<DependencyResolver.ResolvedStep> resolveDependencySteps(ToolMetaSnapshot snapshot, String tenantId) {
+    private List<DependencyResolver.ResolvedStep> resolveDependencySteps(ToolMetaSnapshot snapshot,
+                                                                         String tenantId,
+                                                                         OverAllState state,
+                                                                         ToolContext toolContext) {
         if (dependencyResolver == null || !StringUtils.hasText(snapshot.getToolCode())) {
             return Collections.emptyList();
         }
 
         String targetToolCode = snapshot.getToolCode().trim();
-        ToolMeta rootMeta = null;
-        if (toolMetaService != null) {
-            rootMeta = toolMetaService.findLatestEnabledByToolCode(tenantId, targetToolCode).orElse(null);
-        }
-        if (rootMeta == null) {
-            rootMeta = new ToolMeta();
-            rootMeta.setToolCode(targetToolCode);
-            rootMeta.setDescription(targetToolCode);
-            rootMeta.setSystemCode(snapshot.getSystemCode());
-            rootMeta.setInteractionPolicy(snapshot.getBehaviorConfig());
-        }
-        else if (!StringUtils.hasText(rootMeta.getInteractionPolicy())
-                && StringUtils.hasText(snapshot.getBehaviorConfig())) {
-            rootMeta.setInteractionPolicy(snapshot.getBehaviorConfig());
+        boolean allowLegacyFallback = allowsLegacyToolMetaFallback(state, toolContext);
+        ToolMeta rootMeta = new ToolMeta();
+        rootMeta.setToolCode(targetToolCode);
+        rootMeta.setDescription(targetToolCode);
+        rootMeta.setSystemCode(snapshot.getSystemCode());
+        rootMeta.setInteractionPolicy(snapshot.getBehaviorConfig());
+        rootMeta.setParameterSchema(snapshot.getSlotSchema());
+
+        if (!StringUtils.hasText(rootMeta.getInteractionPolicy()) && allowLegacyFallback && toolMetaService != null) {
+            ToolMeta legacyRootMeta = toolMetaService.findLatestEnabledByToolCode(tenantId, targetToolCode).orElse(null);
+            if (legacyRootMeta != null) {
+                rootMeta = legacyRootMeta;
+                if (!StringUtils.hasText(rootMeta.getInteractionPolicy())
+                        && StringUtils.hasText(snapshot.getBehaviorConfig())) {
+                    rootMeta.setInteractionPolicy(snapshot.getBehaviorConfig());
+                }
+            }
         }
 
         ToolMeta finalRootMeta = rootMeta;
@@ -1037,13 +1100,49 @@ public class SlotCollectTool implements BiFunction<SlotCollectTool.Request, Tool
                     && targetToolCode.equalsIgnoreCase(toolCode.trim())) {
                 return Optional.of(finalRootMeta);
             }
-            if (toolMetaService == null) {
+            Optional<ToolMeta> publishedMeta = resolvePublishedDependencyToolMeta(toolCode, state, toolContext);
+            if (publishedMeta.isPresent()) {
+                return publishedMeta;
+            }
+            if (!allowLegacyFallback || toolMetaService == null) {
                 return Optional.empty();
             }
             return toolMetaService.findLatestEnabledByToolCode(tenantId, toolCode);
         });
     }
 
+    private Optional<ToolMeta> resolvePublishedDependencyToolMeta(String toolCode,
+                                                                  OverAllState state,
+                                                                  ToolContext toolContext) {
+        if (!StringUtils.hasText(toolCode) || artifactPublicationLookupService == null) {
+            return Optional.empty();
+        }
+        ToolContext lookupContext = toolContext;
+        if (lookupContext == null && state != null) {
+            lookupContext = new ToolContext(Map.of(ToolContextConstants.AGENT_STATE_CONTEXT_KEY, state));
+        }
+        return artifactPublicationLookupService.findPublishedArtifact(toolCode, lookupContext)
+                .map(this::convertPublishedArtifactToToolMeta);
+    }
+
+    private ToolMeta convertPublishedArtifactToToolMeta(PublishedToolDescriptor descriptor) {
+        ToolMeta toolMeta = new ToolMeta();
+        toolMeta.setToolCode(descriptor.artifact().getArtifactCode());
+        toolMeta.setToolName(firstNonEmpty(
+                descriptor.displayName(),
+                descriptor.artifact().getDisplayName(),
+                descriptor.artifact().getArtifactCode()));
+        toolMeta.setDescription(firstNonEmpty(
+                descriptor.displayName(),
+                descriptor.artifact().getDisplayName(),
+                descriptor.artifact().getArtifactCode()));
+        toolMeta.setSystemCode(descriptor.executionSystemCode());
+        if (descriptor.artifact().getInteraction() != null) {
+            toolMeta.setParameterSchema(descriptor.artifact().getInteraction().slotSchemaJson());
+            toolMeta.setInteractionPolicy(descriptor.artifact().getInteraction().askStrategyJson());
+        }
+        return toolMeta;
+    }
     private List<DependencyResolver.FieldMapping> collectDependencyMappings(List<DependencyResolver.ResolvedStep> steps) {
         if (steps == null || steps.size() <= 1) {
             return Collections.emptyList();
@@ -1501,6 +1600,14 @@ public class SlotCollectTool implements BiFunction<SlotCollectTool.Request, Tool
         public String options;
     }
 }
+
+
+
+
+
+
+
+
 
 
 

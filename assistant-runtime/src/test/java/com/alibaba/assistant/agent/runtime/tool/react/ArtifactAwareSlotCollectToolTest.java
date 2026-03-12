@@ -15,8 +15,17 @@
  */
 package com.alibaba.assistant.agent.runtime.tool.react;
 
+import com.alibaba.assistant.agent.controlplane.space.PlatformSpaceService;
+import com.alibaba.assistant.agent.controlplane.toolregistry.ToolMeta;
+import com.alibaba.assistant.agent.controlplane.toolregistry.ToolMetaService;
 import com.alibaba.assistant.agent.execution.flow.FlowDefinition;
+import com.alibaba.assistant.agent.runtime.agent.AssistantStateKeys;
+import com.alibaba.assistant.agent.runtime.compiler.RuntimeArtifact;
+import com.alibaba.assistant.agent.runtime.planner.DependencyResolver;
+import com.alibaba.assistant.agent.runtime.planner.FieldMappingProcessor;
+import com.alibaba.assistant.agent.runtime.planner.ToolExecutor;
 import com.alibaba.assistant.agent.runtime.registry.ArtifactPublicationLookupService;
+import com.alibaba.assistant.agent.runtime.registry.PublicationScopeResolver;
 import com.alibaba.assistant.agent.runtime.registry.PublishedToolDescriptor;
 import com.alibaba.assistant.agent.slot.SlotCollectorService;
 import com.alibaba.assistant.agent.slot.SlotEnricherService;
@@ -28,10 +37,12 @@ import com.alibaba.assistant.agent.slot.model.SlotDefinition;
 import com.alibaba.assistant.agent.slot.model.SlotPriority;
 import com.alibaba.assistant.agent.slot.model.SlotValue;
 import com.alibaba.assistant.agent.slot.model.ToolMetaSnapshot;
-import com.alibaba.assistant.agent.runtime.compiler.RuntimeArtifact;
+import com.alibaba.cloud.ai.graph.OverAllState;
+import com.alibaba.cloud.ai.graph.agent.tools.ToolContextConstants;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.springframework.ai.chat.model.ToolContext;
 
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -43,8 +54,11 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyMap;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -57,23 +71,7 @@ class ArtifactAwareSlotCollectToolTest {
         ComputedFieldProcessor computed = mock(ComputedFieldProcessor.class);
         SlotSchemaParser parser = mock(SlotSchemaParser.class);
         ArtifactPublicationLookupService lookupService = mock(ArtifactPublicationLookupService.class);
-
-        SlotDefinition reason = new SlotDefinition();
-        reason.setName("reason");
-        reason.setType("string");
-        reason.setPriority(SlotPriority.CORE);
-        reason.setAskMode(SlotAskMode.BATCH);
-        reason.setRequired(true);
-        when(parser.parse(any(ToolMetaSnapshot.class))).thenReturn(List.of(reason));
-        when(collector.collectFromAgent(anyMap(), anyList(), anyMap())).thenAnswer(invocation -> {
-            @SuppressWarnings("unchecked")
-            Map<String, Object> extraction = invocation.getArgument(0);
-            Map<String, SlotValue> collected = new LinkedHashMap<>();
-            extraction.forEach((key, value) -> collected.put(key, SlotValue.resolved(key, String.valueOf(value), value, String.valueOf(value))));
-            return collected;
-        });
-        when(collector.checkCollectionStatus(anyList(), anyMap())).thenReturn(SlotCollectStatus.COMPLETE);
-        when(collector.buildFinalParams(anyList(), anyMap())).thenAnswer(invocation -> Map.of("reason", "事假"));
+        stubCompleteCollection(collector, parser);
         when(lookupService.findPublishedArtifact(eq("oa.leave.apply"), any()))
                 .thenReturn(Optional.of(descriptor("oa.leave.apply", "gougu_oa")));
 
@@ -87,7 +85,8 @@ class ArtifactAwareSlotCollectToolTest {
                 null,
                 null,
                 null,
-                lookupService);
+                lookupService,
+                null);
         SlotCollectTool.Request request = new SlotCollectTool.Request();
         request.toolCode = "oa.leave.apply";
         request.extractedSlots = Map.of("reason", "事假");
@@ -102,12 +101,306 @@ class ArtifactAwareSlotCollectToolTest {
         assertEquals(SlotCollectStatus.COMPLETE.name(), response.status);
     }
 
+
+    @Test
+    void shouldLookupPublishedArtifactWhenStateMetaMapLacksSlotSchema() {
+        SlotCollectorService collector = mock(SlotCollectorService.class);
+        SlotEnricherService enricher = mock(SlotEnricherService.class);
+        ComputedFieldProcessor computed = mock(ComputedFieldProcessor.class);
+        SlotSchemaParser parser = mock(SlotSchemaParser.class);
+        ArtifactPublicationLookupService lookupService = mock(ArtifactPublicationLookupService.class);
+        stubCompleteCollection(collector, parser);
+        when(lookupService.findPublishedArtifact(eq("oa.leave.apply"), any()))
+                .thenReturn(Optional.of(descriptor("oa.leave.apply", "gougu_oa")));
+
+        SlotCollectTool tool = new SlotCollectTool(
+                collector,
+                enricher,
+                computed,
+                parser,
+                new ObjectMapper(),
+                null,
+                null,
+                null,
+                null,
+                lookupService,
+                null);
+        OverAllState state = new OverAllState();
+        state.updateState(Map.of(
+                AssistantStateKeys.MATCHED_TOOL_META,
+                Map.of(
+                        "toolCode", "oa.leave.apply",
+                        "systemCode", "gougu_oa")));
+        ToolContext toolContext = new ToolContext(Map.of(ToolContextConstants.AGENT_STATE_CONTEXT_KEY, state));
+        SlotCollectTool.Request request = new SlotCollectTool.Request();
+        request.toolCode = "oa.leave.apply";
+        request.extractedSlots = Map.of("reason", "事假");
+
+        SlotCollectTool.Response response = tool.apply(request, toolContext);
+
+        ArgumentCaptor<ToolMetaSnapshot> snapshotCaptor = ArgumentCaptor.forClass(ToolMetaSnapshot.class);
+        verify(parser).parse(snapshotCaptor.capture());
+        assertEquals("oa.leave.apply", snapshotCaptor.getValue().getToolCode());
+        assertTrue(snapshotCaptor.getValue().getSlotSchema().contains("reason"));
+        assertEquals(SlotCollectStatus.COMPLETE.name(), response.status);
+    }
+    @Test
+    void shouldPreferPublishedArtifactBeforeLegacyToolMetaFallback() {
+        SlotCollectorService collector = mock(SlotCollectorService.class);
+        SlotEnricherService enricher = mock(SlotEnricherService.class);
+        ComputedFieldProcessor computed = mock(ComputedFieldProcessor.class);
+        SlotSchemaParser parser = mock(SlotSchemaParser.class);
+        ArtifactPublicationLookupService lookupService = mock(ArtifactPublicationLookupService.class);
+        ToolMetaService toolMetaService = mock(ToolMetaService.class);
+        stubCompleteCollection(collector, parser);
+        when(lookupService.findPublishedArtifact(eq("oa.leave.apply"), any()))
+                .thenReturn(Optional.of(descriptor("oa.leave.apply", "gougu_oa")));
+        when(toolMetaService.findLatestEnabledByToolCode("default", "oa.leave.apply"))
+                .thenReturn(Optional.of(legacyToolMeta("oa.leave.apply")));
+
+        SlotCollectTool tool = new SlotCollectTool(
+                collector,
+                enricher,
+                computed,
+                parser,
+                new ObjectMapper(),
+                toolMetaService,
+                null,
+                null,
+                null,
+                lookupService,
+                null);
+        SlotCollectTool.Request request = new SlotCollectTool.Request();
+        request.toolCode = "oa.leave.apply";
+        request.extractedSlots = Map.of("reason", "事假");
+
+        SlotCollectTool.Response response = tool.apply(request, null);
+
+        assertEquals(SlotCollectStatus.COMPLETE.name(), response.status);
+        verify(toolMetaService, never()).findLatestEnabledByToolCode(anyString(), eq("oa.leave.apply"));
+    }
+
+    @Test
+    void shouldNotFallbackToLegacyToolMetaWhenScopedCallDefaultsToArtifactOnly() {
+        SlotCollectorService collector = mock(SlotCollectorService.class);
+        SlotEnricherService enricher = mock(SlotEnricherService.class);
+        ComputedFieldProcessor computed = mock(ComputedFieldProcessor.class);
+        SlotSchemaParser parser = mock(SlotSchemaParser.class);
+        ArtifactPublicationLookupService lookupService = mock(ArtifactPublicationLookupService.class);
+        ToolMetaService toolMetaService = mock(ToolMetaService.class);
+        PublicationScopeResolver publicationScopeResolver = new PublicationScopeResolver(mock(PlatformSpaceService.class));
+        when(lookupService.findPublishedArtifact(eq("gougu_oa.leave_application"), any()))
+                .thenReturn(Optional.empty());
+        when(toolMetaService.findLatestEnabledByToolCode("default", "gougu_oa.leave_application"))
+                .thenReturn(Optional.of(legacyToolMeta("gougu_oa.leave_application")));
+
+        SlotCollectTool tool = new SlotCollectTool(
+                collector,
+                enricher,
+                computed,
+                parser,
+                new ObjectMapper(),
+                toolMetaService,
+                null,
+                null,
+                null,
+                lookupService,
+                publicationScopeResolver);
+        SlotCollectTool.Request request = new SlotCollectTool.Request();
+        request.toolCode = "gougu_oa.leave_application";
+
+        SlotCollectTool.Response response = tool.apply(request, scopedToolContext(false));
+
+        assertEquals("ERROR", response.status);
+        assertEquals("Missing tool meta snapshot or slot schema", response.message);
+        verify(parser, never()).parse(any(ToolMetaSnapshot.class));
+        verify(toolMetaService, never()).findLatestEnabledByToolCode(anyString(), eq("gougu_oa.leave_application"));
+    }
+
+    @Test
+    void shouldFallbackToLegacyToolMetaWhenScopedCallAllowsLegacyFallback() {
+        SlotCollectorService collector = mock(SlotCollectorService.class);
+        SlotEnricherService enricher = mock(SlotEnricherService.class);
+        ComputedFieldProcessor computed = mock(ComputedFieldProcessor.class);
+        SlotSchemaParser parser = mock(SlotSchemaParser.class);
+        ArtifactPublicationLookupService lookupService = mock(ArtifactPublicationLookupService.class);
+        ToolMetaService toolMetaService = mock(ToolMetaService.class);
+        PublicationScopeResolver publicationScopeResolver = new PublicationScopeResolver(mock(PlatformSpaceService.class));
+        stubCompleteCollection(collector, parser);
+        when(lookupService.findPublishedArtifact(eq("gougu_oa.leave_application"), any()))
+                .thenReturn(Optional.empty());
+        when(toolMetaService.findLatestEnabledByToolCode("default", "gougu_oa.leave_application"))
+                .thenReturn(Optional.of(legacyToolMeta("gougu_oa.leave_application")));
+
+        SlotCollectTool tool = new SlotCollectTool(
+                collector,
+                enricher,
+                computed,
+                parser,
+                new ObjectMapper(),
+                toolMetaService,
+                null,
+                null,
+                null,
+                lookupService,
+                publicationScopeResolver);
+        SlotCollectTool.Request request = new SlotCollectTool.Request();
+        request.toolCode = "gougu_oa.leave_application";
+        request.extractedSlots = Map.of("reason", "事假");
+
+        SlotCollectTool.Response response = tool.apply(request, scopedToolContext(true));
+
+        ArgumentCaptor<ToolMetaSnapshot> snapshotCaptor = ArgumentCaptor.forClass(ToolMetaSnapshot.class);
+        verify(parser).parse(snapshotCaptor.capture());
+        assertEquals("gougu_oa.leave_application", snapshotCaptor.getValue().getToolCode());
+        assertTrue(snapshotCaptor.getValue().getSlotSchema().contains("reason"));
+        assertEquals(SlotCollectStatus.COMPLETE.name(), response.status);
+        verify(toolMetaService, times(1)).findLatestEnabledByToolCode("default", "gougu_oa.leave_application");
+    }
+
+    @Test
+    void shouldResolveDependencyStepsFromPublishedArtifactsWhenToolMetaIsUnavailable() {
+        SlotCollectorService collector = mock(SlotCollectorService.class);
+        SlotEnricherService enricher = mock(SlotEnricherService.class);
+        ComputedFieldProcessor computed = mock(ComputedFieldProcessor.class);
+        SlotSchemaParser parser = mock(SlotSchemaParser.class);
+        ArtifactPublicationLookupService lookupService = mock(ArtifactPublicationLookupService.class);
+        ToolMetaService toolMetaService = mock(ToolMetaService.class);
+        ToolExecutor toolExecutor = mock(ToolExecutor.class);
+        PublicationScopeResolver publicationScopeResolver = new PublicationScopeResolver(mock(PlatformSpaceService.class));
+        DependencyResolver dependencyResolver = new DependencyResolver(new ObjectMapper());
+
+        SlotDefinition employeeId = new SlotDefinition();
+        employeeId.setName("employeeId");
+        employeeId.setType("string");
+        employeeId.setPriority(SlotPriority.CORE);
+        employeeId.setAskMode(SlotAskMode.AUTO);
+        employeeId.setRequired(true);
+        SlotDefinition reason = new SlotDefinition();
+        reason.setName("reason");
+        reason.setType("string");
+        reason.setPriority(SlotPriority.CORE);
+        reason.setAskMode(SlotAskMode.BATCH);
+        reason.setRequired(true);
+        List<SlotDefinition> definitions = List.of(employeeId, reason);
+        when(parser.parse(any(ToolMetaSnapshot.class))).thenReturn(definitions);
+        when(collector.collectFromAgent(anyMap(), anyList(), anyMap())).thenAnswer(invocation -> {
+            @SuppressWarnings("unchecked")
+            Map<String, Object> extraction = invocation.getArgument(0);
+            @SuppressWarnings("unchecked")
+            Map<String, SlotValue> existing = invocation.getArgument(2);
+            Map<String, SlotValue> collected = existing != null ? new LinkedHashMap<>(existing) : new LinkedHashMap<>();
+            extraction.forEach((key, value) -> collected.put(key,
+                    SlotValue.resolved(key, String.valueOf(value), value, String.valueOf(value))));
+            return collected;
+        });
+        when(collector.checkCollectionStatus(anyList(), anyMap())).thenReturn(SlotCollectStatus.COMPLETE);
+        when(collector.buildFinalParams(anyList(), anyMap())).thenAnswer(invocation -> {
+            @SuppressWarnings("unchecked")
+            Map<String, SlotValue> slotValues = invocation.getArgument(1);
+            Map<String, Object> finalParams = new LinkedHashMap<>();
+            slotValues.forEach((key, value) -> finalParams.put(key, value.getResolvedValue()));
+            return finalParams;
+        });
+        when(lookupService.findPublishedArtifact(eq("oa.leave.apply"), any()))
+                .thenReturn(Optional.of(descriptor(
+                        "oa.leave.apply",
+                        "gougu_oa",
+                        "{\"dependsOn\":[\"oa.current.user\"],\"fieldMappings\":[{\"fromTool\":\"oa.current.user\",\"fromField\":\"employeeId\",\"toField\":\"employeeId\"}]}")));
+        when(lookupService.findPublishedArtifact(eq("oa.current.user"), any()))
+                .thenReturn(Optional.of(descriptor("oa.current.user", "gougu_oa", null)));
+        when(toolMetaService.findLatestEnabledByToolCode(anyString(), anyString())).thenReturn(Optional.empty());
+        when(toolExecutor.execute(eq("default"), eq("oa.current.user"), anyMap(), any()))
+                .thenReturn(ToolExecutor.ExecutionResult.success(
+                        "oa.current.user",
+                        Map.of("success", true),
+                        Map.of("employeeId", "E001")));
+
+        SlotCollectTool tool = new SlotCollectTool(
+                collector,
+                enricher,
+                computed,
+                parser,
+                new ObjectMapper(),
+                toolMetaService,
+                dependencyResolver,
+                new FieldMappingProcessor(),
+                toolExecutor,
+                lookupService,
+                publicationScopeResolver);
+        SlotCollectTool.Request request = new SlotCollectTool.Request();
+        request.toolCode = "oa.leave.apply";
+        request.extractedSlots = Map.of("reason", "事假");
+
+        SlotCollectTool.Response response = tool.apply(request, scopedToolContext(false));
+
+        assertEquals(SlotCollectStatus.COMPLETE.name(), response.status);
+        assertEquals("E001", response.collected.get("employeeId"));
+        verify(toolExecutor, times(1)).execute(eq("default"), eq("oa.current.user"), anyMap(), any());
+    }
+
+    private void stubCompleteCollection(SlotCollectorService collector, SlotSchemaParser parser) {
+        SlotDefinition reason = new SlotDefinition();
+        reason.setName("reason");
+        reason.setType("string");
+        reason.setPriority(SlotPriority.CORE);
+        reason.setAskMode(SlotAskMode.BATCH);
+        reason.setRequired(true);
+        when(parser.parse(any(ToolMetaSnapshot.class))).thenReturn(List.of(reason));
+        when(collector.collectFromAgent(anyMap(), anyList(), anyMap())).thenAnswer(invocation -> {
+            @SuppressWarnings("unchecked")
+            Map<String, Object> extraction = invocation.getArgument(0);
+            @SuppressWarnings("unchecked")
+            Map<String, SlotValue> existing = invocation.getArgument(2);
+            Map<String, SlotValue> collected = existing != null ? new LinkedHashMap<>(existing) : new LinkedHashMap<>();
+            extraction.forEach((key, value) -> collected.put(key,
+                    SlotValue.resolved(key, String.valueOf(value), value, String.valueOf(value))));
+            return collected;
+        });
+        when(collector.checkCollectionStatus(anyList(), anyMap())).thenReturn(SlotCollectStatus.COMPLETE);
+        when(collector.buildFinalParams(anyList(), anyMap())).thenAnswer(invocation -> {
+            @SuppressWarnings("unchecked")
+            Map<String, SlotValue> slotValues = invocation.getArgument(1);
+            Map<String, Object> finalParams = new LinkedHashMap<>();
+            slotValues.forEach((key, value) -> finalParams.put(key, value.getResolvedValue()));
+            return finalParams;
+        });
+    }
+
+    private ToolMeta legacyToolMeta(String toolCode) {
+        ToolMeta toolMeta = new ToolMeta();
+        toolMeta.setToolCode(toolCode);
+        toolMeta.setToolName("请假申请");
+        toolMeta.setDescription("发起请假申请审批");
+        toolMeta.setSystemCode("gougu_oa");
+        toolMeta.setParameterSchema("{\"slots\":[{\"name\":\"reason\",\"type\":\"string\",\"required\":true}]}");
+        return toolMeta;
+    }
+
+    private ToolContext scopedToolContext(boolean allowLegacyFallback) {
+        OverAllState state = new OverAllState();
+        Map<String, Object> values = new LinkedHashMap<>();
+        values.put("tenant_id", "default");
+        values.put(AssistantStateKeys.SPACE_ID, 9L);
+        values.put(AssistantStateKeys.SPACE_ENVIRONMENT, "prod");
+        values.put(AssistantStateKeys.AGENT_APP_CODE, "finance-agent");
+        if (allowLegacyFallback) {
+            values.put("allow_legacy_fallback", true);
+        }
+        state.updateState(values);
+        return new ToolContext(Map.of(ToolContextConstants.AGENT_STATE_CONTEXT_KEY, state));
+    }
+
     private PublishedToolDescriptor descriptor(String artifactCode, String systemCode) {
+        return descriptor(artifactCode, systemCode, null);
+    }
+
+    private PublishedToolDescriptor descriptor(String artifactCode, String systemCode, String askStrategyJson) {
         RuntimeArtifact.Interaction interaction = new RuntimeArtifact.Interaction(
                 1L,
                 artifactCode + ".interaction",
                 "{\"slots\":[{\"name\":\"reason\",\"type\":\"string\",\"required\":true}]}",
-                null,
+                askStrategyJson,
                 null,
                 null,
                 null,
@@ -137,3 +430,7 @@ class ArtifactAwareSlotCollectToolTest {
                 artifact);
     }
 }
+
+
+
+

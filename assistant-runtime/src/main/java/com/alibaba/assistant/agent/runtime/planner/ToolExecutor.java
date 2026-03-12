@@ -26,6 +26,12 @@ import com.alibaba.assistant.agent.execution.model.StepConfig;
 import com.alibaba.assistant.agent.execution.model.StepResult;
 import com.alibaba.assistant.agent.execution.step.HttpStepExecutor;
 import com.alibaba.assistant.agent.runtime.agent.AssistantStateKeys;
+import com.alibaba.assistant.agent.runtime.compiler.RuntimeArtifact;
+import com.alibaba.assistant.agent.runtime.execution.ArtifactRuntimeExecutor;
+import com.alibaba.assistant.agent.runtime.registry.ArtifactPublicationLookupService;
+import com.alibaba.assistant.agent.runtime.registry.PublicationScopeResolver;
+import com.alibaba.assistant.agent.runtime.registry.PublishedToolDescriptor;
+import com.alibaba.assistant.agent.runtime.registry.ToolPublicationProvider;
 import com.alibaba.cloud.ai.graph.OverAllState;
 import com.alibaba.cloud.ai.graph.RunnableConfig;
 import com.alibaba.cloud.ai.graph.agent.interceptor.ToolCallExecutionContext;
@@ -40,6 +46,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.model.ToolContext;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Profile;
+import org.springframework.lang.Nullable;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 
@@ -81,6 +88,31 @@ public class ToolExecutor {
 
 	private final List<ToolInterceptor> toolInterceptors;
 
+	private final ArtifactPublicationLookupService artifactPublicationLookupService;
+
+	private final ArtifactRuntimeExecutor artifactRuntimeExecutor;
+
+	private final PublicationScopeResolver publicationScopeResolver;
+
+	public ToolExecutor(
+			ToolMetaService toolMetaService,
+			FlowDefinitionConverter flowDefinitionConverter,
+			DAGFlowExecutor dagFlowExecutor,
+			HttpStepExecutor httpStepExecutor,
+			ObjectMapper objectMapper,
+			List<ToolInterceptor> toolInterceptors) {
+		this(
+				toolMetaService,
+				flowDefinitionConverter,
+				dagFlowExecutor,
+				httpStepExecutor,
+				objectMapper,
+				toolInterceptors,
+				null,
+				null,
+				null);
+	}
+
 	@Autowired
 	public ToolExecutor(
 			ToolMetaService toolMetaService,
@@ -88,13 +120,19 @@ public class ToolExecutor {
 			DAGFlowExecutor dagFlowExecutor,
 			HttpStepExecutor httpStepExecutor,
 			ObjectMapper objectMapper,
-			@Autowired(required = false) List<ToolInterceptor> toolInterceptors) {
+			@Autowired(required = false) List<ToolInterceptor> toolInterceptors,
+			@Autowired(required = false) @Nullable ArtifactPublicationLookupService artifactPublicationLookupService,
+			@Autowired(required = false) @Nullable ArtifactRuntimeExecutor artifactRuntimeExecutor,
+			@Autowired(required = false) @Nullable PublicationScopeResolver publicationScopeResolver) {
 		this.toolMetaService = toolMetaService;
 		this.flowDefinitionConverter = flowDefinitionConverter;
 		this.dagFlowExecutor = dagFlowExecutor;
 		this.httpStepExecutor = httpStepExecutor;
 		this.objectMapper = objectMapper;
 		this.toolInterceptors = toolInterceptors != null ? new ArrayList<>(toolInterceptors) : Collections.emptyList();
+		this.artifactPublicationLookupService = artifactPublicationLookupService;
+		this.artifactRuntimeExecutor = artifactRuntimeExecutor;
+		this.publicationScopeResolver = publicationScopeResolver;
 	}
 
 	/**
@@ -111,11 +149,33 @@ public class ToolExecutor {
 			return ExecutionResult.error(toolCode, "Dependency toolCode is blank", null);
 		}
 
+		String effectiveToolCode = toolCode.trim();
+		if (artifactPublicationLookupService != null) {
+			Optional<PublishedToolDescriptor> descriptor = artifactPublicationLookupService
+					.findPublishedArtifact(effectiveToolCode, toolContext);
+			if (descriptor.isPresent()) {
+				if (artifactRuntimeExecutor == null) {
+					return ExecutionResult.error(effectiveToolCode,
+							"Artifact dependency executor is unavailable for toolCode=" + effectiveToolCode,
+							null);
+				}
+				return execute(descriptor.get(), arguments, toolContext);
+			}
+		}
+
+		if (!allowsLegacyToolMetaFallback(toolContext)) {
+			return ExecutionResult.error(effectiveToolCode,
+					"Dependency tool not found or disabled in artifact-first scope: toolCode=" + effectiveToolCode,
+					null);
+		}
+
 		String effectiveTenant = StringUtils.hasText(tenantId) ? tenantId : DEFAULT_TENANT;
-		Optional<ToolMeta> toolMetaOptional = toolMetaService.findLatestEnabledByToolCode(effectiveTenant, toolCode);
+		Optional<ToolMeta> toolMetaOptional = toolMetaService != null
+				? toolMetaService.findLatestEnabledByToolCode(effectiveTenant, effectiveToolCode)
+				: Optional.empty();
 		if (toolMetaOptional.isEmpty()) {
-			return ExecutionResult.error(toolCode,
-					"Dependency tool not found or disabled: tenant=" + effectiveTenant + ", toolCode=" + toolCode,
+			return ExecutionResult.error(effectiveToolCode,
+					"Dependency tool not found or disabled: tenant=" + effectiveTenant + ", toolCode=" + effectiveToolCode,
 					null);
 		}
 		return execute(toolMetaOptional.get(), arguments, toolContext);
@@ -135,24 +195,9 @@ public class ToolExecutor {
 			if (state != null) {
 				state.updateState(Map.of(AssistantStateKeys.MATCHED_TOOL_META, toolMeta));
 			}
-			ToolCallRequest request = buildRequest(toolMeta, arguments, toolContext, state);
+			ToolCallRequest request = buildRequest(toolMeta.getToolCode(), arguments, toolContext, state);
 			ToolCallResponse response = invokeWithInterceptors(request, req -> invokeToolMeta(toolMeta, req));
-			if (response == null) {
-				return ExecutionResult.error(toolMeta.getToolCode(), "Dependency response is null", null);
-			}
-			if (response.isError()) {
-				String message = StringUtils.hasText(response.getStatus())
-						? response.getStatus()
-						: "Dependency execution failed";
-				return ExecutionResult.error(toolMeta.getToolCode(), message, null);
-			}
-
-			Map<String, Object> payload = parsePayload(response.getResult());
-			if (Boolean.FALSE.equals(payload.get("success"))) {
-				return ExecutionResult.error(toolMeta.getToolCode(), asText(payload.get("error")), payload);
-			}
-			Map<String, Object> outputFields = extractOutputFields(payload);
-			return ExecutionResult.success(toolMeta.getToolCode(), payload, outputFields);
+			return toExecutionResult(toolMeta.getToolCode(), response);
 		}
 		catch (Exception e) {
 			logger.error("ToolExecutor#execute - failed, toolCode={}, error={}", toolMeta.getToolCode(), e.getMessage(), e);
@@ -163,8 +208,40 @@ public class ToolExecutor {
 		}
 	}
 
+	ExecutionResult execute(PublishedToolDescriptor descriptor, Map<String, Object> arguments, ToolContext toolContext) {
+		if (descriptor == null || descriptor.artifact() == null || !StringUtils.hasText(descriptor.artifact().getArtifactCode())) {
+			return ExecutionResult.error(null, "Dependency published artifact is invalid", null);
+		}
+		if (artifactRuntimeExecutor == null) {
+			return ExecutionResult.error(descriptor.artifact().getArtifactCode(),
+					"Artifact dependency executor is unavailable", null);
+		}
+
+		String toolCode = descriptor.artifact().getArtifactCode();
+		OverAllState state = extractState(toolContext);
+		Object previousMatchedToolMeta = state != null
+				? state.value(AssistantStateKeys.MATCHED_TOOL_META, Object.class).orElse(null)
+				: null;
+
+		try {
+			if (state != null) {
+				state.updateState(Map.of(AssistantStateKeys.MATCHED_TOOL_META, buildMatchedToolMetaSnapshot(descriptor)));
+			}
+			ToolCallRequest request = buildRequest(toolCode, arguments, toolContext, state);
+			ToolCallResponse response = invokeWithInterceptors(request, req -> invokePublishedArtifact(descriptor, req));
+			return toExecutionResult(toolCode, response);
+		}
+		catch (Exception e) {
+			logger.error("ToolExecutor#execute - failed, toolCode={}, error={}", toolCode, e.getMessage(), e);
+			return ExecutionResult.error(toolCode, e.getMessage(), null);
+		}
+		finally {
+			restoreMatchedToolMeta(state, previousMatchedToolMeta);
+		}
+	}
+
 	private ToolCallRequest buildRequest(
-			ToolMeta toolMeta,
+			String toolName,
 			Map<String, Object> arguments,
 			ToolContext toolContext,
 			OverAllState state) throws Exception {
@@ -178,7 +255,7 @@ public class ToolExecutor {
 		contextMap.put(INTERNAL_DEPENDENCY_CALL_KEY, true);
 
 		ToolCallRequest.Builder builder = ToolCallRequest.builder()
-				.toolName(toolMeta.getToolCode())
+				.toolName(toolName)
 				.toolCallId(UUID.randomUUID().toString())
 				.arguments(objectMapper.writeValueAsString(arguments != null ? arguments : Collections.emptyMap()))
 				.context(contextMap);
@@ -213,6 +290,19 @@ public class ToolExecutor {
 			Map<String, Object> payload = StringUtils.hasText(toolMeta.getExecutionPlan())
 					? executeFlowMode(toolMeta, flowContext)
 					: executeSimpleMode(toolMeta, args, flowContext);
+			return ToolCallResponse.of(request.getToolName(), request.getToolCallId(), objectMapper.writeValueAsString(payload));
+		}
+		catch (Exception e) {
+			String message = "Dependency execution failed: " + e.getMessage();
+			return ToolCallResponse.error(request.getToolName(), request.getToolCallId(), message);
+		}
+	}
+
+	private ToolCallResponse invokePublishedArtifact(PublishedToolDescriptor descriptor, ToolCallRequest request) {
+		try {
+			Map<String, Object> args = parseArguments(request.getArguments());
+			ToolContext context = new ToolContext(request.getContext() != null ? request.getContext() : Collections.emptyMap());
+			Map<String, Object> payload = artifactRuntimeExecutor.execute(descriptor, args, context);
 			return ToolCallResponse.of(request.getToolName(), request.getToolCallId(), objectMapper.writeValueAsString(payload));
 		}
 		catch (Exception e) {
@@ -310,6 +400,25 @@ public class ToolExecutor {
 		return payload;
 	}
 
+	private ExecutionResult toExecutionResult(String toolCode, ToolCallResponse response) {
+		if (response == null) {
+			return ExecutionResult.error(toolCode, "Dependency response is null", null);
+		}
+		if (response.isError()) {
+			String message = StringUtils.hasText(response.getStatus())
+					? response.getStatus()
+					: "Dependency execution failed";
+			return ExecutionResult.error(toolCode, message, null);
+		}
+
+		Map<String, Object> payload = parsePayload(response.getResult());
+		if (Boolean.FALSE.equals(payload.get("success"))) {
+			return ExecutionResult.error(toolCode, asText(payload.get("error")), payload);
+		}
+		Map<String, Object> outputFields = extractOutputFields(payload);
+		return ExecutionResult.success(toolCode, payload, outputFields);
+	}
+
 	@SuppressWarnings("unchecked")
 	private Map<String, Object> parsePayload(String rawPayload) {
 		if (!StringUtils.hasText(rawPayload)) {
@@ -366,6 +475,107 @@ public class ToolExecutor {
 		catch (Exception e) {
 			return Collections.emptyMap();
 		}
+	}
+
+	private boolean allowsLegacyToolMetaFallback(@Nullable ToolContext toolContext) {
+		ToolPublicationProvider.PublicationScope scope = resolvePublicationScope(toolContext);
+		if (scope == null) {
+			return true;
+		}
+		if (containsIgnoreCase(scope.requestedSourceIds(), "legacy-bridge")) {
+			return true;
+		}
+		if (containsIgnoreCase(scope.blockedSourceIds(), "legacy-bridge")) {
+			return false;
+		}
+		return scope.sourceSelectionMode() != ToolPublicationProvider.SourceSelectionMode.EXCLUSIVE;
+	}
+
+	@Nullable
+	private ToolPublicationProvider.PublicationScope resolvePublicationScope(@Nullable ToolContext toolContext) {
+		if (publicationScopeResolver == null || toolContext == null) {
+			return null;
+		}
+		return publicationScopeResolver.resolve(toolContext);
+	}
+
+	private boolean containsIgnoreCase(List<String> source, String target) {
+		if (source == null || source.isEmpty() || !StringUtils.hasText(target)) {
+			return false;
+		}
+		for (String item : source) {
+			if (item != null && target.equalsIgnoreCase(item.trim())) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	private Map<String, Object> buildMatchedToolMetaSnapshot(PublishedToolDescriptor descriptor) {
+		Map<String, Object> snapshot = new LinkedHashMap<>();
+		RuntimeArtifact artifact = descriptor.artifact();
+		String publishedRiskLevel = resolvePublishedRiskLevel(artifact);
+		snapshot.put("toolCode", artifact.getArtifactCode());
+		snapshot.put("toolName", firstNonBlank(descriptor.displayName(), artifact.getDisplayName(), artifact.getArtifactCode()));
+		snapshot.put("description", firstNonBlank(descriptor.displayName(), artifact.getDisplayName(), artifact.getArtifactCode()));
+		snapshot.put("systemCode", descriptor.executionSystemCode());
+		snapshot.put("riskLevel", publishedRiskLevel);
+		snapshot.put("requiresConfirm", requiresPublishedConfirmation(artifact, publishedRiskLevel));
+		return snapshot;
+	}
+
+	private String resolvePublishedRiskLevel(RuntimeArtifact artifact) {
+		if (artifact == null || artifact.getActions().isEmpty()) {
+			return null;
+		}
+		String resolved = null;
+		int resolvedPriority = -1;
+		for (RuntimeArtifact.ActionBinding actionBinding : artifact.getActions().values()) {
+			String candidate = normalizeRiskLevel(actionBinding != null ? actionBinding.riskLevel() : null);
+			int candidatePriority = riskPriority(candidate);
+			if (candidatePriority > resolvedPriority) {
+				resolved = candidate;
+				resolvedPriority = candidatePriority;
+			}
+		}
+		return resolved;
+	}
+
+	private boolean requiresPublishedConfirmation(RuntimeArtifact artifact, String publishedRiskLevel) {
+		if (artifact == null) {
+			return false;
+		}
+		if (artifact.getInteraction() != null
+				&& StringUtils.hasText(artifact.getInteraction().confirmationPolicyJson())) {
+			return true;
+		}
+		for (RuntimeArtifact.ActionBinding actionBinding : artifact.getActions().values()) {
+			if (actionBinding != null && actionBinding.approvalPolicyId() != null) {
+				return true;
+			}
+		}
+		return riskPriority(publishedRiskLevel) >= riskPriority("MEDIUM");
+	}
+
+	private String normalizeRiskLevel(String riskLevel) {
+		if (!StringUtils.hasText(riskLevel)) {
+			return null;
+		}
+		return riskLevel.trim().toUpperCase(java.util.Locale.ROOT);
+	}
+
+	private int riskPriority(String riskLevel) {
+		String normalized = normalizeRiskLevel(riskLevel);
+		if (normalized == null) {
+			return -1;
+		}
+		return switch (normalized) {
+			case "LOW" -> 0;
+			case "MEDIUM" -> 1;
+			case "HIGH" -> 2;
+			case "CRITICAL" -> 3;
+			default -> -1;
+		};
 	}
 
 	private OverAllState extractState(ToolContext toolContext) {
@@ -458,3 +668,4 @@ public class ToolExecutor {
 	}
 
 }
+

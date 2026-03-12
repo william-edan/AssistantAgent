@@ -17,6 +17,7 @@ package com.alibaba.assistant.agent.runtime.interceptor;
 
 import com.alibaba.assistant.agent.controlplane.toolregistry.ToolMeta;
 import com.alibaba.assistant.agent.runtime.agent.AssistantStateKeys;
+import com.alibaba.assistant.agent.runtime.planner.ToolExecutor;
 import com.alibaba.cloud.ai.graph.OverAllState;
 import com.alibaba.cloud.ai.graph.agent.interceptor.ToolCallHandler;
 import com.alibaba.cloud.ai.graph.agent.interceptor.ToolCallRequest;
@@ -59,6 +60,9 @@ public class HumanInTheLoopToolInterceptor extends ToolInterceptor {
 
 	@Override
 	public ToolCallResponse interceptToolCall(ToolCallRequest request, ToolCallHandler handler) {
+		if (isInternalDependencyCall(request)) {
+			return handler.call(request);
+		}
 		OverAllState state = request.getExecutionContext().map(context -> context.state()).orElse(null);
 		GovernanceRule governanceRule = resolveGovernanceRule(state);
 		if (!governanceRule.requiresConfirm()) {
@@ -85,6 +89,19 @@ public class HumanInTheLoopToolInterceptor extends ToolInterceptor {
 		return "HumanInTheLoopToolInterceptor";
 	}
 
+	private boolean isInternalDependencyCall(ToolCallRequest request) {
+		if (request == null || request.getContext() == null) {
+			return false;
+		}
+		Object marker = request.getContext().get(ToolExecutor.INTERNAL_DEPENDENCY_CALL_KEY);
+		if (marker instanceof Boolean bool) {
+			return bool;
+		}
+		if (marker == null) {
+			return false;
+		}
+		return "true".equalsIgnoreCase(String.valueOf(marker));
+	}
 	private GovernanceRule resolveGovernanceRule(OverAllState state) {
 		if (state == null) {
 			return new GovernanceRule(false, null);
@@ -223,3 +240,4 @@ public class HumanInTheLoopToolInterceptor extends ToolInterceptor {
 	}
 
 }
+

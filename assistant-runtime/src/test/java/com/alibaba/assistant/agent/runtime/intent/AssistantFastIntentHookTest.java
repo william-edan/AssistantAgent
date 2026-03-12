@@ -18,21 +18,29 @@ package com.alibaba.assistant.agent.runtime.intent;
 import com.alibaba.assistant.agent.common.constant.CodeactStateKeys;
 import com.alibaba.assistant.agent.controlplane.toolregistry.ToolMeta;
 import com.alibaba.assistant.agent.controlplane.toolregistry.ToolMetaService;
+import com.alibaba.assistant.agent.execution.flow.FlowDefinition;
+import com.alibaba.assistant.agent.runtime.compiler.RuntimeArtifact;
 import com.alibaba.cloud.ai.graph.KeyStrategy;
 import com.alibaba.assistant.agent.extension.experience.model.Experience;
 import com.alibaba.assistant.agent.extension.experience.model.ExperienceArtifact;
 import com.alibaba.assistant.agent.extension.experience.model.ExperienceType;
 import com.alibaba.assistant.agent.runtime.agent.AssistantStateKeys;
+import com.alibaba.assistant.agent.runtime.registry.ArtifactPublicationLookupService;
+import com.alibaba.assistant.agent.runtime.registry.PublicationScopeResolver;
+import com.alibaba.assistant.agent.runtime.registry.PublishedToolDescriptor;
+import com.alibaba.assistant.agent.controlplane.space.PlatformSpaceService;
 import com.alibaba.cloud.ai.graph.OverAllState;
 import com.alibaba.cloud.ai.graph.RunnableConfig;
 import com.alibaba.cloud.ai.graph.agent.hook.JumpTo;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 import org.springframework.ai.chat.messages.AssistantMessage;
+import org.springframework.ai.chat.model.ToolContext;
 
 import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
@@ -189,6 +197,175 @@ class AssistantFastIntentHookTest {
 	}
 
 	@Test
+	void shouldPreRouteToPublishedArtifactWhenScopedCallPrefersArtifactCatalog() throws Exception {
+		AssistantIntentRouter router = mock(AssistantIntentRouter.class);
+		when(router.route(any(), any(), any())).thenReturn(AssistantIntentRouter.IntentResult.mainFlow());
+
+		ToolMetaService toolMetaService = mock(ToolMetaService.class);
+		PublicationScopeResolver publicationScopeResolver = new PublicationScopeResolver(mock(PlatformSpaceService.class));
+		ArtifactPublicationLookupService artifactPublicationLookupService = mock(ArtifactPublicationLookupService.class);
+		when(artifactPublicationLookupService.listPublishedArtifacts(any(ToolContext.class))).thenReturn(List.of(
+				publishedArtifact("oa.leave.apply", "请假申请", "提交请假申请", "gougu_oa"),
+				publishedArtifact("oa.leave.query", "请假查询", "查询请假记录", "gougu_oa")));
+
+		AssistantFastIntentHook hook = new AssistantFastIntentHook(
+				router,
+				new ObjectMapper(),
+				toolMetaService,
+				false,
+				publicationScopeResolver,
+				artifactPublicationLookupService);
+		OverAllState state = new OverAllState();
+		state.updateState(Map.of(
+				"input", "我明天有点事情需要请假一天",
+				"tenant_id", "default",
+				AssistantStateKeys.SPACE_ID, 9L,
+				AssistantStateKeys.SPACE_ENVIRONMENT, "prod",
+				AssistantStateKeys.AGENT_APP_CODE, "finance-agent",
+				AssistantStateKeys.SYSTEM_CODE, "gougu_oa",
+				CodeactStateKeys.AVAILABLE_TOOL_NAMES, List.of("slot_collect", "slot_confirm")));
+
+		Map<String, Object> updates = hook.beforeAgent(state, RunnableConfig.builder().build()).join();
+
+		assertEquals(JumpTo.tool, updates.get("jump_to"));
+		assertEquals(LocalDate.now().toString(), updates.get("current_date"));
+		@SuppressWarnings("unchecked")
+		Map<String, Object> matchedToolMeta = (Map<String, Object>) updates.get(AssistantStateKeys.MATCHED_TOOL_META);
+		assertEquals("oa.leave.apply", matchedToolMeta.get("toolCode"));
+		assertEquals("请假申请", matchedToolMeta.get("toolName"));
+		assertEquals(Boolean.TRUE, matchedToolMeta.get("requiresConfirm"));
+
+		List<?> messages = (List<?>) updates.get("messages");
+		AssistantMessage assistantMessage = assertInstanceOf(AssistantMessage.class, messages.get(0));
+		AssistantMessage.ToolCall toolCall = assistantMessage.getToolCalls().get(0);
+		assertEquals("slot_collect", toolCall.name());
+		@SuppressWarnings("unchecked")
+		Map<String, Object> args = new ObjectMapper().readValue(toolCall.arguments(), Map.class);
+		assertEquals("oa.leave.apply", args.get("toolCode"));
+		verify(toolMetaService, never()).listEnabledByTenantAndSystem(any(), any());
+		verify(router, never()).route(any(), any(), any());
+	}
+
+	@Test
+	void shouldCarryPublishedArtifactRiskIntoMatchedToolMetaSnapshot() {
+		AssistantIntentRouter router = mock(AssistantIntentRouter.class);
+		when(router.route(any(), any(), any())).thenReturn(AssistantIntentRouter.IntentResult.mainFlow());
+
+		ToolMetaService toolMetaService = mock(ToolMetaService.class);
+		PublicationScopeResolver publicationScopeResolver = new PublicationScopeResolver(mock(PlatformSpaceService.class));
+		ArtifactPublicationLookupService artifactPublicationLookupService = mock(ArtifactPublicationLookupService.class);
+		when(artifactPublicationLookupService.listPublishedArtifacts(any(ToolContext.class))).thenReturn(List.of(
+				publishedArtifact("oa.leave.apply", "请假申请", "提交请假申请", "gougu_oa", null, "HIGH", null)));
+
+		AssistantFastIntentHook hook = new AssistantFastIntentHook(
+				router,
+				new ObjectMapper(),
+				toolMetaService,
+				false,
+				publicationScopeResolver,
+				artifactPublicationLookupService);
+		OverAllState state = new OverAllState();
+		state.updateState(Map.of(
+				"input", "我明天有点事情需要请假一天",
+				"tenant_id", "default",
+				AssistantStateKeys.SPACE_ID, 9L,
+				AssistantStateKeys.SPACE_ENVIRONMENT, "prod",
+				AssistantStateKeys.AGENT_APP_CODE, "finance-agent",
+				AssistantStateKeys.SYSTEM_CODE, "gougu_oa",
+				CodeactStateKeys.AVAILABLE_TOOL_NAMES, List.of("slot_collect", "slot_confirm")));
+
+		Map<String, Object> updates = hook.beforeAgent(state, RunnableConfig.builder().build()).join();
+
+		@SuppressWarnings("unchecked")
+		Map<String, Object> matchedToolMeta = (Map<String, Object>) updates.get(AssistantStateKeys.MATCHED_TOOL_META);
+		assertEquals("HIGH", matchedToolMeta.get("riskLevel"));
+		assertEquals(Boolean.TRUE, matchedToolMeta.get("requiresConfirm"));
+	}
+
+	@Test
+	void shouldNotPreRouteToLegacyToolWhenScopedArtifactFirstHasNoPublishedArtifactMatch() {
+		AssistantIntentRouter router = mock(AssistantIntentRouter.class);
+		when(router.route(any(), any(), any())).thenReturn(AssistantIntentRouter.IntentResult.mainFlow());
+
+		ToolMetaService toolMetaService = mock(ToolMetaService.class);
+		when(toolMetaService.listEnabledByTenantAndSystem("default", "gougu_oa"))
+				.thenReturn(List.of(createToolMeta("gougu_oa.leave_application", "请假申请", "发起请假申请审批")));
+		PublicationScopeResolver publicationScopeResolver = new PublicationScopeResolver(mock(PlatformSpaceService.class));
+		ArtifactPublicationLookupService artifactPublicationLookupService = mock(ArtifactPublicationLookupService.class);
+		when(artifactPublicationLookupService.listPublishedArtifacts(any(ToolContext.class))).thenReturn(List.of());
+
+		AssistantFastIntentHook hook = new AssistantFastIntentHook(
+				router,
+				new ObjectMapper(),
+				toolMetaService,
+				false,
+				publicationScopeResolver,
+				artifactPublicationLookupService);
+		OverAllState state = new OverAllState();
+		state.updateState(Map.of(
+				"input", "我明天有点事情需要请假一天",
+				"tenant_id", "default",
+				AssistantStateKeys.SPACE_ID, 9L,
+				AssistantStateKeys.SPACE_ENVIRONMENT, "prod",
+				AssistantStateKeys.AGENT_APP_CODE, "finance-agent",
+				AssistantStateKeys.SYSTEM_CODE, "gougu_oa",
+				CodeactStateKeys.AVAILABLE_TOOL_NAMES, List.of("slot_collect", "slot_confirm")));
+
+		Map<String, Object> updates = hook.beforeAgent(state, RunnableConfig.builder().build()).join();
+
+		assertTrue(updates.isEmpty());
+		verify(toolMetaService, never()).listEnabledByTenantAndSystem(any(), any());
+		verify(router, times(1)).route(any(), any(), any());
+	}
+
+	@Test
+	void shouldFallbackToLegacyPreRouteWhenScopedCallAllowsLegacyFallbackAndNoPublishedArtifactMatch() throws Exception {
+		AssistantIntentRouter router = mock(AssistantIntentRouter.class);
+		when(router.route(any(), any(), any())).thenReturn(AssistantIntentRouter.IntentResult.mainFlow());
+
+		ToolMetaService toolMetaService = mock(ToolMetaService.class);
+		when(toolMetaService.listEnabledByTenantAndSystem("default", "gougu_oa"))
+				.thenReturn(List.of(createToolMeta("gougu_oa.leave_application", "请假申请", "发起请假申请审批")));
+		PublicationScopeResolver publicationScopeResolver = new PublicationScopeResolver(mock(PlatformSpaceService.class));
+		ArtifactPublicationLookupService artifactPublicationLookupService = mock(ArtifactPublicationLookupService.class);
+		when(artifactPublicationLookupService.listPublishedArtifacts(any(ToolContext.class))).thenReturn(List.of());
+
+		AssistantFastIntentHook hook = new AssistantFastIntentHook(
+				router,
+				new ObjectMapper(),
+				toolMetaService,
+				false,
+				publicationScopeResolver,
+				artifactPublicationLookupService);
+		OverAllState state = new OverAllState();
+		state.updateState(Map.of(
+				"input", "我明天有点事情需要请假一天",
+				"tenant_id", "default",
+				AssistantStateKeys.SPACE_ID, 9L,
+				AssistantStateKeys.SPACE_ENVIRONMENT, "prod",
+				AssistantStateKeys.AGENT_APP_CODE, "finance-agent",
+				AssistantStateKeys.SYSTEM_CODE, "gougu_oa",
+				"allow_legacy_fallback", true,
+				CodeactStateKeys.AVAILABLE_TOOL_NAMES, List.of("slot_collect", "slot_confirm")));
+
+		Map<String, Object> updates = hook.beforeAgent(state, RunnableConfig.builder().build()).join();
+
+		assertEquals(JumpTo.tool, updates.get("jump_to"));
+		@SuppressWarnings("unchecked")
+		Map<String, Object> matchedToolMeta = (Map<String, Object>) updates.get(AssistantStateKeys.MATCHED_TOOL_META);
+		assertEquals("gougu_oa.leave_application", matchedToolMeta.get("toolCode"));
+		List<?> messages = (List<?>) updates.get("messages");
+		AssistantMessage assistantMessage = assertInstanceOf(AssistantMessage.class, messages.get(0));
+		AssistantMessage.ToolCall toolCall = assistantMessage.getToolCalls().get(0);
+		assertEquals("slot_collect", toolCall.name());
+		@SuppressWarnings("unchecked")
+		Map<String, Object> args = new ObjectMapper().readValue(toolCall.arguments(), Map.class);
+		assertEquals("gougu_oa.leave_application", args.get("toolCode"));
+		verify(toolMetaService, times(1)).listEnabledByTenantAndSystem("default", "gougu_oa");
+		verify(router, never()).route(any(), any(), any());
+	}
+
+	@Test
 	void shouldNotPreRouteToSlotCollectWhenCollectingPhaseHasNoNewUserInput() {
 		AssistantIntentRouter router = mock(AssistantIntentRouter.class);
 		when(router.route(any(), any(), any())).thenReturn(AssistantIntentRouter.IntentResult.mainFlow());
@@ -327,6 +504,166 @@ class AssistantFastIntentHookTest {
 		assertEquals("leave_application_execute", call.name());
 	}
 
+	@Test
+	void shouldAutoExecuteArtifactExecuteWhenScopedCallDefaultsToArtifactOnly() throws Exception {
+		AssistantIntentRouter router = mock(AssistantIntentRouter.class);
+		when(router.route(any(), any(), any())).thenReturn(AssistantIntentRouter.IntentResult.mainFlow());
+		PublicationScopeResolver publicationScopeResolver = new PublicationScopeResolver(mock(PlatformSpaceService.class));
+		ArtifactPublicationLookupService artifactPublicationLookupService = mock(ArtifactPublicationLookupService.class);
+		when(artifactPublicationLookupService.findPublishedArtifact(eq("oa.leave.apply"), any()))
+				.thenReturn(Optional.of(mock(PublishedToolDescriptor.class)));
+
+		AssistantFastIntentHook hook = new AssistantFastIntentHook(
+				router,
+				new ObjectMapper(),
+				null,
+				false,
+				publicationScopeResolver,
+				artifactPublicationLookupService);
+		OverAllState state = new OverAllState();
+		state.updateState(Map.of(
+				"input", "确认提交",
+				"tenant_id", "default",
+				AssistantStateKeys.SPACE_ID, 9L,
+				AssistantStateKeys.SPACE_ENVIRONMENT, "prod",
+				AssistantStateKeys.AGENT_APP_CODE, "finance-agent",
+				AssistantStateKeys.CONVERSATION_PHASE, "CONFIRMING",
+				AssistantStateKeys.MATCHED_TOOL_META, Map.of("toolCode", "oa.leave.apply"),
+				AssistantStateKeys.COLLECTED_SLOTS, Map.of("reason", "个人事务", "start_date", "2026-03-01"),
+				CodeactStateKeys.AVAILABLE_TOOL_NAMES, List.of("slot_collect", "slot_confirm")));
+
+		Map<String, Object> updates = hook.beforeAgent(state, RunnableConfig.builder().build()).join();
+
+		assertEquals(JumpTo.tool, updates.get("jump_to"));
+		assertEquals(Boolean.TRUE, updates.get(AssistantStateKeys.EXECUTION_CONFIRM_GRANTED));
+		assertEquals("artifact_execute", updates.get(AssistantStateKeys.EXECUTION_CONFIRM_TOOL_NAME));
+		assertEquals("确认提交", updates.get(AssistantStateKeys.EXECUTION_CONFIRM_USER_INPUT));
+		assertEquals(List.of("slot_collect", "slot_confirm", "artifact_execute"),
+				updates.get(CodeactStateKeys.AVAILABLE_TOOL_NAMES));
+
+		List<?> messages = (List<?>) updates.get("messages");
+		assertEquals(1, messages.size());
+
+		AssistantMessage assistantMessage = assertInstanceOf(AssistantMessage.class, messages.get(0));
+		assertEquals(1, assistantMessage.getToolCalls().size());
+		AssistantMessage.ToolCall call = assistantMessage.getToolCalls().get(0);
+		assertEquals("artifact_execute", call.name());
+
+		@SuppressWarnings("unchecked")
+		Map<String, Object> args = new ObjectMapper().readValue(call.arguments(), Map.class);
+		assertEquals("oa.leave.apply", args.get("toolCode"));
+		assertEquals(Boolean.TRUE, args.get("confirmed"));
+		@SuppressWarnings("unchecked")
+		Map<String, Object> params = (Map<String, Object>) args.get("params");
+		assertEquals("个人事务", params.get("reason"));
+		assertEquals("2026-03-01", params.get("start_date"));
+	}
+
+	@Test
+	void shouldKeepLegacyExecuteWhenScopedCallCannotResolvePublishedArtifact() {
+		AssistantIntentRouter router = mock(AssistantIntentRouter.class);
+		when(router.route(any(), any(), any())).thenReturn(AssistantIntentRouter.IntentResult.mainFlow());
+		PublicationScopeResolver publicationScopeResolver = new PublicationScopeResolver(mock(PlatformSpaceService.class));
+		ArtifactPublicationLookupService artifactPublicationLookupService = mock(ArtifactPublicationLookupService.class);
+		when(artifactPublicationLookupService.findPublishedArtifact(eq("gougu_oa.leave_application"), any()))
+				.thenReturn(Optional.empty());
+
+		AssistantFastIntentHook hook = new AssistantFastIntentHook(
+				router,
+				new ObjectMapper(),
+				null,
+				false,
+				publicationScopeResolver,
+				artifactPublicationLookupService);
+		OverAllState state = new OverAllState();
+		state.updateState(Map.of(
+				"input", "确认提交",
+				"tenant_id", "default",
+				AssistantStateKeys.SPACE_ID, 9L,
+				AssistantStateKeys.SPACE_ENVIRONMENT, "prod",
+				AssistantStateKeys.AGENT_APP_CODE, "finance-agent",
+				AssistantStateKeys.CONVERSATION_PHASE, "CONFIRMING",
+				AssistantStateKeys.MATCHED_TOOL_META, Map.of("toolCode", "gougu_oa.leave_application"),
+				CodeactStateKeys.AVAILABLE_TOOL_NAMES,
+				List.of("slot_collect", "slot_confirm", "gougu_oa_leave_application_execute")));
+
+		Map<String, Object> updates = hook.beforeAgent(state, RunnableConfig.builder().build()).join();
+
+		assertEquals("gougu_oa_leave_application_execute", updates.get(AssistantStateKeys.EXECUTION_CONFIRM_TOOL_NAME));
+		List<?> messages = (List<?>) updates.get("messages");
+		AssistantMessage assistantMessage = assertInstanceOf(AssistantMessage.class, messages.get(0));
+		assertEquals("gougu_oa_leave_application_execute", assistantMessage.getToolCalls().get(0).name());
+	}
+
+	private PublishedToolDescriptor publishedArtifact(
+			String artifactCode,
+			String displayName,
+			String description,
+			String systemCode) {
+		return publishedArtifact(artifactCode, displayName, description, systemCode, "{\"mode\":\"explicit\"}", null, null);
+	}
+
+	private PublishedToolDescriptor publishedArtifact(
+			String artifactCode,
+			String displayName,
+			String description,
+			String systemCode,
+			String confirmationPolicyJson,
+			String riskLevel,
+			Long approvalPolicyId) {
+		RuntimeArtifact.Interaction interaction = new RuntimeArtifact.Interaction(
+				1L,
+				artifactCode + ".interaction",
+				"{\"slots\":[{\"name\":\"reason\",\"type\":\"string\",\"required\":true}]}",
+				null,
+				null,
+				null,
+				confirmationPolicyJson,
+				null);
+		Map<String, RuntimeArtifact.ActionBinding> actions = Map.of();
+		if (riskLevel != null || approvalPolicyId != null) {
+			actions = Map.of("submit", new RuntimeArtifact.ActionBinding(
+					1L,
+					artifactCode + ".submit",
+					1L,
+					null,
+					null,
+					null,
+					null,
+					null,
+					null,
+					null,
+					riskLevel,
+					approvalPolicyId,
+					null,
+					null,
+					1));
+		}
+		RuntimeArtifact artifact = new RuntimeArtifact(
+				1L,
+				artifactCode,
+				RuntimeArtifact.ArtifactType.WORKFLOW,
+				displayName,
+				1,
+				null,
+				null,
+				null,
+				null,
+				interaction,
+				new FlowDefinition(),
+				actions,
+				Map.of());
+		return PublishedToolDescriptor.forArtifact(
+				"artifact-catalog",
+				"workflow:" + artifactCode,
+				displayName,
+				null,
+				description,
+				false,
+				systemCode,
+				artifact);
+	}
+
 	private ToolMeta createToolMeta(String toolCode, String toolName, String description) {
 		ToolMeta toolMeta = new ToolMeta();
 		toolMeta.setToolCode(toolCode);
@@ -360,4 +697,3 @@ class AssistantFastIntentHookTest {
 	}
 
 }
-

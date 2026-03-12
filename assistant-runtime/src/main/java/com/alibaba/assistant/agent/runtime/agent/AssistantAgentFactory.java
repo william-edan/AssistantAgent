@@ -31,7 +31,6 @@ import com.alibaba.assistant.agent.runtime.interceptor.PolicyCheckModelIntercept
 import com.alibaba.assistant.agent.runtime.interceptor.PolicyGuardToolInterceptor;
 import com.alibaba.assistant.agent.runtime.intent.AssistantFastIntentHook;
 import com.alibaba.assistant.agent.runtime.registry.TenantAwareToolRegistry;
-import com.alibaba.assistant.agent.runtime.tool.codeact.ArtifactBackedCodeactTool;
 import com.alibaba.assistant.agent.runtime.tool.codeact.CapabilityBridgeToolFactory;
 import com.alibaba.cloud.ai.graph.CompileConfig;
 import com.alibaba.cloud.ai.graph.OverAllState;
@@ -203,14 +202,9 @@ public class AssistantAgentFactory {
 			merged.addAll(codeactTools);
 		}
 		if (tenantAwareToolRegistry != null) {
-			List<CodeactTool> tenantTools = tenantAwareToolRegistry.getAllTools();
+			List<CodeactTool> tenantTools = tenantAwareToolRegistry.getReactAccessibleTools();
 			if (tenantTools != null && !tenantTools.isEmpty()) {
-				for (CodeactTool tenantTool : tenantTools) {
-					if (tenantTool instanceof ArtifactBackedCodeactTool) {
-						continue;
-					}
-					merged.add(tenantTool);
-				}
+				merged.addAll(tenantTools);
 			}
 		}
 		return merged;
@@ -319,6 +313,7 @@ public class AssistantAgentFactory {
 	}
 
 }
+
 
 
 

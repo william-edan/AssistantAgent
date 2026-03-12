@@ -23,7 +23,6 @@ import com.alibaba.assistant.agent.extension.experience.spi.ExperienceProvider;
 import com.alibaba.assistant.agent.runtime.intent.AssistantFastIntentHook;
 import com.alibaba.assistant.agent.runtime.intent.AssistantIntentRouter;
 import com.alibaba.assistant.agent.runtime.registry.TenantAwareToolRegistry;
-import com.alibaba.assistant.agent.runtime.tool.codeact.ArtifactBackedCodeactTool;
 import com.alibaba.cloud.ai.graph.agent.hook.Hook;
 import com.alibaba.cloud.ai.graph.agent.hook.hip.HumanInTheLoopHook;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -35,8 +34,7 @@ import java.util.List;
 import java.util.stream.Collectors;
 
 import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.*;
 
 class AssistantAgentFactoryTest {
 
@@ -106,17 +104,11 @@ class AssistantAgentFactoryTest {
     }
 
     @Test
-    void shouldExcludeArtifactBackedRegistryToolsFromReactCallbacks() {
+    void shouldMergeRegistryReactAccessibleToolsWithoutUsingAllTools() {
         CodeactTool staticTool = mockCodeactTool("unified_search");
-        ArtifactBackedCodeactTool artifactTool = mock(ArtifactBackedCodeactTool.class);
-        when(artifactTool.getToolDefinition()).thenReturn(DefaultToolDefinition.builder()
-                .name("oa_leave_apply_execute")
-                .description("artifact")
-                .inputSchema("{}")
-                .build());
-        CodeactTool legacyDynamicTool = mockCodeactTool("gougu_oa_leave_application_execute");
+        CodeactTool scopedDirectTool = mockCodeactTool("kb_search");
         TenantAwareToolRegistry registry = mock(TenantAwareToolRegistry.class);
-        when(registry.getAllTools()).thenReturn(List.of(artifactTool, legacyDynamicTool));
+        when(registry.getReactAccessibleTools()).thenReturn(List.of(scopedDirectTool));
 
         List<CodeactTool> collected = AssistantAgentFactory.collectReactAccessibleCodeactTools(
                 List.of(staticTool),
@@ -127,8 +119,9 @@ class AssistantAgentFactoryTest {
                 .collect(Collectors.toList());
         assertEquals(2, collected.size());
         assertTrue(names.contains("unified_search"));
-        assertTrue(names.contains("gougu_oa_leave_application_execute"));
-        assertFalse(names.contains("oa_leave_apply_execute"));
+        assertTrue(names.contains("kb_search"));
+        verify(registry).getReactAccessibleTools();
+        verify(registry, never()).getAllTools();
     }
 
     @Test
@@ -180,3 +173,6 @@ class AssistantAgentFactoryTest {
     }
 
 }
+
+
+

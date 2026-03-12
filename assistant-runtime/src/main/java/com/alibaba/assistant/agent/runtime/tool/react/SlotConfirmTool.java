@@ -179,14 +179,20 @@ public class SlotConfirmTool implements BiFunction<SlotConfirmTool.Request, Tool
         if (state != null) {
             Object raw = state.value(AssistantStateKeys.MATCHED_TOOL_META, Object.class).orElse(null);
             if (raw != null) {
-                if (raw instanceof ToolMetaSnapshot snapshot) {
+                if (raw instanceof ToolMetaSnapshot snapshot && hasUsableSchema(snapshot)) {
                     return snapshot;
                 }
                 if (raw instanceof ToolMeta toolMeta) {
-                    return convertFromToolMeta(toolMeta);
+                    ToolMetaSnapshot snapshot = convertFromToolMeta(toolMeta);
+                    if (hasUsableSchema(snapshot)) {
+                        return snapshot;
+                    }
                 }
                 try {
-                    return objectMapper.convertValue(raw, ToolMetaSnapshot.class);
+                    ToolMetaSnapshot snapshot = objectMapper.convertValue(raw, ToolMetaSnapshot.class);
+                    if (hasUsableSchema(snapshot)) {
+                        return snapshot;
+                    }
                 }
                 catch (Exception e) {
                     logger.warn("SlotConfirmTool#resolveToolMetaSnapshot - cannot convert state meta, error={}",
@@ -215,6 +221,10 @@ public class SlotConfirmTool implements BiFunction<SlotConfirmTool.Request, Tool
         return null;
     }
 
+    private boolean hasUsableSchema(ToolMetaSnapshot snapshot) {
+        return snapshot != null
+                && (StringUtils.hasText(snapshot.getSlotSchema()) || StringUtils.hasText(snapshot.getRequestSchema()));
+    }
     private ToolMetaSnapshot convertFromPublishedArtifact(PublishedToolDescriptor descriptor) {
         ToolMetaSnapshot snapshot = new ToolMetaSnapshot();
         snapshot.setToolCode(descriptor.artifact().getArtifactCode());
@@ -732,5 +742,6 @@ public class SlotConfirmTool implements BiFunction<SlotConfirmTool.Request, Tool
         public List<EnrichedSlot> enrichedSlots;
     }
 }
+
 
 
