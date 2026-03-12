@@ -29,6 +29,7 @@ import com.alibaba.assistant.agent.runtime.agent.AssistantStateKeys;
 import com.alibaba.assistant.agent.runtime.compiler.RuntimeArtifact;
 import com.alibaba.assistant.agent.runtime.execution.ArtifactRuntimeExecutor;
 import com.alibaba.assistant.agent.runtime.registry.ArtifactPublicationLookupService;
+import com.alibaba.assistant.agent.runtime.registry.LegacyCompatibilityLogHelper;
 import com.alibaba.assistant.agent.runtime.registry.PublicationScopeResolver;
 import com.alibaba.assistant.agent.runtime.registry.PublishedToolDescriptor;
 import com.alibaba.assistant.agent.runtime.registry.ToolPublicationProvider;
@@ -150,6 +151,7 @@ public class ToolExecutor {
 		}
 
 		String effectiveToolCode = toolCode.trim();
+		ToolPublicationProvider.PublicationScope scope = resolvePublicationScope(toolContext);
 		if (artifactPublicationLookupService != null) {
 			Optional<PublishedToolDescriptor> descriptor = artifactPublicationLookupService
 					.findPublishedArtifact(effectiveToolCode, toolContext);
@@ -163,7 +165,7 @@ public class ToolExecutor {
 			}
 		}
 
-		if (!allowsLegacyToolMetaFallback(toolContext)) {
+		if (!allowsLegacyToolMetaFallback(scope)) {
 			return ExecutionResult.error(effectiveToolCode,
 					"Dependency tool not found or disabled in artifact-first scope: toolCode=" + effectiveToolCode,
 					null);
@@ -178,6 +180,13 @@ public class ToolExecutor {
 					"Dependency tool not found or disabled: tenant=" + effectiveTenant + ", toolCode=" + effectiveToolCode,
 					null);
 		}
+		LegacyCompatibilityLogHelper.logFallback(
+				logger,
+				"ToolExecutor#execute",
+				"legacy ToolMeta",
+				scope,
+				effectiveTenant,
+				effectiveToolCode);
 		return execute(toolMetaOptional.get(), arguments, toolContext);
 	}
 
@@ -478,7 +487,10 @@ public class ToolExecutor {
 	}
 
 	private boolean allowsLegacyToolMetaFallback(@Nullable ToolContext toolContext) {
-		ToolPublicationProvider.PublicationScope scope = resolvePublicationScope(toolContext);
+		return allowsLegacyToolMetaFallback(resolvePublicationScope(toolContext));
+	}
+
+	private boolean allowsLegacyToolMetaFallback(@Nullable ToolPublicationProvider.PublicationScope scope) {
 		if (scope == null) {
 			return true;
 		}
@@ -668,4 +680,3 @@ public class ToolExecutor {
 	}
 
 }
-

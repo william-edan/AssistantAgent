@@ -33,7 +33,10 @@ import com.alibaba.cloud.ai.graph.OverAllState;
 import com.alibaba.cloud.ai.graph.RunnableConfig;
 import com.alibaba.cloud.ai.graph.agent.hook.JumpTo;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import org.junit.jupiter.api.Test;
+import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.model.ToolContext;
 
@@ -41,6 +44,8 @@ import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.stream.Collectors;
+import java.util.stream.Collectors;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
@@ -293,6 +298,10 @@ class AssistantFastIntentHookTest {
 		PublicationScopeResolver publicationScopeResolver = new PublicationScopeResolver(mock(PlatformSpaceService.class));
 		ArtifactPublicationLookupService artifactPublicationLookupService = mock(ArtifactPublicationLookupService.class);
 		when(artifactPublicationLookupService.listPublishedArtifacts(any(ToolContext.class))).thenReturn(List.of());
+		ch.qos.logback.classic.Logger logger = (ch.qos.logback.classic.Logger) LoggerFactory.getLogger(AssistantFastIntentHook.class);
+		ListAppender<ILoggingEvent> appender = new ListAppender<>();
+		appender.start();
+		logger.addAppender(appender);
 
 		AssistantFastIntentHook hook = new AssistantFastIntentHook(
 				router,
@@ -329,6 +338,10 @@ class AssistantFastIntentHookTest {
 		PublicationScopeResolver publicationScopeResolver = new PublicationScopeResolver(mock(PlatformSpaceService.class));
 		ArtifactPublicationLookupService artifactPublicationLookupService = mock(ArtifactPublicationLookupService.class);
 		when(artifactPublicationLookupService.listPublishedArtifacts(any(ToolContext.class))).thenReturn(List.of());
+		ch.qos.logback.classic.Logger logger = (ch.qos.logback.classic.Logger) LoggerFactory.getLogger(AssistantFastIntentHook.class);
+		ListAppender<ILoggingEvent> appender = new ListAppender<>();
+		appender.start();
+		logger.addAppender(appender);
 
 		AssistantFastIntentHook hook = new AssistantFastIntentHook(
 				router,
@@ -363,6 +376,57 @@ class AssistantFastIntentHookTest {
 		assertEquals("gougu_oa.leave_application", args.get("toolCode"));
 		verify(toolMetaService, times(1)).listEnabledByTenantAndSystem("default", "gougu_oa");
 		verify(router, never()).route(any(), any(), any());
+		}
+
+	@Test
+	void shouldLogWarningWhenScopedFastIntentFallsBackToLegacyTool() {
+		AssistantIntentRouter router = mock(AssistantIntentRouter.class);
+		when(router.route(any(), any(), any())).thenReturn(AssistantIntentRouter.IntentResult.mainFlow());
+
+		ToolMetaService toolMetaService = mock(ToolMetaService.class);
+		when(toolMetaService.listEnabledByTenantAndSystem("default", "gougu_oa"))
+				.thenReturn(List.of(createToolMeta("gougu_oa.leave_application", "请假申请", "发起请假申请审批")));
+		PublicationScopeResolver publicationScopeResolver = new PublicationScopeResolver(mock(PlatformSpaceService.class));
+		ArtifactPublicationLookupService artifactPublicationLookupService = mock(ArtifactPublicationLookupService.class);
+		when(artifactPublicationLookupService.listPublishedArtifacts(any(ToolContext.class))).thenReturn(List.of());
+		ch.qos.logback.classic.Logger logger = (ch.qos.logback.classic.Logger) LoggerFactory.getLogger(AssistantFastIntentHook.class);
+		ListAppender<ILoggingEvent> appender = new ListAppender<>();
+		appender.start();
+		logger.addAppender(appender);
+
+		try {
+			AssistantFastIntentHook hook = new AssistantFastIntentHook(
+					router,
+					new ObjectMapper(),
+					toolMetaService,
+					false,
+					publicationScopeResolver,
+					artifactPublicationLookupService);
+			OverAllState state = new OverAllState();
+			state.updateState(Map.of(
+					"input", "我明天有点事情需要请假一天",
+					"tenant_id", "default",
+					AssistantStateKeys.SPACE_ID, 9L,
+					AssistantStateKeys.SPACE_ENVIRONMENT, "prod",
+					AssistantStateKeys.AGENT_APP_CODE, "finance-agent",
+					AssistantStateKeys.SYSTEM_CODE, "gougu_oa",
+					"allow_legacy_fallback", true,
+					CodeactStateKeys.AVAILABLE_TOOL_NAMES, List.of("slot_collect", "slot_confirm")));
+
+			Map<String, Object> updates = hook.beforeAgent(state, RunnableConfig.builder().build()).join();
+
+			assertEquals(JumpTo.tool, updates.get("jump_to"));
+			String logs = appender.list.stream()
+					.map(ILoggingEvent::getFormattedMessage)
+					.collect(Collectors.joining("\n"));
+			assertTrue(logs.contains("AssistantFastIntentHook#resolveBestOperationTarget - compatibility fallback to legacy tool"));
+			assertTrue(logs.contains("mode=fallback"));
+			assertTrue(logs.contains("toolCode=gougu_oa.leave_application"));
+		}
+		finally {
+			logger.detachAppender(appender);
+			appender.stop();
+		}
 	}
 
 	@Test

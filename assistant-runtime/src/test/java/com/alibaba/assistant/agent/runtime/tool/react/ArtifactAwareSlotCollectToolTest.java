@@ -40,14 +40,18 @@ import com.alibaba.assistant.agent.slot.model.ToolMetaSnapshot;
 import com.alibaba.cloud.ai.graph.OverAllState;
 import com.alibaba.cloud.ai.graph.agent.tools.ToolContextConstants;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.model.ToolContext;
 
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.stream.Collectors;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -226,6 +230,10 @@ class ArtifactAwareSlotCollectToolTest {
         ArtifactPublicationLookupService lookupService = mock(ArtifactPublicationLookupService.class);
         ToolMetaService toolMetaService = mock(ToolMetaService.class);
         PublicationScopeResolver publicationScopeResolver = new PublicationScopeResolver(mock(PlatformSpaceService.class));
+        ch.qos.logback.classic.Logger logger = (ch.qos.logback.classic.Logger) LoggerFactory.getLogger(SlotCollectTool.class);
+        ListAppender<ILoggingEvent> appender = new ListAppender<>();
+        appender.start();
+        logger.addAppender(appender);
         stubCompleteCollection(collector, parser);
         when(lookupService.findPublishedArtifact(eq("gougu_oa.leave_application"), any()))
                 .thenReturn(Optional.empty());
@@ -256,6 +264,59 @@ class ArtifactAwareSlotCollectToolTest {
         assertTrue(snapshotCaptor.getValue().getSlotSchema().contains("reason"));
         assertEquals(SlotCollectStatus.COMPLETE.name(), response.status);
         verify(toolMetaService, times(1)).findLatestEnabledByToolCode("default", "gougu_oa.leave_application");
+        }
+
+    @Test
+    void shouldLogWarningWhenScopedCallFallsBackToLegacyToolMeta() {
+        SlotCollectorService collector = mock(SlotCollectorService.class);
+        SlotEnricherService enricher = mock(SlotEnricherService.class);
+        ComputedFieldProcessor computed = mock(ComputedFieldProcessor.class);
+        SlotSchemaParser parser = mock(SlotSchemaParser.class);
+        ArtifactPublicationLookupService lookupService = mock(ArtifactPublicationLookupService.class);
+        ToolMetaService toolMetaService = mock(ToolMetaService.class);
+        PublicationScopeResolver publicationScopeResolver = new PublicationScopeResolver(mock(PlatformSpaceService.class));
+        ch.qos.logback.classic.Logger logger = (ch.qos.logback.classic.Logger) LoggerFactory.getLogger(SlotCollectTool.class);
+        ListAppender<ILoggingEvent> appender = new ListAppender<>();
+        appender.start();
+        logger.addAppender(appender);
+
+        try {
+            stubCompleteCollection(collector, parser);
+            when(lookupService.findPublishedArtifact(eq("gougu_oa.leave_application"), any()))
+                    .thenReturn(Optional.empty());
+            when(toolMetaService.findLatestEnabledByToolCode("default", "gougu_oa.leave_application"))
+                    .thenReturn(Optional.of(legacyToolMeta("gougu_oa.leave_application")));
+
+            SlotCollectTool tool = new SlotCollectTool(
+                    collector,
+                    enricher,
+                    computed,
+                    parser,
+                    new ObjectMapper(),
+                    toolMetaService,
+                    null,
+                    null,
+                    null,
+                    lookupService,
+                    publicationScopeResolver);
+            SlotCollectTool.Request request = new SlotCollectTool.Request();
+            request.toolCode = "gougu_oa.leave_application";
+            request.extractedSlots = Map.of("reason", "事假");
+
+            SlotCollectTool.Response response = tool.apply(request, scopedToolContext(true));
+
+            assertEquals(SlotCollectStatus.COMPLETE.name(), response.status);
+            String logs = appender.list.stream()
+                    .map(ILoggingEvent::getFormattedMessage)
+                    .collect(Collectors.joining("\n"));
+            assertTrue(logs.contains("SlotCollectTool#resolveToolMetaSnapshot - compatibility fallback to legacy ToolMeta"));
+            assertTrue(logs.contains("mode=fallback"));
+            assertTrue(logs.contains("toolCode=gougu_oa.leave_application"));
+        }
+        finally {
+            logger.detachAppender(appender);
+            appender.stop();
+        }
     }
 
     @Test
@@ -430,7 +491,3 @@ class ArtifactAwareSlotCollectToolTest {
                 artifact);
     }
 }
-
-
-
-

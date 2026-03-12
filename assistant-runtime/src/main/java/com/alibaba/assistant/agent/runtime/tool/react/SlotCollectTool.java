@@ -19,6 +19,7 @@ import com.alibaba.assistant.agent.controlplane.toolregistry.ToolMeta;
 import com.alibaba.assistant.agent.controlplane.toolregistry.ToolMetaService;
 import com.alibaba.assistant.agent.runtime.agent.AssistantStateKeys;
 import com.alibaba.assistant.agent.runtime.registry.ArtifactPublicationLookupService;
+import com.alibaba.assistant.agent.runtime.registry.LegacyCompatibilityLogHelper;
 import com.alibaba.assistant.agent.runtime.registry.PublicationScopeResolver;
 import com.alibaba.assistant.agent.runtime.registry.PublishedToolDescriptor;
 import com.alibaba.assistant.agent.runtime.registry.ToolPublicationProvider;
@@ -863,6 +864,7 @@ public class SlotCollectTool implements BiFunction<SlotCollectTool.Request, Tool
     }
 
     private ToolMetaSnapshot resolveToolMetaSnapshot(Request request, OverAllState state, ToolContext toolContext) {
+        ToolPublicationProvider.PublicationScope scope = resolvePublicationScope(state, toolContext);
         // Priority 1: State contains a matched tool meta (set by upstream intent matching)
         if (state != null) {
             Object raw = state.value(AssistantStateKeys.MATCHED_TOOL_META, Object.class).orElse(null);
@@ -901,10 +903,16 @@ public class SlotCollectTool implements BiFunction<SlotCollectTool.Request, Tool
 
         // Priority 3: Lookup ToolMeta from database by toolCode only when compatibility fallback is allowed
         if (StringUtils.hasText(request.toolCode) && toolMetaService != null
-                && allowsLegacyToolMetaFallback(state, toolContext)) {
-            ToolMeta toolMeta = lookupToolMetaByCode(resolveTenantId(state, request), request.toolCode);
+                && allowsLegacyToolMetaFallback(scope)) {
+            String tenantId = resolveTenantId(state, request);
+            ToolMeta toolMeta = lookupToolMetaByCode(tenantId, request.toolCode);
             if (toolMeta != null) {
-                logger.info("SlotCollectTool#resolveToolMetaSnapshot - reason=从数据库找到ToolMeta, toolCode={}",
+                LegacyCompatibilityLogHelper.logFallback(
+                        logger,
+                        "SlotCollectTool#resolveToolMetaSnapshot",
+                        "legacy ToolMeta",
+                        scope,
+                        tenantId,
                         request.toolCode);
                 return convertFromToolMeta(toolMeta);
             }
@@ -930,7 +938,10 @@ public class SlotCollectTool implements BiFunction<SlotCollectTool.Request, Tool
     }
 
     private boolean allowsLegacyToolMetaFallback(OverAllState state, ToolContext toolContext) {
-        ToolPublicationProvider.PublicationScope scope = resolvePublicationScope(state, toolContext);
+        return allowsLegacyToolMetaFallback(resolvePublicationScope(state, toolContext));
+    }
+
+    private boolean allowsLegacyToolMetaFallback(ToolPublicationProvider.PublicationScope scope) {
         if (scope == null) {
             return true;
         }
@@ -1600,16 +1611,3 @@ public class SlotCollectTool implements BiFunction<SlotCollectTool.Request, Tool
         public String options;
     }
 }
-
-
-
-
-
-
-
-
-
-
-
-
-

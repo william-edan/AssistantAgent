@@ -33,14 +33,18 @@ import com.alibaba.assistant.agent.runtime.registry.PublishedToolDescriptor;
 import com.alibaba.cloud.ai.graph.OverAllState;
 import com.alibaba.cloud.ai.graph.agent.tools.ToolContextConstants;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.model.ToolContext;
 
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Optional;
+import java.util.stream.Collectors;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -213,6 +217,10 @@ class ToolExecutorTest {
         ArtifactRuntimeExecutor artifactRuntimeExecutor = mock(ArtifactRuntimeExecutor.class);
         PublicationScopeResolver publicationScopeResolver = new PublicationScopeResolver(mock(PlatformSpaceService.class));
         ObjectMapper objectMapper = new ObjectMapper();
+        ch.qos.logback.classic.Logger logger = (ch.qos.logback.classic.Logger) LoggerFactory.getLogger(ToolExecutor.class);
+        ListAppender<ILoggingEvent> appender = new ListAppender<>();
+        appender.start();
+        logger.addAppender(appender);
 
         when(lookupService.findPublishedArtifact(eq("gougu_oa.current_user"), any()))
                 .thenReturn(Optional.empty());
@@ -240,8 +248,61 @@ class ToolExecutorTest {
         assertTrue(result.errorMessage().contains("not found"));
         verify(toolMetaService, never()).findLatestEnabledByToolCode(anyString(), eq("gougu_oa.current_user"));
         verify(artifactRuntimeExecutor, never()).execute(any(), anyMap(), any());
-    }
+        }
 
+    @Test
+    void shouldLogWarningWhenScopedCallFallsBackToLegacyToolMeta() {
+        ToolMetaService toolMetaService = mock(ToolMetaService.class);
+        FlowDefinitionConverter flowDefinitionConverter = mock(FlowDefinitionConverter.class);
+        DAGFlowExecutor dagFlowExecutor = mock(DAGFlowExecutor.class);
+        HttpStepExecutor httpStepExecutor = mock(HttpStepExecutor.class);
+        ArtifactPublicationLookupService lookupService = mock(ArtifactPublicationLookupService.class);
+        ArtifactRuntimeExecutor artifactRuntimeExecutor = mock(ArtifactRuntimeExecutor.class);
+        PublicationScopeResolver publicationScopeResolver = new PublicationScopeResolver(mock(PlatformSpaceService.class));
+        ObjectMapper objectMapper = new ObjectMapper();
+        ch.qos.logback.classic.Logger logger = (ch.qos.logback.classic.Logger) LoggerFactory.getLogger(ToolExecutor.class);
+        ListAppender<ILoggingEvent> appender = new ListAppender<>();
+        appender.start();
+        logger.addAppender(appender);
+
+        try {
+            when(lookupService.findPublishedArtifact(eq("gougu_oa.current_user"), any()))
+                    .thenReturn(Optional.empty());
+            when(toolMetaService.findLatestEnabledByToolCode("default", "gougu_oa.current_user"))
+                    .thenReturn(Optional.of(legacyToolMeta("gougu_oa.current_user")));
+            when(httpStepExecutor.execute(any(StepConfig.class), any(FlowContext.class)))
+                    .thenReturn(StepResult.success(Map.of("employeeId", "E001")));
+
+            ToolExecutor executor = new ToolExecutor(
+                    toolMetaService,
+                    flowDefinitionConverter,
+                    dagFlowExecutor,
+                    httpStepExecutor,
+                    objectMapper,
+                    Collections.emptyList(),
+                    lookupService,
+                    artifactRuntimeExecutor,
+                    publicationScopeResolver);
+
+            ToolExecutor.ExecutionResult result = executor.execute(
+                    "default",
+                    "gougu_oa.current_user",
+                    Map.of(),
+                    scopedToolContext(true));
+
+            assertTrue(result.success());
+            String logs = appender.list.stream()
+                    .map(ILoggingEvent::getFormattedMessage)
+                    .collect(Collectors.joining("\n"));
+            assertTrue(logs.contains("ToolExecutor#execute - compatibility fallback to legacy ToolMeta"));
+            assertTrue(logs.contains("mode=fallback"));
+            assertTrue(logs.contains("toolCode=gougu_oa.current_user"));
+        }
+        finally {
+            logger.detachAppender(appender);
+            appender.stop();
+        }
+    }
 
     @Test
     void shouldProjectPublishedArtifactRiskDrivenConfirmationIntoMatchedToolMetaSnapshot() {
@@ -388,4 +449,3 @@ class ToolExecutorTest {
                 1);
     }
 }
-

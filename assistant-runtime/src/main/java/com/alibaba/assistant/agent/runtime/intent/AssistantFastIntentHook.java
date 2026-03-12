@@ -26,6 +26,7 @@ import com.alibaba.assistant.agent.extension.experience.model.ExperienceArtifact
 import com.alibaba.assistant.agent.runtime.agent.AssistantStateKeys;
 import com.alibaba.assistant.agent.runtime.compiler.RuntimeArtifact;
 import com.alibaba.assistant.agent.runtime.registry.ArtifactPublicationLookupService;
+import com.alibaba.assistant.agent.runtime.registry.LegacyCompatibilityLogHelper;
 import com.alibaba.assistant.agent.runtime.registry.PublicationScopeResolver;
 import com.alibaba.assistant.agent.runtime.registry.PublishedToolDescriptor;
 import com.alibaba.assistant.agent.runtime.registry.ToolPublicationProvider;
@@ -507,6 +508,13 @@ public class AssistantFastIntentHook extends AgentHook implements Prioritized {
 		if (matchedTool == null || !StringUtils.hasText(matchedTool.getToolCode())) {
 			return null;
 		}
+		LegacyCompatibilityLogHelper.logFallback(
+				logger,
+				"AssistantFastIntentHook#resolveBestOperationTarget",
+				"legacy tool",
+				scope,
+				resolveTenantId(state),
+				matchedTool.getToolCode());
 		return new OperationTarget(matchedTool.getToolCode(), buildMatchedToolMetaSnapshot(matchedTool));
 	}
 
