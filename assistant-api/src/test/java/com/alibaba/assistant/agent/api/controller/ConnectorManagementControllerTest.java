@@ -61,7 +61,9 @@ class ConnectorManagementControllerTest {
     void setUp() {
         ConnectorManagementController controller =
                 new ConnectorManagementController(connectorManagementService, authorizationService);
-        mockMvc = MockMvcBuilders.standaloneSetup(controller).build();
+        mockMvc = MockMvcBuilders.standaloneSetup(controller)
+                .setControllerAdvice(new ControlPlaneErrorResponseAdvice())
+                .build();
     }
 
     @Test
@@ -170,6 +172,19 @@ class ConnectorManagementControllerTest {
     }
 
     @Test
+    void shouldReturnNormalizedNotFoundWhenManagedConnectorMissing() throws Exception {
+        when(authorizationService.canManageSpaceCatalog(any(AuthenticatedUserContext.class), eq("enterprise-default"), eq("prod")))
+                .thenReturn(true);
+        when(connectorManagementService.getConnector("enterprise-default", "prod", "oa-core"))
+                .thenReturn(Optional.empty());
+
+        mockMvc.perform(get("/api/controlplane/spaces/enterprise-default/connectors/oa-core")
+                        .principal(authenticatedPrincipal()))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value(404))
+                .andExpect(jsonPath("$.msg").value("connector_not_found"));
+    }
+    @Test
     void shouldReturnForbiddenWhenManageScopeDenied() throws Exception {
         when(authorizationService.canManageSpaceCatalog(any(AuthenticatedUserContext.class), eq("enterprise-default"), eq("prod")))
                 .thenReturn(false);
@@ -198,6 +213,9 @@ class ConnectorManagementControllerTest {
                 List.of("assistant:chat", "assistant:controlplane"));
     }
 }
+
+
+
 
 
 

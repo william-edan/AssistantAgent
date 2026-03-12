@@ -93,7 +93,10 @@ class ControlPlaneCatalogControllerSecurityTest {
     @Test
     void shouldReturnUnauthorizedWhenExecutionOverviewBearerMissing() throws Exception {
         mockMvc.perform(get(OVERVIEW_PATH))
-                .andExpect(status().isUnauthorized());
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.code").value(401))
+                .andExpect(jsonPath("$.msg").value("missing_access_token"))
+                .andExpect(jsonPath("$.data").doesNotExist());
 
         verify(migrationAuthService, never()).introspect(anyString());
         verify(authorizationService, never()).canViewSpaceCatalog(any(), anyString(), anyString());
@@ -115,7 +118,10 @@ class ControlPlaneCatalogControllerSecurityTest {
                         List.of("assistant:chat"))));
 
         mockMvc.perform(get(OVERVIEW_PATH).header(AUTHORIZATION, "Bearer token-chat-only"))
-                .andExpect(status().isForbidden());
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value(403))
+                .andExpect(jsonPath("$.msg").value("controlplane_scope_denied"))
+                .andExpect(jsonPath("$.data").doesNotExist());
 
         verify(authorizationService, never()).canViewSpaceCatalog(any(), anyString(), anyString());
         verify(controlPlaneExecutionOverviewService, never()).getOverview(anyString(), anyString(), any(), any(), anyBoolean());

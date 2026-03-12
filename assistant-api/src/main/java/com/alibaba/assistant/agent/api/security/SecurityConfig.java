@@ -15,11 +15,14 @@
  */
 package com.alibaba.assistant.agent.api.security;
 
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Profile;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.security.config.Customizer;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
@@ -31,6 +34,7 @@ import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 
+import java.io.IOException;
 import java.util.List;
 
 /**
@@ -42,6 +46,8 @@ import java.util.List;
 @Configuration
 @Profile("migration")
 public class SecurityConfig {
+
+	private static final String CONTROLPLANE_API_PREFIX = "/api/controlplane/";
 
 	private static final List<String> LOCAL_DEV_ORIGIN_PATTERNS = List.of(
 			"http://localhost:*",
@@ -58,7 +64,14 @@ public class SecurityConfig {
 				.sessionManagement(session ->
 						session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
 				.exceptionHandling(exceptions ->
-						exceptions.authenticationEntryPoint(new HttpStatusEntryPoint(HttpStatus.UNAUTHORIZED)))
+						exceptions.authenticationEntryPoint(new HttpStatusEntryPoint(HttpStatus.UNAUTHORIZED))
+							.accessDeniedHandler((request, response, accessDeniedException) -> {
+								if (isControlPlaneRequest(request)) {
+									writeControlPlaneError(response, HttpStatus.FORBIDDEN, "controlplane_scope_denied");
+									return;
+								}
+								response.sendError(HttpStatus.FORBIDDEN.value());
+							}))
 				.authorizeHttpRequests(authorize -> authorize
 						.requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
 						.requestMatchers("/api/chat/**").hasAuthority(AuthenticatedUserAuthorityMapper.PERMISSION_CHAT)
@@ -70,6 +83,17 @@ public class SecurityConfig {
 						.anyRequest().permitAll())
 				.addFilterBefore(tokenIntrospectionAuthenticationFilter, UsernamePasswordAuthenticationFilter.class);
 		return http.build();
+	}
+
+	private boolean isControlPlaneRequest(HttpServletRequest request) {
+		String requestUri = request.getRequestURI();
+		return requestUri != null && requestUri.startsWith(CONTROLPLANE_API_PREFIX);
+	}
+
+	private void writeControlPlaneError(HttpServletResponse response, HttpStatus status, String reason) throws IOException {
+		response.setStatus(status.value());
+		response.setContentType(MediaType.APPLICATION_JSON_VALUE);
+		response.getWriter().write("{\"code\":" + status.value() + ",\"msg\":\"" + reason + "\"}");
 	}
 
 	@Bean

@@ -62,7 +62,9 @@ class LocalUserManagementControllerTest {
         LocalUserManagementController controller = new LocalUserManagementController(
                 localUserManagementService,
                 authorizationService);
-        mockMvc = MockMvcBuilders.standaloneSetup(controller).build();
+        mockMvc = MockMvcBuilders.standaloneSetup(controller)
+                .setControllerAdvice(new ControlPlaneErrorResponseAdvice())
+                .build();
     }
 
     @Test
@@ -162,6 +164,29 @@ class LocalUserManagementControllerTest {
     }
 
     @Test
+    void shouldReturnNormalizedBadRequestWhenLocalUserUpsertFails() throws Exception {
+        when(authorizationService.canManageLocalUserControlPlaneAccessPolicy(any(AuthenticatedUserContext.class), eq("enterprise-default"), eq("prod")))
+                .thenReturn(true);
+        when(localUserManagementService.upsertLocalUser(
+                eq("enterprise-default"),
+                eq("prod"),
+                eq("admin"),
+                any(LocalUserUpsertCommand.class)))
+                .thenReturn(Optional.empty());
+
+        mockMvc.perform(put("/api/controlplane/spaces/enterprise-default/local-users/admin")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "displayName": "管理员"
+                                }
+                                """)
+                        .principal(authenticatedPrincipal()))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value(400))
+                .andExpect(jsonPath("$.msg").value("local_user_upsert_failed"));
+    }
+    @Test
     void shouldReturnForbiddenWhenLocalUserManageScopeDenied() throws Exception {
         when(authorizationService.canManageLocalUserControlPlaneAccessPolicy(any(AuthenticatedUserContext.class), eq("enterprise-default"), eq("prod")))
                 .thenReturn(false);
@@ -190,3 +215,6 @@ class LocalUserManagementControllerTest {
                 List.of("assistant:chat", "assistant:controlplane"));
     }
 }
+
+
+

@@ -56,7 +56,9 @@ class ConnectorCatalogControllerTest {
     @BeforeEach
     void setUp() {
         ConnectorCatalogController controller = new ConnectorCatalogController(connectorCatalogService, authorizationService);
-        mockMvc = MockMvcBuilders.standaloneSetup(controller).build();
+        mockMvc = MockMvcBuilders.standaloneSetup(controller)
+                .setControllerAdvice(new ControlPlaneErrorResponseAdvice())
+                .build();
     }
 
     @Test
@@ -132,6 +134,20 @@ class ConnectorCatalogControllerTest {
                 .andExpect(jsonPath("$.data.authProfiles[0].authProfileCode").value("oa-user"))
                 .andExpect(jsonPath("$.data.authProfiles[0].authType").value("BEARER"))
                 .andExpect(jsonPath("$.data.authProfiles[1].usagePolicy").value("SERVICE_ACCOUNT"));
+    }
+
+    @Test
+    void shouldReturnNormalizedNotFoundWhenConnectorMissing() throws Exception {
+        when(authorizationService.canViewSpaceCatalog(any(AuthenticatedUserContext.class), eq("enterprise-default"), eq("prod")))
+                .thenReturn(true);
+        when(connectorCatalogService.getConnector("enterprise-default", "prod", "oa-core"))
+                .thenReturn(Optional.empty());
+
+        mockMvc.perform(get("/api/controlplane/spaces/enterprise-default/connectors/oa-core")
+                        .principal(authenticatedPrincipal()))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value(404))
+                .andExpect(jsonPath("$.msg").value("connector_not_found"));
     }
 
     @Test
