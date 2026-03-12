@@ -652,6 +652,46 @@ class DAGFlowExecutorTest {
         return flow;
     }
 
+
+    @Test
+    void shouldExecuteTrueBranchAfterConditionStepEvaluatesToTrue() throws Exception {
+        mockWebServer.enqueue(jsonResponse("{\"code\":0,\"msg\":\"approved\",\"data\":{}}"));
+
+        Map<String, Object> inputs = new HashMap<>(baseInputs());
+        inputs.put("types", 2);
+        FlowExecutionResult result = dagFlowExecutor.execute(buildConditionBranchFlow(), createFlowContext(inputs));
+
+        assertTrue(result.isSuccess());
+        assertEquals(StepStatus.COMPLETED, result.getStepStatuses().get("branch"));
+        assertEquals(StepStatus.COMPLETED, result.getStepStatuses().get("approved"));
+        assertEquals(StepStatus.SKIPPED, result.getStepStatuses().get("rejected"));
+        assertEquals(Boolean.TRUE, result.getStepResults().get("branch").getOutputs().get("result"));
+        assertEquals(1, mockWebServer.getRequestCount());
+
+        RecordedRequest request = mockWebServer.takeRequest(1, TimeUnit.SECONDS);
+        assertNotNull(request);
+        assertEquals("/approved", request.getPath());
+    }
+
+    @Test
+    void shouldExecuteFalseBranchAfterConditionStepEvaluatesToFalse() throws Exception {
+        mockWebServer.enqueue(jsonResponse("{\"code\":0,\"msg\":\"rejected\",\"data\":{}}"));
+
+        Map<String, Object> inputs = new HashMap<>(baseInputs());
+        inputs.put("types", 9);
+        FlowExecutionResult result = dagFlowExecutor.execute(buildConditionBranchFlow(), createFlowContext(inputs));
+
+        assertTrue(result.isSuccess());
+        assertEquals(StepStatus.COMPLETED, result.getStepStatuses().get("branch"));
+        assertEquals(StepStatus.SKIPPED, result.getStepStatuses().get("approved"));
+        assertEquals(StepStatus.COMPLETED, result.getStepStatuses().get("rejected"));
+        assertEquals(Boolean.FALSE, result.getStepResults().get("branch").getOutputs().get("result"));
+        assertEquals(1, mockWebServer.getRequestCount());
+
+        RecordedRequest request = mockWebServer.takeRequest(1, TimeUnit.SECONDS);
+        assertNotNull(request);
+        assertEquals("/rejected", request.getPath());
+    }
     private FlowDefinition buildApprovalFlow() {
         StepDefinition submit = httpStep("submit", "/submit");
         submit.getConfig().setApprovalGate(Map.of("enabled", true, "channel", "controlplane"));
@@ -664,6 +704,53 @@ class DAGFlowExecutorTest {
         return flow;
     }
 
+
+    private FlowDefinition buildConditionBranchFlow() {
+        StepDefinition branch = conditionStep("branch", Map.of(
+                "left", "${types}",
+                "operator", "eq",
+                "right", 2));
+        StepDefinition approved = httpStep("approved", "/approved");
+        approved.setDependsOn(List.of("branch"));
+        approved.getConfig().setConditions(Map.of(
+                "enabled", true,
+                "expression", Map.of(
+                        "left", "${branch.result}",
+                        "operator", "eq",
+                        "right", true)));
+        StepDefinition rejected = httpStep("rejected", "/rejected");
+        rejected.setDependsOn(List.of("branch"));
+        rejected.getConfig().setConditions(Map.of(
+                "enabled", true,
+                "expression", Map.of(
+                        "left", "${branch.result}",
+                        "operator", "eq",
+                        "right", false)));
+
+        FlowDefinition flow = new FlowDefinition();
+        flow.setVersion("2.0");
+        flow.setEntry(List.of("approved", "rejected", "branch"));
+        flow.setTerminal(List.of("approved", "rejected"));
+        flow.setSteps(Map.of(
+                "approved", approved,
+                "rejected", rejected,
+                "branch", branch));
+        return flow;
+    }
+
+    private StepDefinition conditionStep(String stepId, Object expression) {
+        StepDefinition step = new StepDefinition();
+        step.setStepId(stepId);
+        step.setName(stepId);
+        step.setType(StepType.CONDITION);
+        step.setJoinType(JoinType.ALL);
+        StepConfig config = new StepConfig();
+        config.setConditions(Map.of(
+                "enabled", true,
+                "expression", expression));
+        step.setConfig(config);
+        return step;
+    }
     private StepDefinition httpStep(String stepId, String endpoint) {
         StepDefinition step = new StepDefinition();
         step.setStepId(stepId);

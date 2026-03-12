@@ -92,7 +92,7 @@ public class DAGFlowExecutor {
 						progressed = true;
 						continue;
 					}
-					if (shouldSkipAnyJoinStep(stepId, step, stepStatuses, nextPredecessors)) {
+					if (shouldSkipStep(stepId, step, stepStatuses, nextPredecessors)) {
 						StepResult skipped = StepResult.success(Map.of("skipped", true));
 						stepStatuses.put(stepId, StepStatus.SKIPPED);
 						stepResults.put(stepId, skipped);
@@ -108,7 +108,7 @@ public class DAGFlowExecutor {
 					remaining.remove(stepId);
 					context.setCurrentStepId(stepId);
 
-					if (!shouldExecute(step, context)) {
+					if (step.getType() != StepType.CONDITION && !shouldExecute(step, context)) {
 						StepResult skipped = StepResult.success(Map.of("skipped", true));
 						stepStatuses.put(stepId, StepStatus.SKIPPED);
 						stepResults.put(stepId, skipped);
@@ -345,15 +345,11 @@ public class DAGFlowExecutor {
 		return new ArrayList<>(dependencyIds);
 	}
 
-	private boolean shouldSkipAnyJoinStep(
+	private boolean shouldSkipStep(
 			String stepId,
 			StepDefinition step,
 			Map<String, StepStatus> stepStatuses,
 			Map<String, List<String>> nextPredecessors) {
-		JoinType joinType = step.getJoinType() != null ? step.getJoinType() : JoinType.ALL;
-		if (joinType != JoinType.ANY) {
-			return false;
-		}
 		List<String> dependencyIds = mergedDependencyIds(stepId, step, nextPredecessors);
 		if (dependencyIds.isEmpty()) {
 			return false;
@@ -554,10 +550,33 @@ public class DAGFlowExecutor {
 	}
 
 	private StepResult executeStep(StepDefinition step, FlowContext context) {
+		if (step.getType() == StepType.CONDITION) {
+			return executeConditionStep(step, context);
+		}
 		if (step.getType() == StepType.HTTP) {
 			return httpStepExecutor.execute(step.getConfig(), context);
 		}
 		return StepResult.failure("Unsupported step type: " + step.getType());
+	}
+
+	private StepResult executeConditionStep(StepDefinition step, FlowContext context) {
+		StepConfig config = step.getConfig();
+		if (config == null || config.getConditions() == null) {
+			return StepResult.success(Map.of("result", true));
+		}
+		Object conditions = config.getConditions();
+		if (conditions instanceof Map<?, ?> map) {
+			Object enabled = map.get("enabled");
+			if (enabled != null && !parseBoolean(resolveConditionOperand(enabled, context), true)) {
+				return StepResult.success(Map.of("result", true));
+			}
+			Object expression = firstNonNull(map.get("expression"), map.get("result"), map.get("value"), map.get("when"));
+			if (expression == null && map.containsKey("operator")) {
+				expression = map;
+			}
+			return StepResult.success(Map.of("result", expression == null || evaluateConditionExpression(expression, context)));
+		}
+		return StepResult.success(Map.of("result", evaluateConditionExpression(conditions, context)));
 	}
 
 	private FlowExecutionResult waitingResult(
@@ -625,4 +644,3 @@ public class DAGFlowExecutor {
 	}
 
 }
-
