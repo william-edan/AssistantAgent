@@ -199,7 +199,7 @@
                 <artifactId>maven-surefire-plugin</artifactId>
                 <version>3.2.5</version>
                 <configuration>
-                    <argLine>@{argLine} -javaagent:${mockito.javaagent.path}</argLine>
+                    <argLine>-Xshare:off @{argLine} -javaagent:${mockito.javaagent.path}</argLine>
                 </configuration>
             </plugin>
             <plugin>
