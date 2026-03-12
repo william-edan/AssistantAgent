@@ -1052,9 +1052,11 @@ public class AssistantFastIntentHook extends AgentHook implements Prioritized {
 	}
 
 	private String resolveExecuteToolName(OverAllState state, String toolCode, List<String> allowlist) {
-		if (shouldPreferArtifactExecute(state, toolCode)) {
+		ToolPublicationProvider.PublicationScope scope = resolveConfirmationPublicationScope(state);
+		if (shouldPreferArtifactExecute(state, toolCode, scope)) {
 			return "artifact_execute";
 		}
+		maybeLogLegacyExecuteFallback(state, toolCode, scope);
 		String candidate = normalizeIdentifier(toolCode) + "_execute";
 		if (allowlist == null || allowlist.isEmpty()) {
 			return candidate;
@@ -1094,13 +1096,18 @@ public class AssistantFastIntentHook extends AgentHook implements Prioritized {
 		return StringUtils.hasText(toolName) && "artifact_execute".equalsIgnoreCase(toolName.trim());
 	}
 
-	private boolean shouldPreferArtifactExecute(OverAllState state, String matchedToolCode) {
-		if (publicationScopeResolver == null || artifactPublicationLookupService == null || state == null
-				|| !StringUtils.hasText(matchedToolCode)) {
+	private ToolPublicationProvider.PublicationScope resolveConfirmationPublicationScope(OverAllState state) {
+		if (publicationScopeResolver == null || state == null) {
+			return null;
+		}
+		return publicationScopeResolver.resolve(Map.of(ToolContextConstants.AGENT_STATE_CONTEXT_KEY, state));
+	}
+
+	private boolean shouldPreferArtifactExecute(OverAllState state, String matchedToolCode,
+			ToolPublicationProvider.PublicationScope scope) {
+		if (artifactPublicationLookupService == null || state == null || !StringUtils.hasText(matchedToolCode)) {
 			return false;
 		}
-		ToolPublicationProvider.PublicationScope scope = publicationScopeResolver.resolve(
-				Map.of(ToolContextConstants.AGENT_STATE_CONTEXT_KEY, state));
 		if (scope == null) {
 			return false;
 		}
@@ -1114,6 +1121,33 @@ public class AssistantFastIntentHook extends AgentHook implements Prioritized {
 		}
 		ToolContext toolContext = new ToolContext(Map.of(ToolContextConstants.AGENT_STATE_CONTEXT_KEY, state));
 		return artifactPublicationLookupService.findPublishedArtifact(matchedToolCode, toolContext).isPresent();
+	}
+
+	private void maybeLogLegacyExecuteFallback(OverAllState state, String matchedToolCode,
+			ToolPublicationProvider.PublicationScope scope) {
+		if (artifactPublicationLookupService == null || state == null || !StringUtils.hasText(matchedToolCode)
+				|| scope == null) {
+			return;
+		}
+		boolean artifactRequested = containsIgnoreCase(scope.requestedSourceIds(), "artifact-catalog");
+		boolean legacyRequested = containsIgnoreCase(scope.requestedSourceIds(), "legacy-bridge");
+		boolean legacyHidden = (scope.sourceSelectionMode() == ToolPublicationProvider.SourceSelectionMode.EXCLUSIVE
+				&& !legacyRequested)
+				|| containsIgnoreCase(scope.blockedSourceIds(), "legacy-bridge");
+		if (!artifactRequested || !legacyHidden) {
+			return;
+		}
+		ToolContext toolContext = new ToolContext(Map.of(ToolContextConstants.AGENT_STATE_CONTEXT_KEY, state));
+		if (artifactPublicationLookupService.findPublishedArtifact(matchedToolCode, toolContext).isPresent()) {
+			return;
+		}
+		LegacyCompatibilityLogHelper.logFallback(
+				logger,
+				"AssistantFastIntentHook#resolveExecuteToolName",
+				"legacy execute tool",
+				scope,
+				resolveTenantId(state),
+				matchedToolCode);
 	}
 
 	private Map<String, Object> buildExecuteArgs(String executeToolName, String matchedToolCode, OverAllState state) {

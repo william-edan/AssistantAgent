@@ -659,6 +659,57 @@ class AssistantFastIntentHookTest {
 		assertEquals("gougu_oa_leave_application_execute", assistantMessage.getToolCalls().get(0).name());
 	}
 
+	@Test
+	void shouldLogWarningWhenScopedConfirmFallsBackToLegacyExecute() {
+		AssistantIntentRouter router = mock(AssistantIntentRouter.class);
+		when(router.route(any(), any(), any())).thenReturn(AssistantIntentRouter.IntentResult.mainFlow());
+		PublicationScopeResolver publicationScopeResolver = new PublicationScopeResolver(mock(PlatformSpaceService.class));
+		ArtifactPublicationLookupService artifactPublicationLookupService = mock(ArtifactPublicationLookupService.class);
+		when(artifactPublicationLookupService.findPublishedArtifact(eq("gougu_oa.leave_application"), any()))
+				.thenReturn(Optional.empty());
+		ch.qos.logback.classic.Logger logger =
+				(ch.qos.logback.classic.Logger) LoggerFactory.getLogger(AssistantFastIntentHook.class);
+		ListAppender<ILoggingEvent> appender = new ListAppender<>();
+		appender.start();
+		logger.addAppender(appender);
+
+		try {
+			AssistantFastIntentHook hook = new AssistantFastIntentHook(
+					router,
+					new ObjectMapper(),
+					null,
+					false,
+					publicationScopeResolver,
+					artifactPublicationLookupService);
+			OverAllState state = new OverAllState();
+			state.updateState(Map.of(
+					"input", "确认提交",
+					"tenant_id", "default",
+					AssistantStateKeys.SPACE_ID, 9L,
+					AssistantStateKeys.SPACE_ENVIRONMENT, "prod",
+					AssistantStateKeys.AGENT_APP_CODE, "finance-agent",
+					AssistantStateKeys.CONVERSATION_PHASE, "CONFIRMING",
+					AssistantStateKeys.MATCHED_TOOL_META, Map.of("toolCode", "gougu_oa.leave_application"),
+					CodeactStateKeys.AVAILABLE_TOOL_NAMES,
+					List.of("slot_collect", "slot_confirm", "gougu_oa_leave_application_execute")));
+
+			Map<String, Object> updates = hook.beforeAgent(state, RunnableConfig.builder().build()).join();
+
+			assertEquals("gougu_oa_leave_application_execute",
+					updates.get(AssistantStateKeys.EXECUTION_CONFIRM_TOOL_NAME));
+			String logs = appender.list.stream()
+					.map(ILoggingEvent::getFormattedMessage)
+					.collect(Collectors.joining("\n"));
+			assertTrue(logs.contains("AssistantFastIntentHook#resolveExecuteToolName - compatibility fallback to legacy execute tool"));
+			assertTrue(logs.contains("mode=scoped_compatibility"));
+			assertTrue(logs.contains("toolCode=gougu_oa.leave_application"));
+		}
+		finally {
+			logger.detachAppender(appender);
+			appender.stop();
+		}
+	}
+
 	private PublishedToolDescriptor publishedArtifact(
 			String artifactCode,
 			String displayName,
@@ -666,6 +717,7 @@ class AssistantFastIntentHookTest {
 			String systemCode) {
 		return publishedArtifact(artifactCode, displayName, description, systemCode, "{\"mode\":\"explicit\"}", null, null);
 	}
+
 
 	private PublishedToolDescriptor publishedArtifact(
 			String artifactCode,

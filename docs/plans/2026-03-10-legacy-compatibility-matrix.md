@@ -29,6 +29,7 @@ Runtime fallback warnings are also emitted when scoped artifact-first flows actu
 
 - `ToolCatalogContributor#contribute`
 - `AssistantFastIntentHook#resolveBestOperationTarget`
+- `AssistantFastIntentHook#resolveExecuteToolName`
 - `ToolExecutor#execute`
 - `PolicyGuardToolInterceptor#resolveGovernanceRule`
 - `SlotCollectTool#resolveToolMetaSnapshot`
@@ -45,4 +46,3 @@ Operational intent:
 1. Prefer app-level publication-source policy over request-time legacy fallback.
 2. Treat `allow_legacy_fallback` as a temporary migration control, not a product default.
 3. Remove unscoped legacy entrypoints only after artifact-first routing is the default in all UI and API callers.
-
