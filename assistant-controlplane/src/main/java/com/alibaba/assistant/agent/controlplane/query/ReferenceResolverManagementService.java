@@ -19,6 +19,7 @@ import com.alibaba.assistant.agent.controlplane.connector.Connector;
 import com.alibaba.assistant.agent.controlplane.connector.ConnectorService;
 import com.alibaba.assistant.agent.controlplane.space.PlatformSpace;
 import com.alibaba.assistant.agent.controlplane.space.PlatformSpaceService;
+import com.alibaba.assistant.agent.controlplane.support.ManagementKeywordMatcher;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.stereotype.Service;
@@ -61,16 +62,40 @@ public class ReferenceResolverManagementService {
     public List<ResolvedReferenceResolverManagementView> listResolvers(
             String spaceCode,
             String environment,
-            String connectorCode) {
+            String connectorCode,
+            String keyword) {
         Optional<ConnectorResolution> resolution = resolveConnector(spaceCode, environment, connectorCode);
         if (resolution.isEmpty()) {
             return List.of();
         }
+        String normalizedKeyword = ManagementKeywordMatcher.normalizeKeyword(keyword);
         return referenceResolverService.listEnabledByConnector(resolution.get().connector().getId()).stream()
                 .map(resolver -> toResolved(resolution.get(), resolver))
+                .filter(view -> ManagementKeywordMatcher.matches(
+                        normalizedKeyword,
+                        view.resolverCode(),
+                        view.visibility()))
                 .toList();
     }
 
+    public Optional<ResolvedReferenceResolverManagementView> getResolver(
+            String spaceCode,
+            String environment,
+            String connectorCode,
+            String resolverCode) {
+        String normalizedResolverCode = normalize(resolverCode);
+        if (!StringUtils.hasText(normalizedResolverCode)) {
+            return Optional.empty();
+        }
+        Optional<ConnectorResolution> resolution = resolveConnector(spaceCode, environment, connectorCode);
+        if (resolution.isEmpty()) {
+            return Optional.empty();
+        }
+        return referenceResolverService.listEnabledByConnector(resolution.get().connector().getId()).stream()
+                .filter(resolver -> normalizedResolverCode.equals(resolver.getResolverCode()))
+                .findFirst()
+                .map(resolver -> toResolved(resolution.get(), resolver));
+    }
     public Optional<ResolvedReferenceResolverManagementView> upsertResolver(
             String spaceCode,
             String environment,
@@ -214,3 +239,7 @@ public class ReferenceResolverManagementService {
     private record ConnectorResolution(PlatformSpace space, Connector connector, String environment) {
     }
 }
+
+
+
+

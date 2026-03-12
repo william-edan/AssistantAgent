@@ -33,7 +33,46 @@ import static org.mockito.Mockito.when;
 class InteractionSpecManagementServiceTest {
 
     @Test
-    void shouldListEnabledInteractionsUnderSpace() {
+    void shouldFilterInteractionsByKeywordUnderSpace() {
+        PlatformSpaceService platformSpaceService = mock(PlatformSpaceService.class);
+        InteractionSpecService interactionSpecService = mock(InteractionSpecService.class);
+        InteractionSpecManagementService service = new InteractionSpecManagementService(
+                platformSpaceService,
+                interactionSpecService,
+                new ObjectMapper());
+
+        PlatformSpace space = new PlatformSpace();
+        space.setId(10L);
+        space.setSpaceCode("enterprise-default");
+        space.setEnvironment("prod");
+        InteractionSpec leaveInteraction = interactionSpec(31L, 10L, "leave.apply.form", "enabled");
+        leaveInteraction.setSlotSchemaJson("{\"slots\":[{\"name\":\"reason\"}]}");
+        leaveInteraction.setAskStrategyJson("{\"mode\":\"batch\"}");
+        leaveInteraction.setAutoFillRulesJson("{\"duration\":\"date_diff\"}");
+        leaveInteraction.setSummaryLayoutJson("{\"sections\":[\"core\"]}");
+        leaveInteraction.setConfirmationPolicyJson("{\"required\":true}");
+        leaveInteraction.setEditPolicyJson("{\"allowEdit\":true}");
+        InteractionSpec expenseInteraction = interactionSpec(32L, 10L, "expense.apply.form", "enabled");
+        expenseInteraction.setSlotSchemaJson("{\"slots\":[{\"name\":\"amount\"}]}");
+        expenseInteraction.setAskStrategyJson("{\"mode\":\"progressive\"}");
+        expenseInteraction.setAutoFillRulesJson("{\"amount\":\"copy\"}");
+        expenseInteraction.setSummaryLayoutJson("{\"sections\":[\"finance\"]}");
+        expenseInteraction.setConfirmationPolicyJson("{\"required\":false}");
+        expenseInteraction.setEditPolicyJson("{\"allowEdit\":false}");
+
+        when(platformSpaceService.findActiveByCode("enterprise-default", "prod")).thenReturn(Optional.of(space));
+        when(interactionSpecService.listEnabledBySpace(10L)).thenReturn(List.of(leaveInteraction, expenseInteraction));
+
+        List<ResolvedInteractionSpecManagementView> result = service.listInteractions("enterprise-default", "prod", "leave");
+
+        assertEquals(1, result.size());
+        assertEquals("leave.apply.form", result.get(0).interactionCode());
+        assertEquals("batch", result.get(0).askStrategy().get("mode"));
+        assertEquals(Boolean.TRUE, result.get(0).confirmationPolicy().get("required"));
+    }
+
+    @Test
+    void shouldGetInteractionByCodeUnderSpace() {
         PlatformSpaceService platformSpaceService = mock(PlatformSpaceService.class);
         InteractionSpecService interactionSpecService = mock(InteractionSpecService.class);
         InteractionSpecManagementService service = new InteractionSpecManagementService(
@@ -54,16 +93,14 @@ class InteractionSpecManagementServiceTest {
         interaction.setEditPolicyJson("{\"allowEdit\":true}");
 
         when(platformSpaceService.findActiveByCode("enterprise-default", "prod")).thenReturn(Optional.of(space));
-        when(interactionSpecService.listEnabledBySpace(10L)).thenReturn(List.of(interaction));
+        when(interactionSpecService.findLatestEnabledByCode(10L, "leave.apply.form")).thenReturn(Optional.of(interaction));
 
-        List<ResolvedInteractionSpecManagementView> result = service.listInteractions("enterprise-default", "prod");
+        Optional<ResolvedInteractionSpecManagementView> result = service.getInteraction("enterprise-default", "prod", "leave.apply.form");
 
-        assertEquals(1, result.size());
-        assertEquals("leave.apply.form", result.get(0).interactionCode());
-        assertEquals("batch", result.get(0).askStrategy().get("mode"));
-        assertEquals(Boolean.TRUE, result.get(0).confirmationPolicy().get("required"));
+        assertTrue(result.isPresent());
+        assertEquals("leave.apply.form", result.get().interactionCode());
+        assertEquals("batch", result.get().askStrategy().get("mode"));
     }
-
     @Test
     void shouldCreateInteractionWhenCodeDoesNotExist() {
         PlatformSpaceService platformSpaceService = mock(PlatformSpaceService.class);
@@ -145,3 +182,5 @@ class InteractionSpecManagementServiceTest {
         return interaction;
     }
 }
+
+

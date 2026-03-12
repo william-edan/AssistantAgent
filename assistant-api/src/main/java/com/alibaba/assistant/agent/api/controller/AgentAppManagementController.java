@@ -65,6 +65,7 @@ public class AgentAppManagementController {
     public ResponseEntity<ManagedAgentAppListResponse> listAgentApps(
             @PathVariable String spaceCode,
             @RequestParam(value = "environment", required = false) String environment,
+            @RequestParam(value = "keyword", required = false) String keyword,
             Principal principal) {
         String normalizedEnvironment = normalizeEnvironment(environment);
         AuthenticatedUserContext authenticatedUser = requireAuthenticatedUser(principal);
@@ -73,9 +74,23 @@ public class AgentAppManagementController {
                 ManagedAgentAppListData.from(
                         spaceCode,
                         normalizedEnvironment,
-                        agentAppManagementService.listAgentApps(spaceCode, normalizedEnvironment))));
+                        agentAppManagementService.listAgentApps(spaceCode, normalizedEnvironment, keyword))));
     }
 
+    @GetMapping("/{agentAppCode}")
+    public ResponseEntity<ManagedAgentAppResponse> getAgentApp(
+            @PathVariable String spaceCode,
+            @PathVariable String agentAppCode,
+            @RequestParam(value = "environment", required = false) String environment,
+            Principal principal) {
+        String normalizedEnvironment = normalizeEnvironment(environment);
+        AuthenticatedUserContext authenticatedUser = requireAuthenticatedUser(principal);
+        requireManageAccess(authenticatedUser, spaceCode, normalizedEnvironment);
+        ResolvedAgentAppManagementView resolved = agentAppManagementService
+                .getAgentApp(spaceCode, normalizedEnvironment, agentAppCode)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "agent_app_not_found"));
+        return ResponseEntity.ok(ManagedAgentAppResponse.ok(ManagedAgentAppData.from(resolved)));
+    }
     @PutMapping("/{agentAppCode}")
     public ResponseEntity<ManagedAgentAppResponse> upsertAgentApp(
             @PathVariable String spaceCode,
@@ -114,3 +129,6 @@ public class AgentAppManagementController {
         return StringUtils.hasText(environment) ? environment.trim() : DEFAULT_ENVIRONMENT;
     }
 }
+
+
+

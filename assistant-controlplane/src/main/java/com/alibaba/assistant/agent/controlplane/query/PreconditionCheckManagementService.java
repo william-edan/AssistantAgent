@@ -19,6 +19,7 @@ import com.alibaba.assistant.agent.controlplane.connector.Connector;
 import com.alibaba.assistant.agent.controlplane.connector.ConnectorService;
 import com.alibaba.assistant.agent.controlplane.space.PlatformSpace;
 import com.alibaba.assistant.agent.controlplane.space.PlatformSpaceService;
+import com.alibaba.assistant.agent.controlplane.support.ManagementKeywordMatcher;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.stereotype.Service;
@@ -61,16 +62,37 @@ public class PreconditionCheckManagementService {
     public List<ResolvedPreconditionCheckManagementView> listChecks(
             String spaceCode,
             String environment,
-            String connectorCode) {
+            String connectorCode,
+            String keyword) {
         Optional<ConnectorResolution> resolution = resolveConnector(spaceCode, environment, connectorCode);
         if (resolution.isEmpty()) {
             return List.of();
         }
+        String normalizedKeyword = ManagementKeywordMatcher.normalizeKeyword(keyword);
         return preconditionCheckService.listEnabledByConnector(resolution.get().connector().getId()).stream()
                 .map(check -> toResolved(resolution.get(), check))
+                .filter(view -> ManagementKeywordMatcher.matches(normalizedKeyword, view.checkCode()))
                 .toList();
     }
 
+    public Optional<ResolvedPreconditionCheckManagementView> getCheck(
+            String spaceCode,
+            String environment,
+            String connectorCode,
+            String checkCode) {
+        String normalizedCheckCode = normalize(checkCode);
+        if (!StringUtils.hasText(normalizedCheckCode)) {
+            return Optional.empty();
+        }
+        Optional<ConnectorResolution> resolution = resolveConnector(spaceCode, environment, connectorCode);
+        if (resolution.isEmpty()) {
+            return Optional.empty();
+        }
+        return preconditionCheckService.listEnabledByConnector(resolution.get().connector().getId()).stream()
+                .filter(check -> normalizedCheckCode.equals(check.getCheckCode()))
+                .findFirst()
+                .map(check -> toResolved(resolution.get(), check));
+    }
     public Optional<ResolvedPreconditionCheckManagementView> upsertCheck(
             String spaceCode,
             String environment,
@@ -212,3 +234,7 @@ public class PreconditionCheckManagementService {
     private record ConnectorResolution(PlatformSpace space, Connector connector, String environment) {
     }
 }
+
+
+
+

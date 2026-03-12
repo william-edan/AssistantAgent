@@ -66,6 +66,7 @@ public class WorkflowManagementController {
     public ResponseEntity<ManagedWorkflowListResponse> listWorkflows(
             @PathVariable String spaceCode,
             @RequestParam(value = "environment", required = false) String environment,
+            @RequestParam(value = "keyword", required = false) String keyword,
             Principal principal) {
         String normalizedEnvironment = normalizeEnvironment(environment);
         AuthenticatedUserContext authenticatedUser = requireAuthenticatedUser(principal);
@@ -74,9 +75,23 @@ public class WorkflowManagementController {
                 ManagedWorkflowListData.from(
                         spaceCode,
                         normalizedEnvironment,
-                        workflowManagementService.listWorkflows(spaceCode, normalizedEnvironment))));
+                        workflowManagementService.listWorkflows(spaceCode, normalizedEnvironment, keyword))));
     }
 
+    @GetMapping("/{workflowCode}")
+    public ResponseEntity<ManagedWorkflowResponse> getWorkflow(
+            @PathVariable String spaceCode,
+            @PathVariable String workflowCode,
+            @RequestParam(value = "environment", required = false) String environment,
+            Principal principal) {
+        String normalizedEnvironment = normalizeEnvironment(environment);
+        AuthenticatedUserContext authenticatedUser = requireAuthenticatedUser(principal);
+        requireManageAccess(authenticatedUser, spaceCode, normalizedEnvironment);
+        ResolvedWorkflowManagementView resolved = workflowManagementService
+                .getWorkflow(spaceCode, normalizedEnvironment, workflowCode)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "workflow_not_found"));
+        return ResponseEntity.ok(ManagedWorkflowResponse.ok(ManagedWorkflowData.from(resolved)));
+    }
     @PutMapping("/{workflowCode}")
     public ResponseEntity<ManagedWorkflowResponse> upsertWorkflow(
             @PathVariable String spaceCode,
@@ -117,5 +132,8 @@ public class WorkflowManagementController {
         return StringUtils.hasText(environment) ? environment.trim() : DEFAULT_ENVIRONMENT;
     }
 }
+
+
+
 
 

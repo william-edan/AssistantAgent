@@ -19,6 +19,7 @@ import com.alibaba.assistant.agent.controlplane.connector.Connector;
 import com.alibaba.assistant.agent.controlplane.connector.ConnectorService;
 import com.alibaba.assistant.agent.controlplane.space.PlatformSpace;
 import com.alibaba.assistant.agent.controlplane.space.PlatformSpaceService;
+import com.alibaba.assistant.agent.controlplane.support.ManagementKeywordMatcher;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.stereotype.Service;
@@ -58,16 +59,41 @@ public class ActionSpecManagementService {
         this.objectMapper = objectMapper;
     }
 
-    public List<ResolvedActionSpecManagementView> listActions(String spaceCode, String environment, String connectorCode) {
+    public List<ResolvedActionSpecManagementView> listActions(String spaceCode, String environment, String connectorCode, String keyword) {
         Optional<ConnectorResolution> resolution = resolveConnector(spaceCode, environment, connectorCode);
         if (resolution.isEmpty()) {
             return List.of();
         }
+        String normalizedKeyword = ManagementKeywordMatcher.normalizeKeyword(keyword);
         return actionSpecService.listEnabledByConnector(resolution.get().connector().getId()).stream()
                 .map(actionSpec -> toResolved(resolution.get(), actionSpec))
+                .filter(view -> ManagementKeywordMatcher.matches(
+                        normalizedKeyword,
+                        view.actionCode(),
+                        view.defaultAuthProfileCode(),
+                        view.riskLevel(),
+                        view.sideEffectLevel()))
                 .toList();
     }
 
+    public Optional<ResolvedActionSpecManagementView> getAction(
+            String spaceCode,
+            String environment,
+            String connectorCode,
+            String actionCode) {
+        String normalizedActionCode = normalize(actionCode);
+        if (!StringUtils.hasText(normalizedActionCode)) {
+            return Optional.empty();
+        }
+        Optional<ConnectorResolution> resolution = resolveConnector(spaceCode, environment, connectorCode);
+        if (resolution.isEmpty()) {
+            return Optional.empty();
+        }
+        return actionSpecService.listEnabledByConnector(resolution.get().connector().getId()).stream()
+                .filter(actionSpec -> normalizedActionCode.equals(actionSpec.getActionCode()))
+                .findFirst()
+                .map(actionSpec -> toResolved(resolution.get(), actionSpec));
+    }
     public Optional<ResolvedActionSpecManagementView> upsertAction(
             String spaceCode,
             String environment,
@@ -214,3 +240,7 @@ public class ActionSpecManagementService {
     private record ConnectorResolution(PlatformSpace space, Connector connector, String environment) {
     }
 }
+
+
+
+

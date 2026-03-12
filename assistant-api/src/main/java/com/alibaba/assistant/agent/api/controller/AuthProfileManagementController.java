@@ -66,6 +66,7 @@ public class AuthProfileManagementController {
             @PathVariable String spaceCode,
             @PathVariable String connectorCode,
             @RequestParam(value = "environment", required = false) String environment,
+            @RequestParam(value = "keyword", required = false) String keyword,
             Principal principal) {
         String normalizedEnvironment = normalizeEnvironment(environment);
         AuthenticatedUserContext authenticatedUser = requireAuthenticatedUser(principal);
@@ -75,9 +76,24 @@ public class AuthProfileManagementController {
                         spaceCode,
                         normalizedEnvironment,
                         connectorCode,
-                        authProfileManagementService.listAuthProfiles(spaceCode, normalizedEnvironment, connectorCode))));
+                        authProfileManagementService.listAuthProfiles(spaceCode, normalizedEnvironment, connectorCode, keyword))));
     }
 
+    @GetMapping("/{authProfileCode}")
+    public ResponseEntity<ConnectorManagedAuthProfileResponse> getAuthProfile(
+            @PathVariable String spaceCode,
+            @PathVariable String connectorCode,
+            @PathVariable String authProfileCode,
+            @RequestParam(value = "environment", required = false) String environment,
+            Principal principal) {
+        String normalizedEnvironment = normalizeEnvironment(environment);
+        AuthenticatedUserContext authenticatedUser = requireAuthenticatedUser(principal);
+        requireManageAccess(authenticatedUser, spaceCode, normalizedEnvironment);
+        ResolvedAuthProfileManagementView resolved = authProfileManagementService
+                .getAuthProfile(spaceCode, normalizedEnvironment, connectorCode, authProfileCode)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "auth_profile_not_found"));
+        return ResponseEntity.ok(ConnectorManagedAuthProfileResponse.ok(ConnectorManagedAuthProfileData.from(resolved)));
+    }
     @PutMapping("/{authProfileCode}")
     public ResponseEntity<ConnectorManagedAuthProfileResponse> upsertAuthProfile(
             @PathVariable String spaceCode,
@@ -120,3 +136,6 @@ public class AuthProfileManagementController {
         return StringUtils.hasText(environment) ? environment.trim() : DEFAULT_ENVIRONMENT;
     }
 }
+
+
+

@@ -39,7 +39,87 @@ import static org.mockito.Mockito.when;
 class WorkflowManagementServiceTest {
 
     @Test
-    void shouldListEnabledWorkflowsWithResolvedSteps() {
+    void shouldFilterWorkflowsByKeywordWithResolvedSteps() {
+        PlatformSpaceService platformSpaceService = mock(PlatformSpaceService.class);
+        WorkflowSpecService workflowSpecService = mock(WorkflowSpecService.class);
+        WorkflowStepService workflowStepService = mock(WorkflowStepService.class);
+        InteractionSpecService interactionSpecService = mock(InteractionSpecService.class);
+        ConnectorService connectorService = mock(ConnectorService.class);
+        WorkflowManagementService service = new WorkflowManagementService(
+                platformSpaceService,
+                workflowSpecService,
+                workflowStepService,
+                interactionSpecService,
+                connectorService,
+                new ObjectMapper());
+
+        PlatformSpace space = new PlatformSpace();
+        space.setId(10L);
+        space.setSpaceCode("enterprise-default");
+        space.setEnvironment("prod");
+        InteractionSpec leaveInteraction = new InteractionSpec();
+        leaveInteraction.setId(51L);
+        leaveInteraction.setInteractionCode("leave.apply.form");
+        InteractionSpec expenseInteraction = new InteractionSpec();
+        expenseInteraction.setId(52L);
+        expenseInteraction.setInteractionCode("expense.apply.form");
+        Connector connector = connector(21L, 10L, "oa-core", "prod");
+        WorkflowSpec leaveWorkflow = workflow(31L, 10L, "oa.leave.apply", "请假申请", "enabled");
+        leaveWorkflow.setInteractionSpecId(51L);
+        leaveWorkflow.setRiskAggregationPolicy("max");
+        leaveWorkflow.setApprovalAggregationPolicy("strictest");
+        leaveWorkflow.setFailurePolicyJson("{\"mode\":\"fail_fast\"}");
+        leaveWorkflow.setAuditPolicyJson("{\"level\":\"full\"}");
+        WorkflowSpec expenseWorkflow = workflow(32L, 10L, "expense.approval", "报销审批", "enabled");
+        expenseWorkflow.setInteractionSpecId(52L);
+        expenseWorkflow.setRiskAggregationPolicy("sum");
+        expenseWorkflow.setApprovalAggregationPolicy("strictest");
+        expenseWorkflow.setFailurePolicyJson("{\"mode\":\"continue\"}");
+        expenseWorkflow.setAuditPolicyJson("{\"level\":\"basic\"}");
+        WorkflowStep leaveStep = step(71L, 31L, "create_leave", "创建请假", "HTTP", 21L, "/leave/create", 1, "enabled");
+        leaveStep.setAllowedAuthProfilesJson("[\"oa-user\"]");
+        leaveStep.setBindingStrategiesJson("[\"user_mapped\"]");
+        leaveStep.setInputMappingJson("{\"reason\":\"${reason}\"}");
+        leaveStep.setOutputMappingJson("{\"leaveId\":\"$.data.id\"}");
+        leaveStep.setDependsOnJson("[]");
+        leaveStep.setConditionJson("{\"expr\":\"${reason}\"}");
+        leaveStep.setJoinPolicyJson("{\"type\":\"ALL\"}");
+        leaveStep.setRetryPolicyJson("{\"maxRetries\":1}");
+        leaveStep.setTimeoutPolicyJson("{\"seconds\":30}");
+        leaveStep.setApprovalGateJson("{\"required\":false}");
+        leaveStep.setResumePolicyJson("{\"mode\":\"continue\"}");
+        WorkflowStep expenseStep = step(72L, 32L, "create_expense", "创建报销", "HTTP", 21L, "/expense/create", 1, "enabled");
+        expenseStep.setAllowedAuthProfilesJson("[\"oa-user\"]");
+        expenseStep.setBindingStrategiesJson("[\"service_account\"]");
+        expenseStep.setInputMappingJson("{\"amount\":\"${amount}\"}");
+        expenseStep.setOutputMappingJson("{\"expenseId\":\"$.data.id\"}");
+        expenseStep.setDependsOnJson("[]");
+        expenseStep.setConditionJson("{\"expr\":\"${amount}\"}");
+        expenseStep.setJoinPolicyJson("{\"type\":\"ANY\"}");
+        expenseStep.setRetryPolicyJson("{\"maxRetries\":2}");
+        expenseStep.setTimeoutPolicyJson("{\"seconds\":45}");
+        expenseStep.setApprovalGateJson("{\"required\":true}");
+        expenseStep.setResumePolicyJson("{\"mode\":\"continue\"}");
+
+        when(platformSpaceService.findActiveByCode("enterprise-default", "prod")).thenReturn(Optional.of(space));
+        when(workflowSpecService.listEnabledBySpace(10L)).thenReturn(List.of(leaveWorkflow, expenseWorkflow));
+        when(workflowStepService.listEnabledByWorkflowId(31L)).thenReturn(List.of(leaveStep));
+        when(workflowStepService.listEnabledByWorkflowId(32L)).thenReturn(List.of(expenseStep));
+        when(interactionSpecService.getById(51L)).thenReturn(leaveInteraction);
+        when(interactionSpecService.getById(52L)).thenReturn(expenseInteraction);
+        when(connectorService.getById(21L)).thenReturn(connector);
+
+        List<ResolvedWorkflowManagementView> result = service.listWorkflows("enterprise-default", "prod", "leave");
+
+        assertEquals(1, result.size());
+        assertEquals("oa.leave.apply", result.get(0).workflowCode());
+        assertEquals("leave.apply.form", result.get(0).interactionCode());
+        assertEquals("fail_fast", result.get(0).failurePolicy().get("mode"));
+        assertEquals("oa-core", result.get(0).steps().get(0).connectorCode());
+        assertEquals("continue", result.get(0).steps().get(0).resumePolicy().get("mode"));
+    }
+    @Test
+    void shouldGetWorkflowByCodeWithResolvedSteps() {
         PlatformSpaceService platformSpaceService = mock(PlatformSpaceService.class);
         WorkflowSpecService workflowSpecService = mock(WorkflowSpecService.class);
         WorkflowStepService workflowStepService = mock(WorkflowStepService.class);
@@ -81,21 +161,17 @@ class WorkflowManagementServiceTest {
         step.setResumePolicyJson("{\"mode\":\"continue\"}");
 
         when(platformSpaceService.findActiveByCode("enterprise-default", "prod")).thenReturn(Optional.of(space));
-        when(workflowSpecService.listEnabledBySpace(10L)).thenReturn(List.of(workflow));
+        when(workflowSpecService.findLatestEnabledByCode(10L, "oa.leave.apply")).thenReturn(Optional.of(workflow));
         when(workflowStepService.listEnabledByWorkflowId(31L)).thenReturn(List.of(step));
         when(interactionSpecService.getById(51L)).thenReturn(interaction);
         when(connectorService.getById(21L)).thenReturn(connector);
 
-        List<ResolvedWorkflowManagementView> result = service.listWorkflows("enterprise-default", "prod");
+        Optional<ResolvedWorkflowManagementView> result = service.getWorkflow("enterprise-default", "prod", "oa.leave.apply");
 
-        assertEquals(1, result.size());
-        assertEquals("oa.leave.apply", result.get(0).workflowCode());
-        assertEquals("leave.apply.form", result.get(0).interactionCode());
-        assertEquals("fail_fast", result.get(0).failurePolicy().get("mode"));
-        assertEquals("oa-core", result.get(0).steps().get(0).connectorCode());
-        assertEquals("continue", result.get(0).steps().get(0).resumePolicy().get("mode"));
+        assertTrue(result.isPresent());
+        assertEquals("oa.leave.apply", result.get().workflowCode());
+        assertEquals("oa-core", result.get().steps().get(0).connectorCode());
     }
-
     @Test
     void shouldCreateWorkflowWhenCodeDoesNotExist() {
         PlatformSpaceService platformSpaceService = mock(PlatformSpaceService.class);
@@ -282,4 +358,6 @@ class WorkflowManagementServiceTest {
         return connector;
     }
 }
+
+
 

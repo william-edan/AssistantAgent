@@ -69,7 +69,7 @@ class InteractionSpecManagementControllerTest {
     void shouldListManagedInteractions() throws Exception {
         when(authorizationService.canManageSpaceCatalog(any(AuthenticatedUserContext.class), eq("enterprise-default"), eq("prod")))
                 .thenReturn(true);
-        when(interactionSpecManagementService.listInteractions("enterprise-default", "prod"))
+        when(interactionSpecManagementService.listInteractions("enterprise-default", "prod", "leave"))
                 .thenReturn(List.of(new ResolvedInteractionSpecManagementView(
                         31L,
                         "enterprise-default",
@@ -84,6 +84,7 @@ class InteractionSpecManagementControllerTest {
                         "enabled")));
 
         mockMvc.perform(get("/api/controlplane/spaces/enterprise-default/interactions/manage")
+                        .param("keyword", "leave")
                         .principal(authenticatedPrincipal()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.code").value(0))
@@ -93,6 +94,31 @@ class InteractionSpecManagementControllerTest {
                 .andExpect(jsonPath("$.data.interactions[0].confirmationPolicy.required").value(true));
     }
 
+    @Test
+    void shouldGetManagedInteraction() throws Exception {
+        when(authorizationService.canManageSpaceCatalog(any(AuthenticatedUserContext.class), eq("enterprise-default"), eq("prod")))
+                .thenReturn(true);
+        when(interactionSpecManagementService.getInteraction("enterprise-default", "prod", "leave.apply.form"))
+                .thenReturn(Optional.of(new ResolvedInteractionSpecManagementView(
+                        31L,
+                        "enterprise-default",
+                        "prod",
+                        "leave.apply.form",
+                        Map.of("slots", List.of(Map.of("name", "reason"))),
+                        Map.of("mode", "batch"),
+                        Map.of("duration", "date_diff"),
+                        Map.of("sections", List.of("core")),
+                        Map.of("required", true),
+                        Map.of("allowEdit", true),
+                        "enabled")));
+
+        mockMvc.perform(get("/api/controlplane/spaces/enterprise-default/interactions/leave.apply.form")
+                        .principal(authenticatedPrincipal()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(0))
+                .andExpect(jsonPath("$.data.interactionCode").value("leave.apply.form"))
+                .andExpect(jsonPath("$.data.askStrategy.mode").value("batch"));
+    }
     @Test
     void shouldUpsertManagedInteraction() throws Exception {
         when(authorizationService.canManageSpaceCatalog(any(AuthenticatedUserContext.class), eq("enterprise-default"), eq("test")))
@@ -154,7 +180,7 @@ class InteractionSpecManagementControllerTest {
                         .principal(authenticatedPrincipal()))
                 .andExpect(status().isForbidden());
 
-        verify(interactionSpecManagementService, never()).listInteractions("enterprise-default", "prod");
+        verify(interactionSpecManagementService, never()).listInteractions("enterprise-default", "prod", null);
     }
 
     private Principal authenticatedPrincipal() {
@@ -174,3 +200,8 @@ class InteractionSpecManagementControllerTest {
                 List.of("assistant:chat", "assistant:controlplane"));
     }
 }
+
+
+
+
+

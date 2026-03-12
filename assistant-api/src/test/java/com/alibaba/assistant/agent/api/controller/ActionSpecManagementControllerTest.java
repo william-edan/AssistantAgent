@@ -69,7 +69,7 @@ class ActionSpecManagementControllerTest {
     void shouldListManagedActions() throws Exception {
         when(authorizationService.canManageSpaceCatalog(any(AuthenticatedUserContext.class), eq("enterprise-default"), eq("prod")))
                 .thenReturn(true);
-        when(actionSpecManagementService.listActions("enterprise-default", "prod", "oa-core"))
+        when(actionSpecManagementService.listActions("enterprise-default", "prod", "oa-core", "leave"))
                 .thenReturn(List.of(new ResolvedActionSpecManagementView(
                         31L,
                         "enterprise-default",
@@ -90,6 +90,7 @@ class ActionSpecManagementControllerTest {
                         "enabled")));
 
         mockMvc.perform(get("/api/controlplane/spaces/enterprise-default/connectors/oa-core/actions/manage")
+                        .param("keyword", "leave")
                         .principal(authenticatedPrincipal()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.code").value(0))
@@ -99,6 +100,37 @@ class ActionSpecManagementControllerTest {
                 .andExpect(jsonPath("$.data.actions[0].allowedAuthProfiles[1]").value("oa-service"));
     }
 
+    @Test
+    void shouldGetManagedAction() throws Exception {
+        when(authorizationService.canManageSpaceCatalog(any(AuthenticatedUserContext.class), eq("enterprise-default"), eq("prod")))
+                .thenReturn(true);
+        when(actionSpecManagementService.getAction("enterprise-default", "prod", "oa-core", "oa.leave.create"))
+                .thenReturn(Optional.of(new ResolvedActionSpecManagementView(
+                        31L,
+                        "enterprise-default",
+                        "prod",
+                        "oa-core",
+                        "oa.leave.create",
+                        Map.of("method", "POST", "endpoint", "/leave/create"),
+                        List.of("oa-user", "oa-service"),
+                        "oa-user",
+                        List.of("user_mapped"),
+                        Map.of("type", "object"),
+                        Map.of("type", "object"),
+                        Map.of("mode", "client_token"),
+                        "medium",
+                        5L,
+                        "write",
+                        Map.of("level", "detailed"),
+                        "enabled")));
+
+        mockMvc.perform(get("/api/controlplane/spaces/enterprise-default/connectors/oa-core/actions/oa.leave.create")
+                        .principal(authenticatedPrincipal()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(0))
+                .andExpect(jsonPath("$.data.actionCode").value("oa.leave.create"))
+                .andExpect(jsonPath("$.data.operationBinding.method").value("POST"));
+    }
     @Test
     void shouldUpsertManagedAction() throws Exception {
         when(authorizationService.canManageSpaceCatalog(any(AuthenticatedUserContext.class), eq("enterprise-default"), eq("test")))
@@ -174,7 +206,7 @@ class ActionSpecManagementControllerTest {
                         .principal(authenticatedPrincipal()))
                 .andExpect(status().isForbidden());
 
-        verify(actionSpecManagementService, never()).listActions("enterprise-default", "prod", "oa-core");
+        verify(actionSpecManagementService, never()).listActions("enterprise-default", "prod", "oa-core", null);
     }
 
     private Principal authenticatedPrincipal() {
@@ -194,3 +226,8 @@ class ActionSpecManagementControllerTest {
                 List.of("assistant:chat", "assistant:controlplane"));
     }
 }
+
+
+
+
+

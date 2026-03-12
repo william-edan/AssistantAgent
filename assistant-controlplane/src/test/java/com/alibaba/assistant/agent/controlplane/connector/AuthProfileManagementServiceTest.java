@@ -33,7 +33,42 @@ import static org.mockito.Mockito.when;
 class AuthProfileManagementServiceTest {
 
     @Test
-    void shouldListActiveAuthProfilesUnderConnector() {
+    void shouldFilterAuthProfilesByKeywordUnderConnector() {
+        PlatformSpaceService platformSpaceService = mock(PlatformSpaceService.class);
+        ConnectorService connectorService = mock(ConnectorService.class);
+        AuthProfileService authProfileService = mock(AuthProfileService.class);
+        AuthProfileManagementService service = new AuthProfileManagementService(
+                platformSpaceService,
+                connectorService,
+                authProfileService,
+                new ObjectMapper());
+
+        PlatformSpace space = new PlatformSpace();
+        space.setId(10L);
+        space.setSpaceCode("enterprise-default");
+        space.setEnvironment("prod");
+        Connector connector = connector(21L, 10L, "oa-core", "prod");
+        AuthProfile userProfile = authProfile(31L, 10L, 21L, "oa-user", "bearer", "user_mapped", "active");
+        userProfile.setScopesJson("[\"read\",\"write\"]");
+        userProfile.setCredentialRef("vault://oa-user");
+        AuthProfile serviceProfile = authProfile(32L, 10L, 21L, "finance-service", "api_key", "service_account", "active");
+        serviceProfile.setScopesJson("[\"sync\"]");
+        serviceProfile.setCredentialRef("vault://finance-service");
+
+        when(platformSpaceService.findActiveByCode("enterprise-default", "prod")).thenReturn(Optional.of(space));
+        when(connectorService.findLatestActiveByCodeAndEnvironment(10L, "prod", "oa-core")).thenReturn(Optional.of(connector));
+        when(authProfileService.listActiveByConnector(21L)).thenReturn(List.of(userProfile, serviceProfile));
+
+        List<ResolvedAuthProfileManagementView> result = service.listAuthProfiles("enterprise-default", "prod", "oa-core", "service");
+
+        assertEquals(1, result.size());
+        assertEquals("finance-service", result.get(0).authProfileCode());
+        assertEquals("api_key", result.get(0).authType());
+        assertEquals("vault://finance-service", result.get(0).credentialRef());
+    }
+
+    @Test
+    void shouldGetAuthProfileByCodeUnderConnector() {
         PlatformSpaceService platformSpaceService = mock(PlatformSpaceService.class);
         ConnectorService connectorService = mock(ConnectorService.class);
         AuthProfileService authProfileService = mock(AuthProfileService.class);
@@ -54,16 +89,14 @@ class AuthProfileManagementServiceTest {
 
         when(platformSpaceService.findActiveByCode("enterprise-default", "prod")).thenReturn(Optional.of(space));
         when(connectorService.findLatestActiveByCodeAndEnvironment(10L, "prod", "oa-core")).thenReturn(Optional.of(connector));
-        when(authProfileService.listActiveByConnector(21L)).thenReturn(List.of(profile));
+        when(authProfileService.findLatestActiveByCode(21L, "oa-user")).thenReturn(Optional.of(profile));
 
-        List<ResolvedAuthProfileManagementView> result = service.listAuthProfiles("enterprise-default", "prod", "oa-core");
+        Optional<ResolvedAuthProfileManagementView> result = service.getAuthProfile("enterprise-default", "prod", "oa-core", "oa-user");
 
-        assertEquals(1, result.size());
-        assertEquals("oa-user", result.get(0).authProfileCode());
-        assertEquals(List.of("read", "write"), result.get(0).scopes());
-        assertEquals("vault://oa-user", result.get(0).credentialRef());
+        assertTrue(result.isPresent());
+        assertEquals("oa-user", result.get().authProfileCode());
+        assertEquals("vault://oa-user", result.get().credentialRef());
     }
-
     @Test
     void shouldCreateAuthProfileWhenCodeDoesNotExist() {
         PlatformSpaceService platformSpaceService = mock(PlatformSpaceService.class);
@@ -179,3 +212,5 @@ class AuthProfileManagementServiceTest {
         return profile;
     }
 }
+
+

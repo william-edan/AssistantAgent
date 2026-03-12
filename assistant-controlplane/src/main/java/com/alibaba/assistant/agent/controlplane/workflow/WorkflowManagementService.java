@@ -21,6 +21,7 @@ import com.alibaba.assistant.agent.controlplane.interaction.InteractionSpec;
 import com.alibaba.assistant.agent.controlplane.interaction.InteractionSpecService;
 import com.alibaba.assistant.agent.controlplane.space.PlatformSpace;
 import com.alibaba.assistant.agent.controlplane.space.PlatformSpaceService;
+import com.alibaba.assistant.agent.controlplane.support.ManagementKeywordMatcher;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -70,16 +71,35 @@ public class WorkflowManagementService {
         this.objectMapper = objectMapper;
     }
 
-    public List<ResolvedWorkflowManagementView> listWorkflows(String spaceCode, String environment) {
+    public List<ResolvedWorkflowManagementView> listWorkflows(String spaceCode, String environment, String keyword) {
         Optional<SpaceResolution> resolution = resolveSpace(spaceCode, environment);
         if (resolution.isEmpty()) {
             return List.of();
         }
+        String normalizedKeyword = ManagementKeywordMatcher.normalizeKeyword(keyword);
         return workflowSpecService.listEnabledBySpace(resolution.get().space().getId()).stream()
                 .map(workflowSpec -> toResolved(resolution.get(), workflowSpec, workflowStepService.listEnabledByWorkflowId(workflowSpec.getId())))
+                .filter(view -> ManagementKeywordMatcher.matches(
+                        normalizedKeyword,
+                        view.workflowCode(),
+                        view.displayName()))
                 .toList();
     }
 
+    public Optional<ResolvedWorkflowManagementView> getWorkflow(String spaceCode, String environment, String workflowCode) {
+        if (!StringUtils.hasText(workflowCode)) {
+            return Optional.empty();
+        }
+        Optional<SpaceResolution> resolution = resolveSpace(spaceCode, environment);
+        if (resolution.isEmpty()) {
+            return Optional.empty();
+        }
+        return workflowSpecService.findLatestEnabledByCode(resolution.get().space().getId(), workflowCode.trim())
+                .map(workflowSpec -> toResolved(
+                        resolution.get(),
+                        workflowSpec,
+                        workflowStepService.listEnabledByWorkflowId(workflowSpec.getId())));
+    }
     public Optional<ResolvedWorkflowManagementView> upsertWorkflow(
             String spaceCode,
             String environment,
@@ -356,3 +376,7 @@ public class WorkflowManagementService {
     private record SpaceResolution(PlatformSpace space, String environment) {
     }
 }
+
+
+
+

@@ -65,6 +65,7 @@ public class InteractionSpecManagementController {
     public ResponseEntity<ManagedInteractionSpecListResponse> listInteractions(
             @PathVariable String spaceCode,
             @RequestParam(value = "environment", required = false) String environment,
+            @RequestParam(value = "keyword", required = false) String keyword,
             Principal principal) {
         String normalizedEnvironment = normalizeEnvironment(environment);
         AuthenticatedUserContext authenticatedUser = requireAuthenticatedUser(principal);
@@ -73,9 +74,23 @@ public class InteractionSpecManagementController {
                 ManagedInteractionSpecListData.from(
                         spaceCode,
                         normalizedEnvironment,
-                        interactionSpecManagementService.listInteractions(spaceCode, normalizedEnvironment))));
+                        interactionSpecManagementService.listInteractions(spaceCode, normalizedEnvironment, keyword))));
     }
 
+    @GetMapping("/{interactionCode}")
+    public ResponseEntity<ManagedInteractionSpecResponse> getInteraction(
+            @PathVariable String spaceCode,
+            @PathVariable String interactionCode,
+            @RequestParam(value = "environment", required = false) String environment,
+            Principal principal) {
+        String normalizedEnvironment = normalizeEnvironment(environment);
+        AuthenticatedUserContext authenticatedUser = requireAuthenticatedUser(principal);
+        requireManageAccess(authenticatedUser, spaceCode, normalizedEnvironment);
+        ResolvedInteractionSpecManagementView resolved = interactionSpecManagementService
+                .getInteraction(spaceCode, normalizedEnvironment, interactionCode)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "interaction_not_found"));
+        return ResponseEntity.ok(ManagedInteractionSpecResponse.ok(ManagedInteractionSpecData.from(resolved)));
+    }
     @PutMapping("/{interactionCode}")
     public ResponseEntity<ManagedInteractionSpecResponse> upsertInteraction(
             @PathVariable String spaceCode,
@@ -116,3 +131,6 @@ public class InteractionSpecManagementController {
         return StringUtils.hasText(environment) ? environment.trim() : DEFAULT_ENVIRONMENT;
     }
 }
+
+
+

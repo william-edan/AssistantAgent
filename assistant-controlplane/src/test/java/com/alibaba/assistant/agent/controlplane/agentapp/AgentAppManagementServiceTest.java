@@ -33,7 +33,40 @@ import static org.mockito.Mockito.when;
 class AgentAppManagementServiceTest {
 
     @Test
-    void shouldListActiveAgentAppsUnderSpace() {
+    void shouldFilterAgentAppsByKeywordUnderSpace() {
+        PlatformSpaceService platformSpaceService = mock(PlatformSpaceService.class);
+        AgentAppService agentAppService = mock(AgentAppService.class);
+        AgentAppManagementService service = new AgentAppManagementService(
+                platformSpaceService,
+                agentAppService,
+                new ObjectMapper());
+
+        PlatformSpace space = new PlatformSpace();
+        space.setId(10L);
+        space.setSpaceCode("enterprise-default");
+        space.setEnvironment("prod");
+        AgentApp financeApp = agentApp(31L, 10L, "finance-agent", "Finance Agent", "active");
+        financeApp.setPromptPolicyJson("{\"mode\":\"strict\"}");
+        financeApp.setMemoryPolicyJson("{\"retention\":\"short\"}");
+        financeApp.setApprovalStrategyJson("{\"required\":true}");
+        AgentApp hrApp = agentApp(32L, 10L, "hr-agent", "HR Agent", "active");
+        hrApp.setPromptPolicyJson("{\"mode\":\"lenient\"}");
+        hrApp.setMemoryPolicyJson("{\"retention\":\"long\"}");
+        hrApp.setApprovalStrategyJson("{\"required\":false}");
+
+        when(platformSpaceService.findActiveByCode("enterprise-default", "prod")).thenReturn(Optional.of(space));
+        when(agentAppService.listActiveBySpace(10L)).thenReturn(List.of(financeApp, hrApp));
+
+        List<ResolvedAgentAppManagementView> result = service.listAgentApps("enterprise-default", "prod", "finance");
+
+        assertEquals(1, result.size());
+        assertEquals("finance-agent", result.get(0).agentAppCode());
+        assertEquals("strict", result.get(0).promptPolicy().get("mode"));
+        assertEquals(Boolean.TRUE, result.get(0).approvalStrategy().get("required"));
+    }
+
+    @Test
+    void shouldGetAgentAppByCodeUnderSpace() {
         PlatformSpaceService platformSpaceService = mock(PlatformSpaceService.class);
         AgentAppService agentAppService = mock(AgentAppService.class);
         AgentAppManagementService service = new AgentAppManagementService(
@@ -51,16 +84,14 @@ class AgentAppManagementServiceTest {
         app.setApprovalStrategyJson("{\"required\":true}");
 
         when(platformSpaceService.findActiveByCode("enterprise-default", "prod")).thenReturn(Optional.of(space));
-        when(agentAppService.listActiveBySpace(10L)).thenReturn(List.of(app));
+        when(agentAppService.findActiveByCode(10L, "finance-agent")).thenReturn(Optional.of(app));
 
-        List<ResolvedAgentAppManagementView> result = service.listAgentApps("enterprise-default", "prod");
+        Optional<ResolvedAgentAppManagementView> result = service.getAgentApp("enterprise-default", "prod", "finance-agent");
 
-        assertEquals(1, result.size());
-        assertEquals("finance-agent", result.get(0).agentAppCode());
-        assertEquals("strict", result.get(0).promptPolicy().get("mode"));
-        assertEquals(Boolean.TRUE, result.get(0).approvalStrategy().get("required"));
+        assertTrue(result.isPresent());
+        assertEquals("finance-agent", result.get().agentAppCode());
+        assertEquals("strict", result.get().promptPolicy().get("mode"));
     }
-
     @Test
     void shouldCreateAgentAppWhenCodeDoesNotExist() {
         PlatformSpaceService platformSpaceService = mock(PlatformSpaceService.class);
@@ -141,3 +172,5 @@ class AgentAppManagementServiceTest {
         return app;
     }
 }
+
+

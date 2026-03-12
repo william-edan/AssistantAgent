@@ -68,7 +68,7 @@ class ConnectorManagementControllerTest {
     void shouldListManagedConnectors() throws Exception {
         when(authorizationService.canManageSpaceCatalog(any(AuthenticatedUserContext.class), eq("enterprise-default"), eq("prod")))
                 .thenReturn(true);
-        when(connectorManagementService.listConnectors("enterprise-default", "prod"))
+        when(connectorManagementService.listConnectors("enterprise-default", "prod", "finance"))
                 .thenReturn(List.of(new ResolvedConnectorView(
                         11L,
                         "enterprise-default",
@@ -83,6 +83,7 @@ class ConnectorManagementControllerTest {
                         2)));
 
         mockMvc.perform(get("/api/controlplane/spaces/enterprise-default/connectors")
+                        .param("keyword", "finance")
                         .principal(authenticatedPrincipal()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.code").value(0))
@@ -91,6 +92,31 @@ class ConnectorManagementControllerTest {
                 .andExpect(jsonPath("$.data.connectors[0].networkZone").value("INTRANET"));
     }
 
+    @Test
+    void shouldGetManagedConnector() throws Exception {
+        when(authorizationService.canManageSpaceCatalog(any(AuthenticatedUserContext.class), eq("enterprise-default"), eq("prod")))
+                .thenReturn(true);
+        when(connectorManagementService.getConnector("enterprise-default", "prod", "oa-core"))
+                .thenReturn(Optional.of(new ResolvedConnectorView(
+                        11L,
+                        "enterprise-default",
+                        "prod",
+                        "oa-core",
+                        "gougu_oa",
+                        "OA Core",
+                        "openapi",
+                        "intranet",
+                        "http://oa.internal",
+                        "active",
+                        2)));
+
+        mockMvc.perform(get("/api/controlplane/spaces/enterprise-default/connectors/oa-core")
+                        .principal(authenticatedPrincipal()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(0))
+                .andExpect(jsonPath("$.data.connectorCode").value("oa-core"))
+                .andExpect(jsonPath("$.data.networkZone").value("INTRANET"));
+    }
     @Test
     void shouldUpsertConnector() throws Exception {
         when(authorizationService.canManageSpaceCatalog(any(AuthenticatedUserContext.class), eq("enterprise-default"), eq("test")))
@@ -152,7 +178,7 @@ class ConnectorManagementControllerTest {
                         .principal(authenticatedPrincipal()))
                 .andExpect(status().isForbidden());
 
-        verify(connectorManagementService, never()).listConnectors("enterprise-default", "prod");
+        verify(connectorManagementService, never()).listConnectors("enterprise-default", "prod", null);
     }
 
     private Principal authenticatedPrincipal() {
@@ -172,3 +198,8 @@ class ConnectorManagementControllerTest {
                 List.of("assistant:chat", "assistant:controlplane"));
     }
 }
+
+
+
+
+

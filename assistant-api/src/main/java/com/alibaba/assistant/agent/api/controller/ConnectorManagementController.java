@@ -65,6 +65,7 @@ public class ConnectorManagementController {
     public ResponseEntity<ConnectorListResponse> listConnectors(
             @PathVariable String spaceCode,
             @RequestParam(value = "environment", required = false) String environment,
+            @RequestParam(value = "keyword", required = false) String keyword,
             Principal principal) {
         String normalizedEnvironment = normalizeEnvironment(environment);
         AuthenticatedUserContext authenticatedUser = requireAuthenticatedUser(principal);
@@ -73,9 +74,23 @@ public class ConnectorManagementController {
                 ConnectorListData.from(
                         spaceCode,
                         normalizedEnvironment,
-                        connectorManagementService.listConnectors(spaceCode, normalizedEnvironment))));
+                        connectorManagementService.listConnectors(spaceCode, normalizedEnvironment, keyword))));
     }
 
+    @GetMapping("/{connectorCode}")
+    public ResponseEntity<ConnectorResponse> getConnector(
+            @PathVariable String spaceCode,
+            @PathVariable String connectorCode,
+            @RequestParam(value = "environment", required = false) String environment,
+            Principal principal) {
+        String normalizedEnvironment = normalizeEnvironment(environment);
+        AuthenticatedUserContext authenticatedUser = requireAuthenticatedUser(principal);
+        requireManageAccess(authenticatedUser, spaceCode, normalizedEnvironment);
+        ResolvedConnectorView resolved = connectorManagementService
+                .getConnector(spaceCode, normalizedEnvironment, connectorCode)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "connector_not_found"));
+        return ResponseEntity.ok(ConnectorResponse.ok(ConnectorData.from(resolved)));
+    }
     @PutMapping("/{connectorCode}")
     public ResponseEntity<ConnectorResponse> upsertConnector(
             @PathVariable String spaceCode,
@@ -114,3 +129,6 @@ public class ConnectorManagementController {
         return StringUtils.hasText(environment) ? environment.trim() : DEFAULT_ENVIRONMENT;
     }
 }
+
+
+

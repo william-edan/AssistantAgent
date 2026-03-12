@@ -31,7 +31,29 @@ import static org.mockito.Mockito.when;
 class ConnectorManagementServiceTest {
 
     @Test
-    void shouldListActiveConnectorsUnderSpaceEnvironment() {
+    void shouldFilterConnectorsByKeywordUnderSpaceEnvironment() {
+        PlatformSpaceService platformSpaceService = mock(PlatformSpaceService.class);
+        ConnectorService connectorService = mock(ConnectorService.class);
+        ConnectorManagementService service = new ConnectorManagementService(platformSpaceService, connectorService);
+
+        PlatformSpace space = new PlatformSpace();
+        space.setId(10L);
+        space.setSpaceCode("enterprise-default");
+        space.setEnvironment("prod");
+        when(platformSpaceService.findActiveByCode("enterprise-default", "prod")).thenReturn(Optional.of(space));
+        Connector financeConnector = connector("finance-core", "finance_oa", "Finance Core", "openapi", "intranet", "http://finance.internal", "active", 3);
+        Connector hrConnector = connector("hr-core", "hr_oa", "HR Core", "openapi", "dmz", "http://hr.internal", "active", 4);
+        when(connectorService.listLatestActiveBySpace(10L, "prod")).thenReturn(List.of(financeConnector, hrConnector));
+
+        List<ResolvedConnectorView> result = service.listConnectors("enterprise-default", "prod", "finance");
+
+        assertEquals(1, result.size());
+        assertEquals("finance-core", result.get(0).connectorCode());
+        assertEquals("finance_oa", result.get(0).systemCode());
+    }
+
+    @Test
+    void shouldGetConnectorByCodeUnderSpaceEnvironment() {
         PlatformSpaceService platformSpaceService = mock(PlatformSpaceService.class);
         ConnectorService connectorService = mock(ConnectorService.class);
         ConnectorManagementService service = new ConnectorManagementService(platformSpaceService, connectorService);
@@ -42,15 +64,14 @@ class ConnectorManagementServiceTest {
         space.setEnvironment("prod");
         when(platformSpaceService.findActiveByCode("enterprise-default", "prod")).thenReturn(Optional.of(space));
         Connector connector = connector("oa-core", "gougu_oa", "OA Core", "openapi", "intranet", "http://oa.internal", "active", 3);
-        when(connectorService.listLatestActiveBySpace(10L, "prod")).thenReturn(List.of(connector));
+        when(connectorService.findLatestActiveByCodeAndEnvironment(10L, "prod", "oa-core")).thenReturn(Optional.of(connector));
 
-        List<ResolvedConnectorView> result = service.listConnectors("enterprise-default", "prod");
+        Optional<ResolvedConnectorView> result = service.getConnector("enterprise-default", "prod", "oa-core");
 
-        assertEquals(1, result.size());
-        assertEquals("oa-core", result.get(0).connectorCode());
-        assertEquals("intranet", result.get(0).networkZone());
+        assertTrue(result.isPresent());
+        assertEquals("oa-core", result.get().connectorCode());
+        assertEquals("intranet", result.get().networkZone());
     }
-
     @Test
     void shouldCreateConnectorWhenCodeDoesNotExist() {
         PlatformSpaceService platformSpaceService = mock(PlatformSpaceService.class);
@@ -139,3 +160,5 @@ class ConnectorManagementServiceTest {
         return connector;
     }
 }
+
+

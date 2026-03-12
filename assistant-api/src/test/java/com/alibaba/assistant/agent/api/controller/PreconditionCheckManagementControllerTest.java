@@ -69,7 +69,7 @@ class PreconditionCheckManagementControllerTest {
     void shouldListManagedChecks() throws Exception {
         when(authorizationService.canManageSpaceCatalog(any(AuthenticatedUserContext.class), eq("enterprise-default"), eq("prod")))
                 .thenReturn(true);
-        when(preconditionCheckManagementService.listChecks("enterprise-default", "prod", "oa-core"))
+        when(preconditionCheckManagementService.listChecks("enterprise-default", "prod", "oa-core", "leave"))
                 .thenReturn(List.of(new ResolvedPreconditionCheckManagementView(
                         31L,
                         "enterprise-default",
@@ -85,6 +85,7 @@ class PreconditionCheckManagementControllerTest {
                         "enabled")));
 
         mockMvc.perform(get("/api/controlplane/spaces/enterprise-default/connectors/oa-core/precondition-checks/manage")
+                        .param("keyword", "leave")
                         .principal(authenticatedPrincipal()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.code").value(0))
@@ -94,6 +95,32 @@ class PreconditionCheckManagementControllerTest {
                 .andExpect(jsonPath("$.data.checks[0].status").value("ENABLED"));
     }
 
+    @Test
+    void shouldGetManagedCheck() throws Exception {
+        when(authorizationService.canManageSpaceCatalog(any(AuthenticatedUserContext.class), eq("enterprise-default"), eq("prod")))
+                .thenReturn(true);
+        when(preconditionCheckManagementService.getCheck("enterprise-default", "prod", "oa-core", "leave.window.open"))
+                .thenReturn(Optional.of(new ResolvedPreconditionCheckManagementView(
+                        31L,
+                        "enterprise-default",
+                        "prod",
+                        "oa-core",
+                        "leave.window.open",
+                        Map.of("method", "GET", "endpoint", "/leave/window"),
+                        List.of("oa-user", "oa-service"),
+                        List.of("user_mapped"),
+                        Map.of("type", "object"),
+                        Map.of("op", "eq", "left", "$.open", "right", true),
+                        Map.of("mode", "block"),
+                        "enabled")));
+
+        mockMvc.perform(get("/api/controlplane/spaces/enterprise-default/connectors/oa-core/precondition-checks/leave.window.open")
+                        .principal(authenticatedPrincipal()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(0))
+                .andExpect(jsonPath("$.data.checkCode").value("leave.window.open"))
+                .andExpect(jsonPath("$.data.failurePolicy.mode").value("block"));
+    }
     @Test
     void shouldUpsertManagedCheck() throws Exception {
         when(authorizationService.canManageSpaceCatalog(any(AuthenticatedUserContext.class), eq("enterprise-default"), eq("test")))
@@ -160,7 +187,7 @@ class PreconditionCheckManagementControllerTest {
                         .principal(authenticatedPrincipal()))
                 .andExpect(status().isForbidden());
 
-        verify(preconditionCheckManagementService, never()).listChecks("enterprise-default", "prod", "oa-core");
+        verify(preconditionCheckManagementService, never()).listChecks("enterprise-default", "prod", "oa-core", null);
     }
 
     private Principal authenticatedPrincipal() {
@@ -180,3 +207,8 @@ class PreconditionCheckManagementControllerTest {
                 List.of("assistant:chat", "assistant:controlplane"));
     }
 }
+
+
+
+
+

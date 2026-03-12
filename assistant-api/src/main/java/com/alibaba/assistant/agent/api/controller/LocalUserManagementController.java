@@ -15,16 +15,15 @@
  */
 package com.alibaba.assistant.agent.api.controller;
 
-import com.alibaba.assistant.agent.api.controller.dto.ManagedPreconditionCheckData;
-import com.alibaba.assistant.agent.api.controller.dto.ManagedPreconditionCheckListData;
-import com.alibaba.assistant.agent.api.controller.dto.ManagedPreconditionCheckListResponse;
-import com.alibaba.assistant.agent.api.controller.dto.ManagedPreconditionCheckRequest;
-import com.alibaba.assistant.agent.api.controller.dto.ManagedPreconditionCheckResponse;
+import com.alibaba.assistant.agent.api.controller.dto.ManagedLocalUserData;
+import com.alibaba.assistant.agent.api.controller.dto.ManagedLocalUserListData;
+import com.alibaba.assistant.agent.api.controller.dto.ManagedLocalUserListResponse;
+import com.alibaba.assistant.agent.api.controller.dto.ManagedLocalUserRequest;
+import com.alibaba.assistant.agent.api.controller.dto.ManagedLocalUserResponse;
 import com.alibaba.assistant.agent.api.security.AuthenticatedUserContext;
 import com.alibaba.assistant.agent.api.security.MigrationControlPlaneAuthorizationService;
-import com.alibaba.assistant.agent.controlplane.query.PreconditionCheckManagementService;
-import com.alibaba.assistant.agent.controlplane.query.PreconditionCheckUpsertCommand;
-import com.alibaba.assistant.agent.controlplane.query.ResolvedPreconditionCheckManagementView;
+import com.alibaba.assistant.agent.controlplane.identity.LocalUserManagementService;
+import com.alibaba.assistant.agent.controlplane.identity.ResolvedLocalUserManagementView;
 import org.springframework.context.annotation.Profile;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -42,86 +41,76 @@ import org.springframework.web.server.ResponseStatusException;
 import java.security.Principal;
 
 /**
- * Control-plane management API for precondition checks.
+ * Control-plane management API for migration local users.
  */
 @RestController
 @Profile("migration")
-@RequestMapping("/api/controlplane/spaces/{spaceCode}/connectors/{connectorCode}/precondition-checks")
-public class PreconditionCheckManagementController {
+@RequestMapping("/api/controlplane/spaces/{spaceCode}/local-users")
+public class LocalUserManagementController {
 
     private static final String DEFAULT_ENVIRONMENT = "prod";
 
-    private final PreconditionCheckManagementService preconditionCheckManagementService;
+    private final LocalUserManagementService localUserManagementService;
 
     private final MigrationControlPlaneAuthorizationService authorizationService;
 
-    public PreconditionCheckManagementController(
-            PreconditionCheckManagementService preconditionCheckManagementService,
+    public LocalUserManagementController(
+            LocalUserManagementService localUserManagementService,
             MigrationControlPlaneAuthorizationService authorizationService) {
-        this.preconditionCheckManagementService = preconditionCheckManagementService;
+        this.localUserManagementService = localUserManagementService;
         this.authorizationService = authorizationService;
     }
 
-    @GetMapping("/manage")
-    public ResponseEntity<ManagedPreconditionCheckListResponse> listChecks(
+    @GetMapping
+    public ResponseEntity<ManagedLocalUserListResponse> listLocalUsers(
             @PathVariable String spaceCode,
-            @PathVariable String connectorCode,
             @RequestParam(value = "environment", required = false) String environment,
             @RequestParam(value = "keyword", required = false) String keyword,
             Principal principal) {
         String normalizedEnvironment = normalizeEnvironment(environment);
         AuthenticatedUserContext authenticatedUser = requireAuthenticatedUser(principal);
         requireManageAccess(authenticatedUser, spaceCode, normalizedEnvironment);
-        return ResponseEntity.ok(ManagedPreconditionCheckListResponse.ok(
-                ManagedPreconditionCheckListData.from(
+        return ResponseEntity.ok(ManagedLocalUserListResponse.ok(
+                ManagedLocalUserListData.from(
                         spaceCode,
                         normalizedEnvironment,
-                        connectorCode,
-                        preconditionCheckManagementService.listChecks(
-                                spaceCode,
-                                normalizedEnvironment,
-                                connectorCode,
-                                keyword))));
+                        localUserManagementService.listLocalUsers(spaceCode, normalizedEnvironment, keyword))));
     }
 
-    @GetMapping("/{checkCode}")
-    public ResponseEntity<ManagedPreconditionCheckResponse> getCheck(
+    @GetMapping("/{username}")
+    public ResponseEntity<ManagedLocalUserResponse> getLocalUser(
             @PathVariable String spaceCode,
-            @PathVariable String connectorCode,
-            @PathVariable String checkCode,
+            @PathVariable String username,
             @RequestParam(value = "environment", required = false) String environment,
+            @RequestParam(value = "systemCode", required = false) String systemCode,
             Principal principal) {
         String normalizedEnvironment = normalizeEnvironment(environment);
         AuthenticatedUserContext authenticatedUser = requireAuthenticatedUser(principal);
         requireManageAccess(authenticatedUser, spaceCode, normalizedEnvironment);
-        ResolvedPreconditionCheckManagementView resolved = preconditionCheckManagementService
-                .getCheck(spaceCode, normalizedEnvironment, connectorCode, checkCode)
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "check_not_found"));
-        return ResponseEntity.ok(ManagedPreconditionCheckResponse.ok(ManagedPreconditionCheckData.from(resolved)));
+        ResolvedLocalUserManagementView resolved = localUserManagementService
+                .getLocalUser(spaceCode, normalizedEnvironment, username, systemCode)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "local_user_not_found"));
+        return ResponseEntity.ok(ManagedLocalUserResponse.ok(ManagedLocalUserData.from(resolved)));
     }
-    @PutMapping("/{checkCode}")
-    public ResponseEntity<ManagedPreconditionCheckResponse> upsertCheck(
+
+    @PutMapping("/{username}")
+    public ResponseEntity<ManagedLocalUserResponse> upsertLocalUser(
             @PathVariable String spaceCode,
-            @PathVariable String connectorCode,
-            @PathVariable String checkCode,
+            @PathVariable String username,
             @RequestParam(value = "environment", required = false) String environment,
-            @RequestBody(required = false) ManagedPreconditionCheckRequest request,
+            @RequestBody(required = false) ManagedLocalUserRequest request,
             Principal principal) {
         String normalizedEnvironment = normalizeEnvironment(environment);
         AuthenticatedUserContext authenticatedUser = requireAuthenticatedUser(principal);
         requireManageAccess(authenticatedUser, spaceCode, normalizedEnvironment);
-        ResolvedPreconditionCheckManagementView resolved = preconditionCheckManagementService
-                .upsertCheck(
+        ResolvedLocalUserManagementView resolved = localUserManagementService
+                .upsertLocalUser(
                         spaceCode,
                         normalizedEnvironment,
-                        connectorCode,
-                        checkCode,
-                        request == null
-                                ? new ManagedPreconditionCheckRequest(null, null, null, null, null, null, null)
-                                        .toCommand()
-                                : request.toCommand())
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "connector_not_found"));
-        return ResponseEntity.ok(ManagedPreconditionCheckResponse.ok(ManagedPreconditionCheckData.from(resolved)));
+                        username,
+                        request == null ? new ManagedLocalUserRequest(null, null, null, null, null).toCommand() : request.toCommand())
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.BAD_REQUEST, "local_user_upsert_failed"));
+        return ResponseEntity.ok(ManagedLocalUserResponse.ok(ManagedLocalUserData.from(resolved)));
     }
 
     private AuthenticatedUserContext requireAuthenticatedUser(Principal principal) {
@@ -133,7 +122,7 @@ public class PreconditionCheckManagementController {
     }
 
     private void requireManageAccess(AuthenticatedUserContext authenticatedUser, String spaceCode, String environment) {
-        if (!authorizationService.canManageSpaceCatalog(authenticatedUser, spaceCode, environment)) {
+        if (!authorizationService.canManageLocalUserControlPlaneAccessPolicy(authenticatedUser, spaceCode, environment)) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "controlplane_scope_denied");
         }
     }
@@ -142,6 +131,3 @@ public class PreconditionCheckManagementController {
         return StringUtils.hasText(environment) ? environment.trim() : DEFAULT_ENVIRONMENT;
     }
 }
-
-
-

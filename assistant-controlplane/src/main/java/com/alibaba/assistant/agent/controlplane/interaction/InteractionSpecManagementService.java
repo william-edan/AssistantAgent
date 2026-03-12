@@ -17,6 +17,7 @@ package com.alibaba.assistant.agent.controlplane.interaction;
 
 import com.alibaba.assistant.agent.controlplane.space.PlatformSpace;
 import com.alibaba.assistant.agent.controlplane.space.PlatformSpaceService;
+import com.alibaba.assistant.agent.controlplane.support.ManagementKeywordMatcher;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.stereotype.Service;
@@ -52,16 +53,32 @@ public class InteractionSpecManagementService {
         this.objectMapper = objectMapper;
     }
 
-    public List<ResolvedInteractionSpecManagementView> listInteractions(String spaceCode, String environment) {
+    public List<ResolvedInteractionSpecManagementView> listInteractions(String spaceCode, String environment, String keyword) {
         Optional<SpaceResolution> resolution = resolveSpace(spaceCode, environment);
         if (resolution.isEmpty()) {
             return List.of();
         }
+        String normalizedKeyword = ManagementKeywordMatcher.normalizeKeyword(keyword);
         return interactionSpecService.listEnabledBySpace(resolution.get().space().getId()).stream()
                 .map(interactionSpec -> toResolved(resolution.get(), interactionSpec))
+                .filter(view -> ManagementKeywordMatcher.matches(normalizedKeyword, view.interactionCode()))
                 .toList();
     }
 
+    public Optional<ResolvedInteractionSpecManagementView> getInteraction(
+            String spaceCode,
+            String environment,
+            String interactionCode) {
+        if (!StringUtils.hasText(interactionCode)) {
+            return Optional.empty();
+        }
+        Optional<SpaceResolution> resolution = resolveSpace(spaceCode, environment);
+        if (resolution.isEmpty()) {
+            return Optional.empty();
+        }
+        return interactionSpecService.findLatestEnabledByCode(resolution.get().space().getId(), interactionCode.trim())
+                .map(interactionSpec -> toResolved(resolution.get(), interactionSpec));
+    }
     public Optional<ResolvedInteractionSpecManagementView> upsertInteraction(
             String spaceCode,
             String environment,
@@ -176,3 +193,7 @@ public class InteractionSpecManagementService {
     private record SpaceResolution(PlatformSpace space, String environment) {
     }
 }
+
+
+
+

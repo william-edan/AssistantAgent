@@ -69,7 +69,7 @@ class ReferenceResolverManagementControllerTest {
     void shouldListManagedResolvers() throws Exception {
         when(authorizationService.canManageSpaceCatalog(any(AuthenticatedUserContext.class), eq("enterprise-default"), eq("prod")))
                 .thenReturn(true);
-        when(referenceResolverManagementService.listResolvers("enterprise-default", "prod", "oa-core"))
+        when(referenceResolverManagementService.listResolvers("enterprise-default", "prod", "oa-core", "leave"))
                 .thenReturn(List.of(new ResolvedReferenceResolverManagementView(
                         31L,
                         "enterprise-default",
@@ -86,6 +86,7 @@ class ReferenceResolverManagementControllerTest {
                         "enabled")));
 
         mockMvc.perform(get("/api/controlplane/spaces/enterprise-default/connectors/oa-core/reference-resolvers/manage")
+                        .param("keyword", "leave")
                         .principal(authenticatedPrincipal()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.code").value(0))
@@ -95,6 +96,33 @@ class ReferenceResolverManagementControllerTest {
                 .andExpect(jsonPath("$.data.resolvers[0].visibility").value("INTERNAL"));
     }
 
+    @Test
+    void shouldGetManagedResolver() throws Exception {
+        when(authorizationService.canManageSpaceCatalog(any(AuthenticatedUserContext.class), eq("enterprise-default"), eq("prod")))
+                .thenReturn(true);
+        when(referenceResolverManagementService.getResolver("enterprise-default", "prod", "oa-core", "leave.types"))
+                .thenReturn(Optional.of(new ResolvedReferenceResolverManagementView(
+                        31L,
+                        "enterprise-default",
+                        "prod",
+                        "oa-core",
+                        "leave.types",
+                        Map.of("method", "GET", "endpoint", "/leave/types"),
+                        List.of("oa-user", "oa-service"),
+                        Map.of("type", "object"),
+                        Map.of("type", "array"),
+                        Map.of("ttlSeconds", 300),
+                        Map.of("mode", "allow_stale"),
+                        "internal",
+                        "enabled")));
+
+        mockMvc.perform(get("/api/controlplane/spaces/enterprise-default/connectors/oa-core/reference-resolvers/leave.types")
+                        .principal(authenticatedPrincipal()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(0))
+                .andExpect(jsonPath("$.data.resolverCode").value("leave.types"))
+                .andExpect(jsonPath("$.data.cachePolicy.ttlSeconds").value(300));
+    }
     @Test
     void shouldUpsertManagedResolver() throws Exception {
         when(authorizationService.canManageSpaceCatalog(any(AuthenticatedUserContext.class), eq("enterprise-default"), eq("test")))
@@ -163,7 +191,7 @@ class ReferenceResolverManagementControllerTest {
                         .principal(authenticatedPrincipal()))
                 .andExpect(status().isForbidden());
 
-        verify(referenceResolverManagementService, never()).listResolvers("enterprise-default", "prod", "oa-core");
+        verify(referenceResolverManagementService, never()).listResolvers("enterprise-default", "prod", "oa-core", null);
     }
 
     private Principal authenticatedPrincipal() {
@@ -183,3 +211,8 @@ class ReferenceResolverManagementControllerTest {
                 List.of("assistant:chat", "assistant:controlplane"));
     }
 }
+
+
+
+
+

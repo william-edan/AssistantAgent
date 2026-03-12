@@ -67,6 +67,7 @@ public class BusinessQueryActionManagementController {
             @PathVariable String spaceCode,
             @PathVariable String connectorCode,
             @RequestParam(value = "environment", required = false) String environment,
+            @RequestParam(value = "keyword", required = false) String keyword,
             Principal principal) {
         String normalizedEnvironment = normalizeEnvironment(environment);
         AuthenticatedUserContext authenticatedUser = requireAuthenticatedUser(principal);
@@ -79,9 +80,25 @@ public class BusinessQueryActionManagementController {
                         businessQueryActionManagementService.listQueryActions(
                                 spaceCode,
                                 normalizedEnvironment,
-                                connectorCode))));
+                                connectorCode,
+                                keyword))));
     }
 
+    @GetMapping("/{queryActionCode}")
+    public ResponseEntity<ManagedBusinessQueryActionResponse> getQueryAction(
+            @PathVariable String spaceCode,
+            @PathVariable String connectorCode,
+            @PathVariable String queryActionCode,
+            @RequestParam(value = "environment", required = false) String environment,
+            Principal principal) {
+        String normalizedEnvironment = normalizeEnvironment(environment);
+        AuthenticatedUserContext authenticatedUser = requireAuthenticatedUser(principal);
+        requireManageAccess(authenticatedUser, spaceCode, normalizedEnvironment);
+        ResolvedBusinessQueryActionManagementView resolved = businessQueryActionManagementService
+                .getQueryAction(spaceCode, normalizedEnvironment, connectorCode, queryActionCode)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "query_action_not_found"));
+        return ResponseEntity.ok(ManagedBusinessQueryActionResponse.ok(ManagedBusinessQueryActionData.from(resolved)));
+    }
     @PutMapping("/{queryActionCode}")
     public ResponseEntity<ManagedBusinessQueryActionResponse> upsertQueryAction(
             @PathVariable String spaceCode,
@@ -125,3 +142,6 @@ public class BusinessQueryActionManagementController {
         return StringUtils.hasText(environment) ? environment.trim() : DEFAULT_ENVIRONMENT;
     }
 }
+
+
+

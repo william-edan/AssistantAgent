@@ -69,7 +69,7 @@ class BusinessQueryActionManagementControllerTest {
     void shouldListManagedQueryActions() throws Exception {
         when(authorizationService.canManageSpaceCatalog(any(AuthenticatedUserContext.class), eq("enterprise-default"), eq("prod")))
                 .thenReturn(true);
-        when(businessQueryActionManagementService.listQueryActions("enterprise-default", "prod", "oa-core"))
+        when(businessQueryActionManagementService.listQueryActions("enterprise-default", "prod", "oa-core", "leave"))
                 .thenReturn(List.of(new ResolvedBusinessQueryActionManagementView(
                         31L,
                         "enterprise-default",
@@ -86,6 +86,7 @@ class BusinessQueryActionManagementControllerTest {
                         "enabled")));
 
         mockMvc.perform(get("/api/controlplane/spaces/enterprise-default/connectors/oa-core/business-query-actions/manage")
+                        .param("keyword", "leave")
                         .principal(authenticatedPrincipal()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.code").value(0))
@@ -95,6 +96,33 @@ class BusinessQueryActionManagementControllerTest {
                 .andExpect(jsonPath("$.data.queryActions[0].riskLevel").value("LOW"));
     }
 
+    @Test
+    void shouldGetManagedQueryAction() throws Exception {
+        when(authorizationService.canManageSpaceCatalog(any(AuthenticatedUserContext.class), eq("enterprise-default"), eq("prod")))
+                .thenReturn(true);
+        when(businessQueryActionManagementService.getQueryAction("enterprise-default", "prod", "oa-core", "leave.balance"))
+                .thenReturn(Optional.of(new ResolvedBusinessQueryActionManagementView(
+                        31L,
+                        "enterprise-default",
+                        "prod",
+                        "oa-core",
+                        "leave.balance",
+                        Map.of("method", "GET", "endpoint", "/leave/balance"),
+                        List.of("oa-user", "oa-service"),
+                        List.of("user_mapped"),
+                        Map.of("type", "object"),
+                        Map.of("type", "object"),
+                        "low",
+                        Map.of("scope", "requester"),
+                        "enabled")));
+
+        mockMvc.perform(get("/api/controlplane/spaces/enterprise-default/connectors/oa-core/business-query-actions/leave.balance")
+                        .principal(authenticatedPrincipal()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(0))
+                .andExpect(jsonPath("$.data.queryActionCode").value("leave.balance"))
+                .andExpect(jsonPath("$.data.operationBinding.method").value("GET"));
+    }
     @Test
     void shouldUpsertManagedQueryAction() throws Exception {
         when(authorizationService.canManageSpaceCatalog(any(AuthenticatedUserContext.class), eq("enterprise-default"), eq("test")))
@@ -163,7 +191,7 @@ class BusinessQueryActionManagementControllerTest {
                         .principal(authenticatedPrincipal()))
                 .andExpect(status().isForbidden());
 
-        verify(businessQueryActionManagementService, never()).listQueryActions("enterprise-default", "prod", "oa-core");
+        verify(businessQueryActionManagementService, never()).listQueryActions("enterprise-default", "prod", "oa-core", null);
     }
 
     private Principal authenticatedPrincipal() {
@@ -183,3 +211,8 @@ class BusinessQueryActionManagementControllerTest {
                 List.of("assistant:chat", "assistant:controlplane"));
     }
 }
+
+
+
+
+

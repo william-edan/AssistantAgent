@@ -35,7 +35,52 @@ import static org.mockito.Mockito.when;
 class PreconditionCheckManagementServiceTest {
 
     @Test
-    void shouldListEnabledChecksUnderConnector() {
+    void shouldFilterChecksByKeywordUnderConnector() {
+        PlatformSpaceService platformSpaceService = mock(PlatformSpaceService.class);
+        ConnectorService connectorService = mock(ConnectorService.class);
+        PreconditionCheckService preconditionCheckService = mock(PreconditionCheckService.class);
+        PreconditionCheckManagementService service = new PreconditionCheckManagementService(
+                platformSpaceService,
+                connectorService,
+                preconditionCheckService,
+                new ObjectMapper());
+
+        PlatformSpace space = new PlatformSpace();
+        space.setId(10L);
+        space.setSpaceCode("enterprise-default");
+        space.setEnvironment("prod");
+        Connector connector = connector(21L, 10L, "oa-core", "prod");
+        PreconditionCheck leaveCheck = check(31L, 10L, 21L, "leave.window.open", "enabled");
+        leaveCheck.setOperationBindingJson("{\"method\":\"GET\",\"endpoint\":\"/leave/window\"}");
+        leaveCheck.setAllowedAuthProfilesJson("[\"oa-user\",\"oa-service\"]");
+        leaveCheck.setBindingStrategiesJson("[\"user_mapped\"]");
+        leaveCheck.setInputSchemaJson("{\"type\":\"object\"}");
+        leaveCheck.setCheckExpressionJson("{\"op\":\"eq\",\"left\":\"$.open\",\"right\":true}");
+        leaveCheck.setFailurePolicyJson("{\"mode\":\"block\"}");
+        PreconditionCheck expenseCheck = check(32L, 10L, 21L, "expense.window.open", "enabled");
+        expenseCheck.setOperationBindingJson("{\"method\":\"GET\",\"endpoint\":\"/expense/window\"}");
+        expenseCheck.setAllowedAuthProfilesJson("[\"oa-user\"]");
+        expenseCheck.setBindingStrategiesJson("[\"service_account\"]");
+        expenseCheck.setInputSchemaJson("{\"type\":\"object\"}");
+        expenseCheck.setCheckExpressionJson("{\"op\":\"gte\",\"left\":\"$.amount\",\"right\":100}");
+        expenseCheck.setFailurePolicyJson("{\"mode\":\"warn\"}");
+
+        when(platformSpaceService.findActiveByCode("enterprise-default", "prod")).thenReturn(Optional.of(space));
+        when(connectorService.findLatestActiveByCodeAndEnvironment(10L, "prod", "oa-core")).thenReturn(Optional.of(connector));
+        when(preconditionCheckService.listEnabledByConnector(21L)).thenReturn(List.of(leaveCheck, expenseCheck));
+
+        List<ResolvedPreconditionCheckManagementView> result = service.listChecks(
+                "enterprise-default", "prod", "oa-core", "leave");
+
+        assertEquals(1, result.size());
+        assertEquals("leave.window.open", result.get(0).checkCode());
+        assertEquals("GET", result.get(0).operationBinding().get("method"));
+        assertEquals(List.of("oa-user", "oa-service"), result.get(0).allowedAuthProfiles());
+        assertEquals("block", result.get(0).failurePolicy().get("mode"));
+    }
+
+    @Test
+    void shouldGetCheckByCodeUnderConnector() {
         PlatformSpaceService platformSpaceService = mock(PlatformSpaceService.class);
         ConnectorService connectorService = mock(ConnectorService.class);
         PreconditionCheckService preconditionCheckService = mock(PreconditionCheckService.class);
@@ -62,16 +107,12 @@ class PreconditionCheckManagementServiceTest {
         when(connectorService.findLatestActiveByCodeAndEnvironment(10L, "prod", "oa-core")).thenReturn(Optional.of(connector));
         when(preconditionCheckService.listEnabledByConnector(21L)).thenReturn(List.of(check));
 
-        List<ResolvedPreconditionCheckManagementView> result = service.listChecks(
-                "enterprise-default", "prod", "oa-core");
+        Optional<ResolvedPreconditionCheckManagementView> result = service.getCheck("enterprise-default", "prod", "oa-core", "leave.window.open");
 
-        assertEquals(1, result.size());
-        assertEquals("leave.window.open", result.get(0).checkCode());
-        assertEquals("GET", result.get(0).operationBinding().get("method"));
-        assertEquals(List.of("oa-user", "oa-service"), result.get(0).allowedAuthProfiles());
-        assertEquals("block", result.get(0).failurePolicy().get("mode"));
+        assertTrue(result.isPresent());
+        assertEquals("leave.window.open", result.get().checkCode());
+        assertEquals("block", result.get().failurePolicy().get("mode"));
     }
-
     @Test
     void shouldCreateCheckWhenCodeDoesNotExist() {
         PlatformSpaceService platformSpaceService = mock(PlatformSpaceService.class);
@@ -174,3 +215,5 @@ class PreconditionCheckManagementServiceTest {
         return check;
     }
 }
+
+

@@ -17,6 +17,7 @@ package com.alibaba.assistant.agent.controlplane.connector;
 
 import com.alibaba.assistant.agent.controlplane.space.PlatformSpace;
 import com.alibaba.assistant.agent.controlplane.space.PlatformSpaceService;
+import com.alibaba.assistant.agent.controlplane.support.ManagementKeywordMatcher;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.stereotype.Service;
@@ -56,16 +57,37 @@ public class AuthProfileManagementService {
         this.objectMapper = objectMapper;
     }
 
-    public List<ResolvedAuthProfileManagementView> listAuthProfiles(String spaceCode, String environment, String connectorCode) {
+    public List<ResolvedAuthProfileManagementView> listAuthProfiles(String spaceCode, String environment, String connectorCode, String keyword) {
         Optional<ConnectorResolution> resolution = resolveConnector(spaceCode, environment, connectorCode);
         if (resolution.isEmpty()) {
             return List.of();
         }
+        String normalizedKeyword = ManagementKeywordMatcher.normalizeKeyword(keyword);
         return authProfileService.listActiveByConnector(resolution.get().connector().getId()).stream()
                 .map(profile -> toResolved(resolution.get(), profile))
+                .filter(view -> ManagementKeywordMatcher.matches(
+                        normalizedKeyword,
+                        view.authProfileCode(),
+                        view.authType(),
+                        view.credentialRef()))
                 .toList();
     }
 
+    public Optional<ResolvedAuthProfileManagementView> getAuthProfile(
+            String spaceCode,
+            String environment,
+            String connectorCode,
+            String authProfileCode) {
+        if (!StringUtils.hasText(authProfileCode)) {
+            return Optional.empty();
+        }
+        Optional<ConnectorResolution> resolution = resolveConnector(spaceCode, environment, connectorCode);
+        if (resolution.isEmpty()) {
+            return Optional.empty();
+        }
+        return authProfileService.findLatestActiveByCode(resolution.get().connector().getId(), authProfileCode.trim())
+                .map(profile -> toResolved(resolution.get(), profile));
+    }
     public Optional<ResolvedAuthProfileManagementView> upsertAuthProfile(
             String spaceCode,
             String environment,
@@ -204,3 +226,7 @@ public class AuthProfileManagementService {
     private record ConnectorResolution(PlatformSpace space, Connector connector, String environment) {
     }
 }
+
+
+
+

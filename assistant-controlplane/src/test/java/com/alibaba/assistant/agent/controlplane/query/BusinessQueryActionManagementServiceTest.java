@@ -35,7 +35,52 @@ import static org.mockito.Mockito.when;
 class BusinessQueryActionManagementServiceTest {
 
     @Test
-    void shouldListEnabledQueryActionsUnderConnector() {
+    void shouldFilterQueryActionsByKeywordUnderConnector() {
+        PlatformSpaceService platformSpaceService = mock(PlatformSpaceService.class);
+        ConnectorService connectorService = mock(ConnectorService.class);
+        BusinessQueryActionService businessQueryActionService = mock(BusinessQueryActionService.class);
+        BusinessQueryActionManagementService service = new BusinessQueryActionManagementService(
+                platformSpaceService,
+                connectorService,
+                businessQueryActionService,
+                new ObjectMapper());
+
+        PlatformSpace space = new PlatformSpace();
+        space.setId(10L);
+        space.setSpaceCode("enterprise-default");
+        space.setEnvironment("prod");
+        Connector connector = connector(21L, 10L, "oa-core", "prod");
+        BusinessQueryAction leaveQueryAction = queryAction(31L, 10L, 21L, "leave.balance", "low", "enabled");
+        leaveQueryAction.setOperationBindingJson("{\"method\":\"GET\",\"endpoint\":\"/leave/balance\"}");
+        leaveQueryAction.setAllowedAuthProfilesJson("[\"oa-user\",\"oa-service\"]");
+        leaveQueryAction.setBindingStrategiesJson("[\"user_mapped\"]");
+        leaveQueryAction.setInputSchemaJson("{\"type\":\"object\"}");
+        leaveQueryAction.setOutputSchemaJson("{\"type\":\"object\"}");
+        leaveQueryAction.setResultVisibilityPolicyJson("{\"scope\":\"requester\"}");
+        BusinessQueryAction expenseQueryAction = queryAction(32L, 10L, 21L, "expense.balance", "medium", "enabled");
+        expenseQueryAction.setOperationBindingJson("{\"method\":\"GET\",\"endpoint\":\"/expense/balance\"}");
+        expenseQueryAction.setAllowedAuthProfilesJson("[\"oa-user\"]");
+        expenseQueryAction.setBindingStrategiesJson("[\"service_account\"]");
+        expenseQueryAction.setInputSchemaJson("{\"type\":\"object\"}");
+        expenseQueryAction.setOutputSchemaJson("{\"type\":\"object\"}");
+        expenseQueryAction.setResultVisibilityPolicyJson("{\"scope\":\"tenant\"}");
+
+        when(platformSpaceService.findActiveByCode("enterprise-default", "prod")).thenReturn(Optional.of(space));
+        when(connectorService.findLatestActiveByCodeAndEnvironment(10L, "prod", "oa-core")).thenReturn(Optional.of(connector));
+        when(businessQueryActionService.listEnabledByConnector(21L)).thenReturn(List.of(leaveQueryAction, expenseQueryAction));
+
+        List<ResolvedBusinessQueryActionManagementView> result = service.listQueryActions(
+                "enterprise-default", "prod", "oa-core", "leave");
+
+        assertEquals(1, result.size());
+        assertEquals("leave.balance", result.get(0).queryActionCode());
+        assertEquals("GET", result.get(0).operationBinding().get("method"));
+        assertEquals(List.of("oa-user", "oa-service"), result.get(0).allowedAuthProfiles());
+        assertEquals("requester", result.get(0).resultVisibilityPolicy().get("scope"));
+    }
+
+    @Test
+    void shouldGetQueryActionByCodeUnderConnector() {
         PlatformSpaceService platformSpaceService = mock(PlatformSpaceService.class);
         ConnectorService connectorService = mock(ConnectorService.class);
         BusinessQueryActionService businessQueryActionService = mock(BusinessQueryActionService.class);
@@ -62,16 +107,12 @@ class BusinessQueryActionManagementServiceTest {
         when(connectorService.findLatestActiveByCodeAndEnvironment(10L, "prod", "oa-core")).thenReturn(Optional.of(connector));
         when(businessQueryActionService.listEnabledByConnector(21L)).thenReturn(List.of(queryAction));
 
-        List<ResolvedBusinessQueryActionManagementView> result = service.listQueryActions(
-                "enterprise-default", "prod", "oa-core");
+        Optional<ResolvedBusinessQueryActionManagementView> result = service.getQueryAction("enterprise-default", "prod", "oa-core", "leave.balance");
 
-        assertEquals(1, result.size());
-        assertEquals("leave.balance", result.get(0).queryActionCode());
-        assertEquals("GET", result.get(0).operationBinding().get("method"));
-        assertEquals(List.of("oa-user", "oa-service"), result.get(0).allowedAuthProfiles());
-        assertEquals("requester", result.get(0).resultVisibilityPolicy().get("scope"));
+        assertTrue(result.isPresent());
+        assertEquals("leave.balance", result.get().queryActionCode());
+        assertEquals("GET", result.get().operationBinding().get("method"));
     }
-
     @Test
     void shouldCreateQueryActionWhenCodeDoesNotExist() {
         PlatformSpaceService platformSpaceService = mock(PlatformSpaceService.class);
@@ -183,3 +224,5 @@ class BusinessQueryActionManagementServiceTest {
         return queryAction;
     }
 }
+
+

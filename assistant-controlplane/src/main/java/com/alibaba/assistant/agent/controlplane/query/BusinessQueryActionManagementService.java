@@ -19,6 +19,7 @@ import com.alibaba.assistant.agent.controlplane.connector.Connector;
 import com.alibaba.assistant.agent.controlplane.connector.ConnectorService;
 import com.alibaba.assistant.agent.controlplane.space.PlatformSpace;
 import com.alibaba.assistant.agent.controlplane.space.PlatformSpaceService;
+import com.alibaba.assistant.agent.controlplane.support.ManagementKeywordMatcher;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.stereotype.Service;
@@ -61,16 +62,40 @@ public class BusinessQueryActionManagementService {
     public List<ResolvedBusinessQueryActionManagementView> listQueryActions(
             String spaceCode,
             String environment,
-            String connectorCode) {
+            String connectorCode,
+            String keyword) {
         Optional<ConnectorResolution> resolution = resolveConnector(spaceCode, environment, connectorCode);
         if (resolution.isEmpty()) {
             return List.of();
         }
+        String normalizedKeyword = ManagementKeywordMatcher.normalizeKeyword(keyword);
         return businessQueryActionService.listEnabledByConnector(resolution.get().connector().getId()).stream()
                 .map(queryAction -> toResolved(resolution.get(), queryAction))
+                .filter(view -> ManagementKeywordMatcher.matches(
+                        normalizedKeyword,
+                        view.queryActionCode(),
+                        view.riskLevel()))
                 .toList();
     }
 
+    public Optional<ResolvedBusinessQueryActionManagementView> getQueryAction(
+            String spaceCode,
+            String environment,
+            String connectorCode,
+            String queryActionCode) {
+        String normalizedQueryActionCode = normalize(queryActionCode);
+        if (!StringUtils.hasText(normalizedQueryActionCode)) {
+            return Optional.empty();
+        }
+        Optional<ConnectorResolution> resolution = resolveConnector(spaceCode, environment, connectorCode);
+        if (resolution.isEmpty()) {
+            return Optional.empty();
+        }
+        return businessQueryActionService.listEnabledByConnector(resolution.get().connector().getId()).stream()
+                .filter(queryAction -> normalizedQueryActionCode.equals(queryAction.getQueryActionCode()))
+                .findFirst()
+                .map(queryAction -> toResolved(resolution.get(), queryAction));
+    }
     public Optional<ResolvedBusinessQueryActionManagementView> upsertQueryAction(
             String spaceCode,
             String environment,
@@ -214,3 +239,7 @@ public class BusinessQueryActionManagementService {
     private record ConnectorResolution(PlatformSpace space, Connector connector, String environment) {
     }
 }
+
+
+
+

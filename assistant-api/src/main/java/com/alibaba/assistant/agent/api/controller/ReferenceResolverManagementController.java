@@ -67,6 +67,7 @@ public class ReferenceResolverManagementController {
             @PathVariable String spaceCode,
             @PathVariable String connectorCode,
             @RequestParam(value = "environment", required = false) String environment,
+            @RequestParam(value = "keyword", required = false) String keyword,
             Principal principal) {
         String normalizedEnvironment = normalizeEnvironment(environment);
         AuthenticatedUserContext authenticatedUser = requireAuthenticatedUser(principal);
@@ -79,9 +80,25 @@ public class ReferenceResolverManagementController {
                         referenceResolverManagementService.listResolvers(
                                 spaceCode,
                                 normalizedEnvironment,
-                                connectorCode))));
+                                connectorCode,
+                                keyword))));
     }
 
+    @GetMapping("/{resolverCode}")
+    public ResponseEntity<ManagedReferenceResolverResponse> getResolver(
+            @PathVariable String spaceCode,
+            @PathVariable String connectorCode,
+            @PathVariable String resolverCode,
+            @RequestParam(value = "environment", required = false) String environment,
+            Principal principal) {
+        String normalizedEnvironment = normalizeEnvironment(environment);
+        AuthenticatedUserContext authenticatedUser = requireAuthenticatedUser(principal);
+        requireManageAccess(authenticatedUser, spaceCode, normalizedEnvironment);
+        ResolvedReferenceResolverManagementView resolved = referenceResolverManagementService
+                .getResolver(spaceCode, normalizedEnvironment, connectorCode, resolverCode)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "resolver_not_found"));
+        return ResponseEntity.ok(ManagedReferenceResolverResponse.ok(ManagedReferenceResolverData.from(resolved)));
+    }
     @PutMapping("/{resolverCode}")
     public ResponseEntity<ManagedReferenceResolverResponse> upsertResolver(
             @PathVariable String spaceCode,
@@ -125,3 +142,6 @@ public class ReferenceResolverManagementController {
         return StringUtils.hasText(environment) ? environment.trim() : DEFAULT_ENVIRONMENT;
     }
 }
+
+
+

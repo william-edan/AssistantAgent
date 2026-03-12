@@ -69,7 +69,7 @@ class AgentAppManagementControllerTest {
     void shouldListManagedAgentApps() throws Exception {
         when(authorizationService.canManageSpaceCatalog(any(AuthenticatedUserContext.class), eq("enterprise-default"), eq("prod")))
                 .thenReturn(true);
-        when(agentAppManagementService.listAgentApps("enterprise-default", "prod"))
+        when(agentAppManagementService.listAgentApps("enterprise-default", "prod", "finance"))
                 .thenReturn(List.of(new ResolvedAgentAppManagementView(
                         31L,
                         "enterprise-default",
@@ -82,6 +82,7 @@ class AgentAppManagementControllerTest {
                         "active")));
 
         mockMvc.perform(get("/api/controlplane/spaces/enterprise-default/agent-apps/manage")
+                        .param("keyword", "finance")
                         .principal(authenticatedPrincipal()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.code").value(0))
@@ -91,6 +92,29 @@ class AgentAppManagementControllerTest {
                 .andExpect(jsonPath("$.data.agentApps[0].approvalStrategy.required").value(true));
     }
 
+    @Test
+    void shouldGetManagedAgentApp() throws Exception {
+        when(authorizationService.canManageSpaceCatalog(any(AuthenticatedUserContext.class), eq("enterprise-default"), eq("prod")))
+                .thenReturn(true);
+        when(agentAppManagementService.getAgentApp("enterprise-default", "prod", "finance-agent"))
+                .thenReturn(Optional.of(new ResolvedAgentAppManagementView(
+                        31L,
+                        "enterprise-default",
+                        "prod",
+                        "finance-agent",
+                        "Finance Agent",
+                        Map.of("mode", "strict"),
+                        Map.of("retention", "short"),
+                        Map.of("required", true),
+                        "active")));
+
+        mockMvc.perform(get("/api/controlplane/spaces/enterprise-default/agent-apps/finance-agent")
+                        .principal(authenticatedPrincipal()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(0))
+                .andExpect(jsonPath("$.data.agentAppCode").value("finance-agent"))
+                .andExpect(jsonPath("$.data.promptPolicy.mode").value("strict"));
+    }
     @Test
     void shouldUpsertManagedAgentApp() throws Exception {
         when(authorizationService.canManageSpaceCatalog(any(AuthenticatedUserContext.class), eq("enterprise-default"), eq("test")))
@@ -149,7 +173,7 @@ class AgentAppManagementControllerTest {
                         .principal(authenticatedPrincipal()))
                 .andExpect(status().isForbidden());
 
-        verify(agentAppManagementService, never()).listAgentApps("enterprise-default", "prod");
+        verify(agentAppManagementService, never()).listAgentApps("enterprise-default", "prod", null);
     }
 
     private Principal authenticatedPrincipal() {
@@ -169,3 +193,8 @@ class AgentAppManagementControllerTest {
                 List.of("assistant:chat", "assistant:controlplane"));
     }
 }
+
+
+
+
+

@@ -70,7 +70,7 @@ class WorkflowManagementControllerTest {
     void shouldListManagedWorkflows() throws Exception {
         when(authorizationService.canManageSpaceCatalog(any(AuthenticatedUserContext.class), eq("enterprise-default"), eq("prod")))
                 .thenReturn(true);
-        when(workflowManagementService.listWorkflows("enterprise-default", "prod"))
+        when(workflowManagementService.listWorkflows("enterprise-default", "prod", "leave"))
                 .thenReturn(List.of(new ResolvedWorkflowManagementView(
                         31L,
                         "enterprise-default",
@@ -105,6 +105,7 @@ class WorkflowManagementControllerTest {
                                 "enabled")))));
 
         mockMvc.perform(get("/api/controlplane/spaces/enterprise-default/workflows/manage")
+                        .param("keyword", "leave")
                         .principal(authenticatedPrincipal()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.code").value(0))
@@ -114,6 +115,51 @@ class WorkflowManagementControllerTest {
                 .andExpect(jsonPath("$.data.workflows[0].steps[0].connectorCode").value("oa-core"));
     }
 
+    @Test
+    void shouldGetManagedWorkflow() throws Exception {
+        when(authorizationService.canManageSpaceCatalog(any(AuthenticatedUserContext.class), eq("enterprise-default"), eq("prod")))
+                .thenReturn(true);
+        when(workflowManagementService.getWorkflow("enterprise-default", "prod", "oa.leave.apply"))
+                .thenReturn(Optional.of(new ResolvedWorkflowManagementView(
+                        31L,
+                        "enterprise-default",
+                        "prod",
+                        "oa.leave.apply",
+                        "请假申请",
+                        "leave.apply.form",
+                        "max",
+                        "strictest",
+                        Map.of("mode", "fail_fast"),
+                        Map.of("level", "full"),
+                        "enabled",
+                        List.of(new ResolvedWorkflowStepManagementView(
+                                "create_leave",
+                                "创建请假",
+                                "HTTP",
+                                "oa-core",
+                                "/leave/create",
+                                List.of("oa-user"),
+                                List.of("user_mapped"),
+                                Map.of("reason", "${reason}"),
+                                Map.of("leaveId", "$.data.id"),
+                                List.of(),
+                                Map.of("expr", "${reason}"),
+                                Map.of("type", "ALL"),
+                                Map.of("maxRetries", 1),
+                                Map.of("seconds", 30),
+                                Map.of("required", false),
+                                null,
+                                Map.of("mode", "continue"),
+                                1,
+                                "enabled")))));
+
+        mockMvc.perform(get("/api/controlplane/spaces/enterprise-default/workflows/oa.leave.apply")
+                        .principal(authenticatedPrincipal()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(0))
+                .andExpect(jsonPath("$.data.workflowCode").value("oa.leave.apply"))
+                .andExpect(jsonPath("$.data.steps[0].connectorCode").value("oa-core"));
+    }
     @Test
     void shouldUpsertManagedWorkflow() throws Exception {
         when(authorizationService.canManageSpaceCatalog(any(AuthenticatedUserContext.class), eq("enterprise-default"), eq("test")))
@@ -218,7 +264,7 @@ class WorkflowManagementControllerTest {
                         .principal(authenticatedPrincipal()))
                 .andExpect(status().isForbidden());
 
-        verify(workflowManagementService, never()).listWorkflows("enterprise-default", "prod");
+        verify(workflowManagementService, never()).listWorkflows("enterprise-default", "prod", null);
     }
 
     private Principal authenticatedPrincipal() {
@@ -238,3 +284,8 @@ class WorkflowManagementControllerTest {
                 List.of("assistant:chat", "assistant:controlplane"));
     }
 }
+
+
+
+
+

@@ -35,7 +35,57 @@ import static org.mockito.Mockito.when;
 class ActionSpecManagementServiceTest {
 
     @Test
-    void shouldListEnabledActionsUnderConnector() {
+    void shouldFilterActionsByKeywordUnderConnector() {
+        PlatformSpaceService platformSpaceService = mock(PlatformSpaceService.class);
+        ConnectorService connectorService = mock(ConnectorService.class);
+        ActionSpecService actionSpecService = mock(ActionSpecService.class);
+        ActionSpecManagementService service = new ActionSpecManagementService(
+                platformSpaceService,
+                connectorService,
+                actionSpecService,
+                new ObjectMapper());
+
+        PlatformSpace space = new PlatformSpace();
+        space.setId(10L);
+        space.setSpaceCode("enterprise-default");
+        space.setEnvironment("prod");
+        Connector connector = connector(21L, 10L, "oa-core", "prod");
+        ActionSpec leaveAction = actionSpec(31L, 10L, 21L, "oa.leave.create", "medium", "write", "enabled");
+        leaveAction.setOperationBindingJson("{\"method\":\"POST\",\"endpoint\":\"/leave/create\"}");
+        leaveAction.setAllowedAuthProfilesJson("[\"oa-user\",\"oa-service\"]");
+        leaveAction.setBindingStrategiesJson("[\"user_mapped\"]");
+        leaveAction.setInputSchemaJson("{\"type\":\"object\"}");
+        leaveAction.setOutputSchemaJson("{\"type\":\"object\"}");
+        leaveAction.setIdempotencyPolicyJson("{\"mode\":\"client_token\"}");
+        leaveAction.setObservabilityProfileJson("{\"level\":\"detailed\"}");
+        leaveAction.setDefaultAuthProfileCode("oa-user");
+        leaveAction.setApprovalPolicyId(5L);
+        ActionSpec expenseAction = actionSpec(32L, 10L, 21L, "expense.create", "low", "write", "enabled");
+        expenseAction.setOperationBindingJson("{\"method\":\"POST\",\"endpoint\":\"/expense/create\"}");
+        expenseAction.setAllowedAuthProfilesJson("[\"oa-user\"]");
+        expenseAction.setBindingStrategiesJson("[\"user_mapped\"]");
+        expenseAction.setInputSchemaJson("{\"type\":\"object\"}");
+        expenseAction.setOutputSchemaJson("{\"type\":\"object\"}");
+        expenseAction.setIdempotencyPolicyJson("{\"mode\":\"none\"}");
+        expenseAction.setObservabilityProfileJson("{\"level\":\"basic\"}");
+        expenseAction.setDefaultAuthProfileCode("oa-user");
+        expenseAction.setApprovalPolicyId(6L);
+
+        when(platformSpaceService.findActiveByCode("enterprise-default", "prod")).thenReturn(Optional.of(space));
+        when(connectorService.findLatestActiveByCodeAndEnvironment(10L, "prod", "oa-core")).thenReturn(Optional.of(connector));
+        when(actionSpecService.listEnabledByConnector(21L)).thenReturn(List.of(leaveAction, expenseAction));
+
+        List<ResolvedActionSpecManagementView> result = service.listActions("enterprise-default", "prod", "oa-core", "leave");
+
+        assertEquals(1, result.size());
+        assertEquals("oa.leave.create", result.get(0).actionCode());
+        assertEquals("POST", result.get(0).operationBinding().get("method"));
+        assertEquals("oa-user", result.get(0).defaultAuthProfileCode());
+        assertEquals("client_token", ((Map<?, ?>) result.get(0).idempotencyPolicy()).get("mode"));
+    }
+
+    @Test
+    void shouldGetActionByCodeUnderConnector() {
         PlatformSpaceService platformSpaceService = mock(PlatformSpaceService.class);
         ConnectorService connectorService = mock(ConnectorService.class);
         ActionSpecService actionSpecService = mock(ActionSpecService.class);
@@ -65,15 +115,12 @@ class ActionSpecManagementServiceTest {
         when(connectorService.findLatestActiveByCodeAndEnvironment(10L, "prod", "oa-core")).thenReturn(Optional.of(connector));
         when(actionSpecService.listEnabledByConnector(21L)).thenReturn(List.of(action));
 
-        List<ResolvedActionSpecManagementView> result = service.listActions("enterprise-default", "prod", "oa-core");
+        Optional<ResolvedActionSpecManagementView> result = service.getAction("enterprise-default", "prod", "oa-core", "oa.leave.create");
 
-        assertEquals(1, result.size());
-        assertEquals("oa.leave.create", result.get(0).actionCode());
-        assertEquals("POST", result.get(0).operationBinding().get("method"));
-        assertEquals(List.of("oa-user", "oa-service"), result.get(0).allowedAuthProfiles());
-        assertEquals("client_token", ((Map<?, ?>) result.get(0).idempotencyPolicy()).get("mode"));
+        assertTrue(result.isPresent());
+        assertEquals("oa.leave.create", result.get().actionCode());
+        assertEquals("POST", result.get().operationBinding().get("method"));
     }
-
     @Test
     void shouldCreateActionWhenCodeDoesNotExist() {
         PlatformSpaceService platformSpaceService = mock(PlatformSpaceService.class);
@@ -196,3 +243,5 @@ class ActionSpecManagementServiceTest {
         return action;
     }
 }
+
+

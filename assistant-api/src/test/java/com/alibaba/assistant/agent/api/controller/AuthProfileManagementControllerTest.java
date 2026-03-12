@@ -69,7 +69,7 @@ class AuthProfileManagementControllerTest {
     void shouldListManagedAuthProfiles() throws Exception {
         when(authorizationService.canManageSpaceCatalog(any(AuthenticatedUserContext.class), eq("enterprise-default"), eq("prod")))
                 .thenReturn(true);
-        when(authProfileManagementService.listAuthProfiles("enterprise-default", "prod", "oa-core"))
+        when(authProfileManagementService.listAuthProfiles("enterprise-default", "prod", "oa-core", "service"))
                 .thenReturn(List.of(new ResolvedAuthProfileManagementView(
                         31L,
                         "enterprise-default",
@@ -88,6 +88,7 @@ class AuthProfileManagementControllerTest {
                         "active")));
 
         mockMvc.perform(get("/api/controlplane/spaces/enterprise-default/connectors/oa-core/auth-profiles/manage")
+                        .param("keyword", "service")
                         .principal(authenticatedPrincipal()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.code").value(0))
@@ -97,6 +98,35 @@ class AuthProfileManagementControllerTest {
                 .andExpect(jsonPath("$.data.authProfiles[0].credentialRef").value("vault://oa-user"));
     }
 
+    @Test
+    void shouldGetManagedAuthProfile() throws Exception {
+        when(authorizationService.canManageSpaceCatalog(any(AuthenticatedUserContext.class), eq("enterprise-default"), eq("prod")))
+                .thenReturn(true);
+        when(authProfileManagementService.getAuthProfile("enterprise-default", "prod", "oa-core", "oa-user"))
+                .thenReturn(Optional.of(new ResolvedAuthProfileManagementView(
+                        31L,
+                        "enterprise-default",
+                        "prod",
+                        "oa-core",
+                        "oa-user",
+                        "bearer",
+                        "user_mapped",
+                        "https://idp/token",
+                        "Authorization",
+                        "Bearer ",
+                        "oa-api",
+                        List.of("read", "write"),
+                        "vault://oa-user",
+                        Map.of("refreshBeforeSeconds", 60),
+                        "active")));
+
+        mockMvc.perform(get("/api/controlplane/spaces/enterprise-default/connectors/oa-core/auth-profiles/oa-user")
+                        .principal(authenticatedPrincipal()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(0))
+                .andExpect(jsonPath("$.data.authProfileCode").value("oa-user"))
+                .andExpect(jsonPath("$.data.credentialRef").value("vault://oa-user"));
+    }
     @Test
     void shouldUpsertManagedAuthProfile() throws Exception {
         when(authorizationService.canManageSpaceCatalog(any(AuthenticatedUserContext.class), eq("enterprise-default"), eq("test")))
@@ -165,7 +195,7 @@ class AuthProfileManagementControllerTest {
                         .principal(authenticatedPrincipal()))
                 .andExpect(status().isForbidden());
 
-        verify(authProfileManagementService, never()).listAuthProfiles("enterprise-default", "prod", "oa-core");
+        verify(authProfileManagementService, never()).listAuthProfiles("enterprise-default", "prod", "oa-core", null);
     }
 
     private Principal authenticatedPrincipal() {
@@ -185,3 +215,8 @@ class AuthProfileManagementControllerTest {
                 List.of("assistant:chat", "assistant:controlplane"));
     }
 }
+
+
+
+
+

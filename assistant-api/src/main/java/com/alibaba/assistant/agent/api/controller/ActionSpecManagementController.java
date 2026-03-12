@@ -66,6 +66,7 @@ public class ActionSpecManagementController {
             @PathVariable String spaceCode,
             @PathVariable String connectorCode,
             @RequestParam(value = "environment", required = false) String environment,
+            @RequestParam(value = "keyword", required = false) String keyword,
             Principal principal) {
         String normalizedEnvironment = normalizeEnvironment(environment);
         AuthenticatedUserContext authenticatedUser = requireAuthenticatedUser(principal);
@@ -75,9 +76,24 @@ public class ActionSpecManagementController {
                         spaceCode,
                         normalizedEnvironment,
                         connectorCode,
-                        actionSpecManagementService.listActions(spaceCode, normalizedEnvironment, connectorCode))));
+                        actionSpecManagementService.listActions(spaceCode, normalizedEnvironment, connectorCode, keyword))));
     }
 
+    @GetMapping("/{actionCode}")
+    public ResponseEntity<ManagedActionSpecResponse> getAction(
+            @PathVariable String spaceCode,
+            @PathVariable String connectorCode,
+            @PathVariable String actionCode,
+            @RequestParam(value = "environment", required = false) String environment,
+            Principal principal) {
+        String normalizedEnvironment = normalizeEnvironment(environment);
+        AuthenticatedUserContext authenticatedUser = requireAuthenticatedUser(principal);
+        requireManageAccess(authenticatedUser, spaceCode, normalizedEnvironment);
+        ResolvedActionSpecManagementView resolved = actionSpecManagementService
+                .getAction(spaceCode, normalizedEnvironment, connectorCode, actionCode)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "action_not_found"));
+        return ResponseEntity.ok(ManagedActionSpecResponse.ok(ManagedActionSpecData.from(resolved)));
+    }
     @PutMapping("/{actionCode}")
     public ResponseEntity<ManagedActionSpecResponse> upsertAction(
             @PathVariable String spaceCode,
@@ -120,3 +136,6 @@ public class ActionSpecManagementController {
         return StringUtils.hasText(environment) ? environment.trim() : DEFAULT_ENVIRONMENT;
     }
 }
+
+
+

@@ -17,6 +17,7 @@ package com.alibaba.assistant.agent.controlplane.connector;
 
 import com.alibaba.assistant.agent.controlplane.space.PlatformSpace;
 import com.alibaba.assistant.agent.controlplane.space.PlatformSpaceService;
+import com.alibaba.assistant.agent.controlplane.support.ManagementKeywordMatcher;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
@@ -45,17 +46,36 @@ public class ConnectorManagementService {
         this.connectorService = connectorService;
     }
 
-    public List<ResolvedConnectorView> listConnectors(String spaceCode, String environment) {
+    public List<ResolvedConnectorView> listConnectors(String spaceCode, String environment, String keyword) {
         String normalizedEnvironment = normalizeEnvironment(environment);
         Optional<PlatformSpace> space = platformSpaceService.findActiveByCode(normalize(spaceCode), normalizedEnvironment);
         if (space.isEmpty()) {
             return List.of();
         }
+        String normalizedKeyword = ManagementKeywordMatcher.normalizeKeyword(keyword);
         return connectorService.listLatestActiveBySpace(space.get().getId(), normalizedEnvironment).stream()
                 .map(connector -> toResolved(space.get().getSpaceCode(), normalizedEnvironment, connector))
+                .filter(view -> ManagementKeywordMatcher.matches(
+                        normalizedKeyword,
+                        view.connectorCode(),
+                        view.displayName(),
+                        view.systemCode()))
                 .toList();
     }
 
+    public Optional<ResolvedConnectorView> getConnector(String spaceCode, String environment, String connectorCode) {
+        String normalizedEnvironment = normalizeEnvironment(environment);
+        String normalizedConnectorCode = normalize(connectorCode);
+        if (!StringUtils.hasText(normalizedConnectorCode)) {
+            return Optional.empty();
+        }
+        Optional<PlatformSpace> space = platformSpaceService.findActiveByCode(normalize(spaceCode), normalizedEnvironment);
+        if (space.isEmpty()) {
+            return Optional.empty();
+        }
+        return connectorService.findLatestActiveByCodeAndEnvironment(space.get().getId(), normalizedEnvironment, normalizedConnectorCode)
+                .map(connector -> toResolved(space.get().getSpaceCode(), normalizedEnvironment, connector));
+    }
     public Optional<ResolvedConnectorView> upsertConnector(
             String spaceCode,
             String environment,
@@ -127,3 +147,7 @@ public class ConnectorManagementService {
         return StringUtils.hasText(value) ? value.trim().toLowerCase() : null;
     }
 }
+
+
+
+

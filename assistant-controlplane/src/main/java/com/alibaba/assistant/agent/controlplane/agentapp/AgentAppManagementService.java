@@ -17,6 +17,7 @@ package com.alibaba.assistant.agent.controlplane.agentapp;
 
 import com.alibaba.assistant.agent.controlplane.space.PlatformSpace;
 import com.alibaba.assistant.agent.controlplane.space.PlatformSpaceService;
+import com.alibaba.assistant.agent.controlplane.support.ManagementKeywordMatcher;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.stereotype.Service;
@@ -52,16 +53,32 @@ public class AgentAppManagementService {
         this.objectMapper = objectMapper;
     }
 
-    public List<ResolvedAgentAppManagementView> listAgentApps(String spaceCode, String environment) {
+    public List<ResolvedAgentAppManagementView> listAgentApps(String spaceCode, String environment, String keyword) {
         Optional<SpaceResolution> resolution = resolveSpace(spaceCode, environment);
         if (resolution.isEmpty()) {
             return List.of();
         }
+        String normalizedKeyword = ManagementKeywordMatcher.normalizeKeyword(keyword);
         return agentAppService.listActiveBySpace(resolution.get().space().getId()).stream()
                 .map(app -> toResolved(resolution.get(), app))
+                .filter(view -> ManagementKeywordMatcher.matches(
+                        normalizedKeyword,
+                        view.agentAppCode(),
+                        view.displayName()))
                 .toList();
     }
 
+    public Optional<ResolvedAgentAppManagementView> getAgentApp(String spaceCode, String environment, String agentAppCode) {
+        if (!StringUtils.hasText(agentAppCode)) {
+            return Optional.empty();
+        }
+        Optional<SpaceResolution> resolution = resolveSpace(spaceCode, environment);
+        if (resolution.isEmpty()) {
+            return Optional.empty();
+        }
+        return agentAppService.findActiveByCode(resolution.get().space().getId(), agentAppCode.trim())
+                .map(app -> toResolved(resolution.get(), app));
+    }
     public Optional<ResolvedAgentAppManagementView> upsertAgentApp(
             String spaceCode,
             String environment,
@@ -164,3 +181,7 @@ public class AgentAppManagementService {
     private record SpaceResolution(PlatformSpace space, String environment) {
     }
 }
+
+
+
+

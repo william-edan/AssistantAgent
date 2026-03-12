@@ -35,7 +35,52 @@ import static org.mockito.Mockito.when;
 class ReferenceResolverManagementServiceTest {
 
     @Test
-    void shouldListEnabledResolversUnderConnector() {
+    void shouldFilterResolversByKeywordUnderConnector() {
+        PlatformSpaceService platformSpaceService = mock(PlatformSpaceService.class);
+        ConnectorService connectorService = mock(ConnectorService.class);
+        ReferenceResolverService referenceResolverService = mock(ReferenceResolverService.class);
+        ReferenceResolverManagementService service = new ReferenceResolverManagementService(
+                platformSpaceService,
+                connectorService,
+                referenceResolverService,
+                new ObjectMapper());
+
+        PlatformSpace space = new PlatformSpace();
+        space.setId(10L);
+        space.setSpaceCode("enterprise-default");
+        space.setEnvironment("prod");
+        Connector connector = connector(21L, 10L, "oa-core", "prod");
+        ReferenceResolver leaveResolver = resolver(31L, 10L, 21L, "leave.types", "internal", "enabled");
+        leaveResolver.setOperationBindingJson("{\"method\":\"GET\",\"endpoint\":\"/leave/types\"}");
+        leaveResolver.setAllowedAuthProfilesJson("[\"oa-user\",\"oa-service\"]");
+        leaveResolver.setInputSchemaJson("{\"type\":\"object\"}");
+        leaveResolver.setOutputSchemaJson("{\"type\":\"array\"}");
+        leaveResolver.setCachePolicyJson("{\"ttlSeconds\":300}");
+        leaveResolver.setStalenessPolicyJson("{\"mode\":\"allow_stale\"}");
+        ReferenceResolver expenseResolver = resolver(32L, 10L, 21L, "expense.types", "tenant", "enabled");
+        expenseResolver.setOperationBindingJson("{\"method\":\"GET\",\"endpoint\":\"/expense/types\"}");
+        expenseResolver.setAllowedAuthProfilesJson("[\"oa-user\"]");
+        expenseResolver.setInputSchemaJson("{\"type\":\"object\"}");
+        expenseResolver.setOutputSchemaJson("{\"type\":\"array\"}");
+        expenseResolver.setCachePolicyJson("{\"ttlSeconds\":30}");
+        expenseResolver.setStalenessPolicyJson("{\"mode\":\"strict\"}");
+
+        when(platformSpaceService.findActiveByCode("enterprise-default", "prod")).thenReturn(Optional.of(space));
+        when(connectorService.findLatestActiveByCodeAndEnvironment(10L, "prod", "oa-core")).thenReturn(Optional.of(connector));
+        when(referenceResolverService.listEnabledByConnector(21L)).thenReturn(List.of(leaveResolver, expenseResolver));
+
+        List<ResolvedReferenceResolverManagementView> result = service.listResolvers(
+                "enterprise-default", "prod", "oa-core", "leave");
+
+        assertEquals(1, result.size());
+        assertEquals("leave.types", result.get(0).resolverCode());
+        assertEquals("GET", result.get(0).operationBinding().get("method"));
+        assertEquals(List.of("oa-user", "oa-service"), result.get(0).allowedAuthProfiles());
+        assertEquals(300, ((Number) result.get(0).cachePolicy().get("ttlSeconds")).intValue());
+    }
+
+    @Test
+    void shouldGetResolverByCodeUnderConnector() {
         PlatformSpaceService platformSpaceService = mock(PlatformSpaceService.class);
         ConnectorService connectorService = mock(ConnectorService.class);
         ReferenceResolverService referenceResolverService = mock(ReferenceResolverService.class);
@@ -62,16 +107,12 @@ class ReferenceResolverManagementServiceTest {
         when(connectorService.findLatestActiveByCodeAndEnvironment(10L, "prod", "oa-core")).thenReturn(Optional.of(connector));
         when(referenceResolverService.listEnabledByConnector(21L)).thenReturn(List.of(resolver));
 
-        List<ResolvedReferenceResolverManagementView> result = service.listResolvers(
-                "enterprise-default", "prod", "oa-core");
+        Optional<ResolvedReferenceResolverManagementView> result = service.getResolver("enterprise-default", "prod", "oa-core", "leave.types");
 
-        assertEquals(1, result.size());
-        assertEquals("leave.types", result.get(0).resolverCode());
-        assertEquals("GET", result.get(0).operationBinding().get("method"));
-        assertEquals(List.of("oa-user", "oa-service"), result.get(0).allowedAuthProfiles());
-        assertEquals(300, ((Number) result.get(0).cachePolicy().get("ttlSeconds")).intValue());
+        assertTrue(result.isPresent());
+        assertEquals("leave.types", result.get().resolverCode());
+        assertEquals(300, ((Number) result.get().cachePolicy().get("ttlSeconds")).intValue());
     }
-
     @Test
     void shouldCreateResolverWhenCodeDoesNotExist() {
         PlatformSpaceService platformSpaceService = mock(PlatformSpaceService.class);
@@ -183,3 +224,5 @@ class ReferenceResolverManagementServiceTest {
         return resolver;
     }
 }
+
+
