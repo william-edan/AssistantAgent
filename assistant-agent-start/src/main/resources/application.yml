@@ -27,6 +27,10 @@ server:
 assistant:
   chat:
     default-app-name: grayscale_agent
+    default-assistant-uid: ${ASSISTANT_CHAT_DEFAULT_ASSISTANT_UID:}
+    default-system-code: ${assistant.auth.current-system.default-system-code:}
+    default-space-code: ${ASSISTANT_CHAT_DEFAULT_SPACE_CODE:}
+    default-space-environment: ${ASSISTANT_CHAT_DEFAULT_SPACE_ENVIRONMENT:prod}
   auth:
     current-system:
       default-system-code: ${CURRENT_SYSTEM_DEFAULT_SYSTEM_CODE:gougu_oa}

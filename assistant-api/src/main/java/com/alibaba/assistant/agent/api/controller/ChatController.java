@@ -100,7 +100,8 @@ public class ChatController {
 
 	public ChatController(AgentLoader agentLoader,
 			@Value("${assistant.chat.default-app-name:grayscale_agent}") String defaultAppName,
-			@Value("${assistant.chat.default-system-code:}") String defaultSystemCode) {
+			@Value("${assistant.chat.default-system-code:${assistant.auth.current-system.default-system-code:}}")
+			String defaultSystemCode) {
 		this(agentLoader, defaultAppName, defaultSystemCode, "", "prod", null);
 	}
 
@@ -124,7 +125,8 @@ public class ChatController {
 	@Autowired
 	public ChatController(AgentLoader agentLoader,
 			@Value("${assistant.chat.default-app-name:grayscale_agent}") String defaultAppName,
-			@Value("${assistant.chat.default-system-code:}") String defaultSystemCode,
+			@Value("${assistant.chat.default-system-code:${assistant.auth.current-system.default-system-code:}}")
+			String defaultSystemCode,
 			@Value("${assistant.chat.default-space-code:}") String defaultSpaceCode,
 			@Value("${assistant.chat.default-space-environment:prod}") String defaultSpaceEnvironment,
 			@Nullable ExecutionEventStreamRegistry executionEventStreamRegistry) {
