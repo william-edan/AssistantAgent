@@ -39,13 +39,18 @@ import com.alibaba.assistant.agent.slot.model.SlotValue;
 import com.alibaba.assistant.agent.slot.model.ToolMetaSnapshot;
 import com.alibaba.cloud.ai.graph.OverAllState;
 import com.alibaba.cloud.ai.graph.agent.tools.ToolContextConstants;
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
+import org.apache.ibatis.builder.MapperBuilderAssistant;
+import org.apache.ibatis.session.Configuration;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.model.ToolContext;
+
 
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -320,6 +325,55 @@ class ArtifactAwareSlotCollectToolTest {
     }
 
     @Test
+    void shouldScopeLegacyFallbackQueryToTenantWhenDirectLookupFallsBack() {
+        SlotCollectorService collector = mock(SlotCollectorService.class);
+        SlotEnricherService enricher = mock(SlotEnricherService.class);
+        ComputedFieldProcessor computed = mock(ComputedFieldProcessor.class);
+        SlotSchemaParser parser = mock(SlotSchemaParser.class);
+        ArtifactPublicationLookupService lookupService = mock(ArtifactPublicationLookupService.class);
+        ToolMetaService toolMetaService = mock(ToolMetaService.class);
+        PublicationScopeResolver publicationScopeResolver = new PublicationScopeResolver(mock(PlatformSpaceService.class));
+        stubCompleteCollection(collector, parser);
+        when(lookupService.findPublishedArtifact(eq("gougu_oa.leave_application"), any()))
+                .thenReturn(Optional.empty());
+        when(toolMetaService.findLatestEnabledByToolCode("tenant-a", "gougu_oa.leave_application"))
+                .thenReturn(Optional.empty());
+        when(toolMetaService.getOne(any(LambdaQueryWrapper.class), eq(false)))
+                .thenReturn(legacyToolMeta("gougu_oa.leave_application"));
+
+        SlotCollectTool tool = new SlotCollectTool(
+                collector,
+                enricher,
+                computed,
+                parser,
+                new ObjectMapper(),
+                toolMetaService,
+                null,
+                null,
+                null,
+                lookupService,
+                publicationScopeResolver);
+        SlotCollectTool.Request request = new SlotCollectTool.Request();
+        request.toolCode = "gougu_oa.leave_application";
+        request.extractedSlots = Map.of("reason", "事假");
+
+        SlotCollectTool.Response response = tool.apply(request, scopedToolContext("tenant-a", true));
+
+        assertEquals(SlotCollectStatus.COMPLETE.name(), response.status);
+        @SuppressWarnings("rawtypes")
+        ArgumentCaptor<LambdaQueryWrapper> queryCaptor = ArgumentCaptor.forClass(LambdaQueryWrapper.class);
+        verify(toolMetaService).getOne(queryCaptor.capture(), eq(false));
+        TableInfoHelper.remove(ToolMeta.class);
+        TableInfoHelper.initTableInfo(new MapperBuilderAssistant(new Configuration(), "test"), ToolMeta.class);
+        String sqlSegment = queryCaptor.getValue().getSqlSegment();
+        assertTrue(sqlSegment.contains("tenantId =")
+                        && sqlSegment.contains("tenantId IS NULL")
+                        && sqlSegment.contains("ORDER BY version DESC,id DESC"),
+                () -> "sqlSegment=" + sqlSegment);
+    }
+
+
+    @Test
     void shouldResolveDependencyStepsFromPublishedArtifactsWhenToolMetaIsUnavailable() {
         SlotCollectorService collector = mock(SlotCollectorService.class);
         SlotEnricherService enricher = mock(SlotEnricherService.class);
@@ -439,9 +493,13 @@ class ArtifactAwareSlotCollectToolTest {
     }
 
     private ToolContext scopedToolContext(boolean allowLegacyFallback) {
+        return scopedToolContext("default", allowLegacyFallback);
+    }
+
+    private ToolContext scopedToolContext(String tenantId, boolean allowLegacyFallback) {
         OverAllState state = new OverAllState();
         Map<String, Object> values = new LinkedHashMap<>();
-        values.put("tenant_id", "default");
+        values.put("tenant_id", tenantId);
         values.put(AssistantStateKeys.SPACE_ID, 9L);
         values.put(AssistantStateKeys.SPACE_ENVIRONMENT, "prod");
         values.put(AssistantStateKeys.AGENT_APP_CODE, "finance-agent");

@@ -988,16 +988,22 @@ public class SlotCollectTool implements BiFunction<SlotCollectTool.Request, Tool
         if (latest.isPresent()) {
             return latest.get();
         }
+        String effectiveTenantId = StringUtils.hasText(tenantId) ? tenantId.trim() : "default";
         try {
             LambdaQueryWrapper<ToolMeta> query = new LambdaQueryWrapper<>();
+            query.and(wrapper -> wrapper.eq(ToolMeta::getTenantId, effectiveTenantId)
+                    .or()
+                    .isNull(ToolMeta::getTenantId));
             query.eq(ToolMeta::getToolCode, toolCode);
             query.and(w -> w.isNull(ToolMeta::getStatus).or().eq(ToolMeta::getStatus, "enabled"));
+            query.orderByDesc(ToolMeta::getVersion);
+            query.orderByDesc(ToolMeta::getId);
             query.last("LIMIT 1");
             return toolMetaService.getOne(query, false);
         }
         catch (Exception e) {
-            logger.warn("SlotCollectTool#lookupToolMetaByCode - reason=数据库查找失败, toolCode={}, error={}",
-                    toolCode, e.getMessage());
+            logger.warn("SlotCollectTool#lookupToolMetaByCode - reason=数据库查找失败, tenantId={}, toolCode={}, error={}",
+                    effectiveTenantId, toolCode, e.getMessage());
             return null;
         }
     }
