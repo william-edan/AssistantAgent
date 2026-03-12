@@ -59,7 +59,6 @@ import org.springframework.web.server.ResponseStatusException;
 import reactor.core.publisher.Flux;
 
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -93,22 +92,47 @@ public class ChatController {
 
 	private final String defaultSystemCode;
 
+	private final String defaultSpaceCode;
+
+	private final String defaultSpaceEnvironment;
+
 	private final ExecutionEventStreamRegistry executionEventStreamRegistry;
 
 	public ChatController(AgentLoader agentLoader,
 			@Value("${assistant.chat.default-app-name:grayscale_agent}") String defaultAppName,
 			@Value("${assistant.chat.default-system-code:}") String defaultSystemCode) {
-		this(agentLoader, defaultAppName, defaultSystemCode, null);
+		this(agentLoader, defaultAppName, defaultSystemCode, "", "prod", null);
+	}
+
+	public ChatController(
+			AgentLoader agentLoader,
+			String defaultAppName,
+			String defaultSystemCode,
+			String defaultSpaceCode,
+			String defaultSpaceEnvironment) {
+		this(agentLoader, defaultAppName, defaultSystemCode, defaultSpaceCode, defaultSpaceEnvironment, null);
+	}
+
+	public ChatController(
+			AgentLoader agentLoader,
+			String defaultAppName,
+			String defaultSystemCode,
+			@Nullable ExecutionEventStreamRegistry executionEventStreamRegistry) {
+		this(agentLoader, defaultAppName, defaultSystemCode, "", "prod", executionEventStreamRegistry);
 	}
 
 	@Autowired
 	public ChatController(AgentLoader agentLoader,
 			@Value("${assistant.chat.default-app-name:grayscale_agent}") String defaultAppName,
 			@Value("${assistant.chat.default-system-code:}") String defaultSystemCode,
+			@Value("${assistant.chat.default-space-code:}") String defaultSpaceCode,
+			@Value("${assistant.chat.default-space-environment:prod}") String defaultSpaceEnvironment,
 			@Nullable ExecutionEventStreamRegistry executionEventStreamRegistry) {
 		this.agentLoader = agentLoader;
 		this.defaultAppName = defaultAppName;
 		this.defaultSystemCode = defaultSystemCode;
+		this.defaultSpaceCode = defaultSpaceCode;
+		this.defaultSpaceEnvironment = defaultSpaceEnvironment;
 		this.executionEventStreamRegistry = executionEventStreamRegistry;
 	}
 	@PostMapping(value = "/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
@@ -120,23 +144,12 @@ public class ChatController {
 		String effectiveSystemCode = resolveSystemCode(authenticatedUser);
 		String effectiveAssistantUid = authenticatedUser.userId();
 
-		Map<String, Object> stateDelta = new HashMap<>();
-		if (StringUtils.hasText(effectiveSystemCode)) {
-			stateDelta.put(AssistantStateKeys.SYSTEM_CODE, effectiveSystemCode);
-		}
-		if (StringUtils.hasText(effectiveAssistantUid)) {
-			stateDelta.put(AssistantStateKeys.ASSISTANT_UID, effectiveAssistantUid);
-		}
-		if (StringUtils.hasText(defaultAppName)) {
-			stateDelta.put(AssistantStateKeys.AGENT_APP_CODE, defaultAppName);
-		}
-
 		return doRunSse(
 				defaultAppName,
 				authenticatedUser.userId(),
 				request.getThreadId(),
 				new UserMessageDTO(request.getMessage()),
-				stateDelta.isEmpty() ? null : stateDelta);
+				mergeStateDelta(null, effectiveAssistantUid, effectiveSystemCode, defaultAppName));
 	}
 
 	/**
@@ -675,7 +688,23 @@ public class ChatController {
 		if (StringUtils.hasText(agentAppCode)) {
 			merged.put(AssistantStateKeys.AGENT_APP_CODE, agentAppCode);
 		}
+		if (StringUtils.hasText(defaultSpaceCode)
+				&& !StringUtils.hasText(asString(merged.get(AssistantStateKeys.SPACE_CODE)))) {
+			merged.put(AssistantStateKeys.SPACE_CODE, defaultSpaceCode);
+		}
+		if (StringUtils.hasText(defaultSpaceCode)
+				&& !StringUtils.hasText(asString(merged.get(AssistantStateKeys.SPACE_ENVIRONMENT)))) {
+			merged.put(AssistantStateKeys.SPACE_ENVIRONMENT, resolveDefaultSpaceEnvironment());
+		}
 		return merged.isEmpty() ? null : merged;
+	}
+
+	private String resolveDefaultSpaceEnvironment() {
+		return StringUtils.hasText(defaultSpaceEnvironment) ? defaultSpaceEnvironment : "prod";
+	}
+
+	private String asString(Object value) {
+		return value instanceof String text ? text : null;
 	}
 
 	private AuthenticatedUserContext requireAuthenticatedUser() {

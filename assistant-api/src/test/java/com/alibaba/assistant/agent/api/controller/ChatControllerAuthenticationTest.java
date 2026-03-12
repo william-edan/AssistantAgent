@@ -68,6 +68,66 @@ class ChatControllerAuthenticationTest {
 
 	@Test
 	@SuppressWarnings("unchecked")
+	void shouldInjectConfiguredDefaultSpaceScopeIntoState() throws Exception {
+		ChatController scopedController = new ChatController(agentLoader, "grayscale_agent", "", "finance-space", "test");
+		SecurityContextHolder.getContext().setAuthentication(new UsernamePasswordAuthenticationToken(
+				new AuthenticatedUserContext("1001", 1L, "gougu_oa", "assistant-ui", "token-x"),
+				"token-x",
+				Collections.emptyList()));
+
+		when(agentLoader.loadAgent("grayscale_agent")).thenReturn(agent);
+		when(agent.stream(any(org.springframework.ai.chat.messages.UserMessage.class), any(RunnableConfig.class)))
+				.thenReturn(Flux.empty());
+
+		AgentRunRequest request = buildValidRunRequest("spoof-user");
+
+		scopedController.runSse(request, null, "spoof-assistant", "spoof-system").blockLast();
+
+		assertEquals("finance-space", request.stateDelta.get(AssistantStateKeys.SPACE_CODE));
+		assertEquals("test", request.stateDelta.get(AssistantStateKeys.SPACE_ENVIRONMENT));
+
+		ArgumentCaptor<RunnableConfig> runnableConfigCaptor = ArgumentCaptor.forClass(RunnableConfig.class);
+		verify(agent).stream(any(org.springframework.ai.chat.messages.UserMessage.class), runnableConfigCaptor.capture());
+		Map<String, Object> stateUpdate = (Map<String, Object>) runnableConfigCaptor.getValue()
+				.metadata(RunnableConfig.STATE_UPDATE_METADATA_KEY)
+				.orElse(Map.of());
+		assertEquals("finance-space", stateUpdate.get(AssistantStateKeys.SPACE_CODE));
+		assertEquals("test", stateUpdate.get(AssistantStateKeys.SPACE_ENVIRONMENT));
+	}
+
+	@Test
+	@SuppressWarnings("unchecked")
+	void shouldKeepExplicitSpaceScopeWhenDefaultScopeConfigured() throws Exception {
+		ChatController scopedController = new ChatController(agentLoader, "grayscale_agent", "", "finance-space", "test");
+		SecurityContextHolder.getContext().setAuthentication(new UsernamePasswordAuthenticationToken(
+				new AuthenticatedUserContext("1001", 1L, "gougu_oa", "assistant-ui", "token-x"),
+				"token-x",
+				Collections.emptyList()));
+
+		when(agentLoader.loadAgent("grayscale_agent")).thenReturn(agent);
+		when(agent.stream(any(org.springframework.ai.chat.messages.UserMessage.class), any(RunnableConfig.class)))
+				.thenReturn(Flux.empty());
+
+		AgentRunRequest request = buildValidRunRequest("spoof-user");
+		request.stateDelta = new LinkedHashMap<>();
+		request.stateDelta.put(AssistantStateKeys.SPACE_CODE, "explicit-space");
+		request.stateDelta.put(AssistantStateKeys.SPACE_ENVIRONMENT, "prod");
+
+		scopedController.runSse(request, null, "spoof-assistant", "spoof-system").blockLast();
+
+		assertEquals("explicit-space", request.stateDelta.get(AssistantStateKeys.SPACE_CODE));
+		assertEquals("prod", request.stateDelta.get(AssistantStateKeys.SPACE_ENVIRONMENT));
+
+		ArgumentCaptor<RunnableConfig> runnableConfigCaptor = ArgumentCaptor.forClass(RunnableConfig.class);
+		verify(agent).stream(any(org.springframework.ai.chat.messages.UserMessage.class), runnableConfigCaptor.capture());
+		Map<String, Object> stateUpdate = (Map<String, Object>) runnableConfigCaptor.getValue()
+				.metadata(RunnableConfig.STATE_UPDATE_METADATA_KEY)
+				.orElse(Map.of());
+		assertEquals("explicit-space", stateUpdate.get(AssistantStateKeys.SPACE_CODE));
+		assertEquals("prod", stateUpdate.get(AssistantStateKeys.SPACE_ENVIRONMENT));
+	}
+	@Test
+	@SuppressWarnings("unchecked")
 	void shouldUseAuthenticatedIdentityAndInjectAgentAppScopeIntoState() throws Exception {
 		SecurityContextHolder.getContext().setAuthentication(new UsernamePasswordAuthenticationToken(
 				new AuthenticatedUserContext("1001", 1L, "gougu_oa", "assistant-ui", "token-x"),
