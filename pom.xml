@@ -27,6 +27,9 @@
         <maven.compiler.source>17</maven.compiler.source>
         <maven.compiler.target>17</maven.compiler.target>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <argLine></argLine>
+        <mockito.version>5.14.2</mockito.version>
+        <mockito.javaagent.path>${settings.localRepository}/org/mockito/mockito-core/${mockito.version}/mockito-core-${mockito.version}.jar</mockito.javaagent.path>
         <graalvm.polyglot.version>24.2.1</graalvm.polyglot.version>
         <spring-boot.version>3.4.8</spring-boot.version>
         <spring-ai-alibaba-extensions.version>1.1.2.1</spring-ai-alibaba-extensions.version>
@@ -189,6 +192,14 @@
                     <source>17</source>
                     <target>17</target>
                     <parameters>true</parameters>
+                </configuration>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <version>3.2.5</version>
+                <configuration>
+                    <argLine>@{argLine} -javaagent:${mockito.javaagent.path}</argLine>
                 </configuration>
             </plugin>
             <plugin>
