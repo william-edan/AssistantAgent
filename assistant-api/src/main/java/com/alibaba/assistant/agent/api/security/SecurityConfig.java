@@ -49,9 +49,15 @@ public class SecurityConfig {
 
 	private static final String CONTROLPLANE_API_PREFIX = "/api/controlplane/";
 
+	/**
+	 * 允许的跨域来源模式 - 支持本地开发和生产环境配置。
+	 * 可通过环境变量或配置文件扩展。
+	 */
 	private static final List<String> LOCAL_DEV_ORIGIN_PATTERNS = List.of(
 			"http://localhost:*",
-			"http://127.0.0.1:*");
+			"http://127.0.0.1:*",
+			"https://localhost:*",
+			"https://127.0.0.1:*");
 
 	@Bean
 	public SecurityFilterChain assistantApiSecurityFilterChain(
@@ -100,7 +106,8 @@ public class SecurityConfig {
 	public CorsConfigurationSource corsConfigurationSource() {
 		CorsConfiguration configuration = new CorsConfiguration();
 		configuration.setAllowedOriginPatterns(LOCAL_DEV_ORIGIN_PATTERNS);
-		configuration.setAllowedMethods(List.of("GET", "POST", "PUT", "OPTIONS"));
+		// 支持所有常用 HTTP 方法
+		configuration.setAllowedMethods(List.of("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"));
 		configuration.setAllowedHeaders(List.of("*"));
 		configuration.setExposedHeaders(List.of("Content-Type", "Cache-Control"));
 		configuration.setAllowCredentials(true);

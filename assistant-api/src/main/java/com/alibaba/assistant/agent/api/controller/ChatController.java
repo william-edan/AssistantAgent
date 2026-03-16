@@ -86,10 +86,6 @@ import java.util.UUID;
  * 这一层同时负责线程级事件发布、流式去重和聊天记录持久化主流程编排。</p>
  */
 @RestController
-@CrossOrigin(
-		origins = {"http://localhost:5173", "http://127.0.0.1:5173"},
-		allowedHeaders = "*",
-		methods = {RequestMethod.GET, RequestMethod.POST, RequestMethod.OPTIONS})
 @Profile("migration")
 @RequestMapping("/api/chat")
 public class ChatController {

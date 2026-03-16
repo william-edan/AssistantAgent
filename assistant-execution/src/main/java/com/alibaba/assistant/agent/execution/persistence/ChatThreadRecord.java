@@ -66,6 +66,16 @@ public class ChatThreadRecord {
 
     private LocalDateTime updatedAt;
 
+    /**
+     * 置顶标记：true 表示已置顶
+     */
+    private Boolean pinned;
+
+    /**
+     * 置顶时间：用于排序，越新的置顶越靠前
+     */
+    private LocalDateTime pinnedAt;
+
     public Long getId() { return id; }
     public void setId(Long id) { this.id = id; }
     public String getThreadId() { return threadId; }
@@ -104,4 +114,10 @@ public class ChatThreadRecord {
     public void setCreatedAt(LocalDateTime createdAt) { this.createdAt = createdAt; }
     public LocalDateTime getUpdatedAt() { return updatedAt; }
     public void setUpdatedAt(LocalDateTime updatedAt) { this.updatedAt = updatedAt; }
+
+    public Boolean getPinned() { return pinned; }
+    public void setPinned(Boolean pinned) { this.pinned = pinned; }
+
+    public LocalDateTime getPinnedAt() { return pinnedAt; }
+    public void setPinnedAt(LocalDateTime pinnedAt) { this.pinnedAt = pinnedAt; }
 }
