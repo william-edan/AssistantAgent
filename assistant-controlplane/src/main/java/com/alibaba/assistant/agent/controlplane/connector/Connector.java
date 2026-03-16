@@ -22,39 +22,51 @@ import com.baomidou.mybatisplus.annotation.TableName;
 import java.time.LocalDateTime;
 
 /**
- * Connector entity for downstream system access configuration.
+ * 连接器实体。
  *
- * @author Assistant Agent Team
- * @since 1.0.0
+ * <p>用于描述某个企业系统如何接入平台，例如系统编码、访问地址、协议类型、网络区域和版本信息。</p>
  */
 @TableName("connector")
 public class Connector {
 
+	/** 主键 ID。 */
 	@TableId(type = IdType.AUTO)
 	private Long id;
 
+	/** 所属空间 ID。 */
 	private Long spaceId;
 
+	/** 连接器编码，平台内部唯一。 */
 	private String connectorCode;
 
+	/** 外部系统编码，例如 gougu_oa。 */
 	private String systemCode;
 
+	/** 给管理界面和运维看的展示名称。 */
 	private String displayName;
 
+	/** 协议类型，例如 HTTP、MCP、BROWSER。 */
 	private String protocolType;
 
+	/** 所属环境，例如 prod、test。 */
 	private String environment;
 
+	/** 网络区域，用于区分内外网或专线。 */
 	private String networkZone;
 
+	/** 目标系统基础地址。 */
 	private String baseUrl;
 
+	/** 当前状态。 */
 	private String status;
 
+	/** 配置版本号。 */
 	private Integer version;
 
+	/** 创建时间。 */
 	private LocalDateTime createdAt;
 
+	/** 更新时间。 */
 	private LocalDateTime updatedAt;
 
 	public Long getId() {

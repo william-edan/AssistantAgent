@@ -41,7 +41,7 @@ import org.springframework.web.server.ResponseStatusException;
 import java.security.Principal;
 
 /**
- * Control-plane management API for auth profiles.
+ * 连接器认证配置管理入口。
  */
 @RestController
 @Profile("migration")

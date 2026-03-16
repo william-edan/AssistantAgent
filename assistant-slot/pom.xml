@@ -19,6 +19,10 @@
             <artifactId>assistant-controlplane</artifactId>
         </dependency>
         <dependency>
+            <groupId>com.alibaba.agent.assistant</groupId>
+            <artifactId>assistant-execution</artifactId>
+        </dependency>
+        <dependency>
             <groupId>com.fasterxml.jackson.core</groupId>
             <artifactId>jackson-databind</artifactId>
         </dependency>

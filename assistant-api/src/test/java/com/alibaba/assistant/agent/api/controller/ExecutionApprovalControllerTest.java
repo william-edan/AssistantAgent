@@ -17,6 +17,7 @@ package com.alibaba.assistant.agent.api.controller;
 
 import com.alibaba.assistant.agent.api.security.AuthenticatedUserContext;
 import com.alibaba.assistant.agent.api.security.MigrationControlPlaneAuthorizationService;
+import com.alibaba.assistant.agent.api.service.ChatApprovalDecisionSyncService;
 import com.alibaba.assistant.agent.runtime.execution.ExecutionApprovalDecisionView;
 import com.alibaba.assistant.agent.runtime.execution.ExecutionApprovalDetailView;
 import com.alibaba.assistant.agent.runtime.execution.ExecutionApprovalRequestView;
@@ -56,11 +57,15 @@ class ExecutionApprovalControllerTest {
     @Mock
     private MigrationControlPlaneAuthorizationService authorizationService;
 
+    @Mock
+    private ChatApprovalDecisionSyncService chatApprovalDecisionSyncService;
+
     @BeforeEach
     void setUp() {
         ExecutionApprovalController controller = new ExecutionApprovalController(
                 executionApprovalService,
-                authorizationService);
+                authorizationService,
+                chatApprovalDecisionSyncService);
         mockMvc = MockMvcBuilders.standaloneSetup(controller).build();
     }
 
@@ -205,6 +210,22 @@ class ExecutionApprovalControllerTest {
 
     @Test
     void shouldApprovePendingRequestWhenAuthorized() throws Exception {
+        ExecutionApprovalDecisionView decisionView = new ExecutionApprovalDecisionView(
+                "REQ-1",
+                "RUN-1",
+                "oa.leave.apply",
+                "WORKFLOW",
+                11L,
+                "finance-space",
+                "prod",
+                "submit_approval",
+                "APPROVED",
+                "COMPLETED",
+                "manual",
+                "u2001",
+                "u1001",
+                LocalDateTime.of(2026, 3, 10, 23, 0),
+                LocalDateTime.of(2026, 3, 10, 23, 2));
         when(authorizationService.canManageSpaceExecutionApprovals(
                 any(AuthenticatedUserContext.class), eq("finance-space"), eq("prod")))
                 .thenReturn(true);
@@ -213,22 +234,7 @@ class ExecutionApprovalControllerTest {
                 eq("prod"),
                 eq("REQ-1"),
                 eq("1001")))
-                .thenReturn(Optional.of(new ExecutionApprovalDecisionView(
-                        "REQ-1",
-                        "RUN-1",
-                        "oa.leave.apply",
-                        "WORKFLOW",
-                        11L,
-                        "finance-space",
-                        "prod",
-                        "submit_approval",
-                        "APPROVED",
-                        "COMPLETED",
-                        "manual",
-                        "u2001",
-                        "u1001",
-                        LocalDateTime.of(2026, 3, 10, 23, 0),
-                        LocalDateTime.of(2026, 3, 10, 23, 2))));
+                .thenReturn(Optional.of(decisionView));
 
         mockMvc.perform(post("/api/controlplane/spaces/finance-space/approval-requests/REQ-1/approve")
                         .principal(authenticatedPrincipal()))
@@ -237,10 +243,28 @@ class ExecutionApprovalControllerTest {
                 .andExpect(jsonPath("$.data.requestId").value("REQ-1"))
                 .andExpect(jsonPath("$.data.status").value("APPROVED"))
                 .andExpect(jsonPath("$.data.runStatus").value("COMPLETED"));
+
+        verify(chatApprovalDecisionSyncService).publishDecision("finance-space", "prod", "REQ-1", decisionView);
     }
 
     @Test
     void shouldRejectPendingRequestWhenAuthorized() throws Exception {
+        ExecutionApprovalDecisionView decisionView = new ExecutionApprovalDecisionView(
+                "REQ-1",
+                "RUN-1",
+                "oa.leave.apply",
+                "WORKFLOW",
+                11L,
+                "finance-space",
+                "prod",
+                "submit_approval",
+                "REJECTED",
+                "CANCELLED",
+                "manual",
+                "u2001",
+                "u1001",
+                LocalDateTime.of(2026, 3, 10, 23, 0),
+                LocalDateTime.of(2026, 3, 10, 23, 1));
         when(authorizationService.canManageSpaceExecutionApprovals(
                 any(AuthenticatedUserContext.class), eq("finance-space"), eq("prod")))
                 .thenReturn(true);
@@ -249,22 +273,7 @@ class ExecutionApprovalControllerTest {
                 eq("prod"),
                 eq("REQ-1"),
                 eq("1001")))
-                .thenReturn(Optional.of(new ExecutionApprovalDecisionView(
-                        "REQ-1",
-                        "RUN-1",
-                        "oa.leave.apply",
-                        "WORKFLOW",
-                        11L,
-                        "finance-space",
-                        "prod",
-                        "submit_approval",
-                        "REJECTED",
-                        "CANCELLED",
-                        "manual",
-                        "u2001",
-                        "u1001",
-                        LocalDateTime.of(2026, 3, 10, 23, 0),
-                        LocalDateTime.of(2026, 3, 10, 23, 1))));
+                .thenReturn(Optional.of(decisionView));
 
         mockMvc.perform(post("/api/controlplane/spaces/finance-space/approval-requests/REQ-1/reject")
                         .principal(authenticatedPrincipal()))
@@ -273,6 +282,8 @@ class ExecutionApprovalControllerTest {
                 .andExpect(jsonPath("$.data.requestId").value("REQ-1"))
                 .andExpect(jsonPath("$.data.status").value("REJECTED"))
                 .andExpect(jsonPath("$.data.runStatus").value("CANCELLED"));
+
+        verify(chatApprovalDecisionSyncService).publishDecision("finance-space", "prod", "REQ-1", decisionView);
     }
 
     @Test
@@ -305,6 +316,3 @@ class ExecutionApprovalControllerTest {
                 List.of("assistant:chat", "assistant:controlplane"));
     }
 }
-
-
-

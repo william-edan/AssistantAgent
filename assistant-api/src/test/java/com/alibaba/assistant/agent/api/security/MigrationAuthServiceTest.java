@@ -44,6 +44,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -61,6 +63,9 @@ class MigrationAuthServiceTest {
 	@Mock
 	private ValueOperations<String, String> valueOperations;
 
+	@Mock
+	private SystemIdentityBindingService systemIdentityBindingService;
+
 	private MigrationAuthService authService;
 
 	private final Map<String, String> redisSessionStore = new LinkedHashMap<>();
@@ -72,6 +77,7 @@ class MigrationAuthServiceTest {
 				localUserGrantService,
 				stringRedisTemplate,
 				new ObjectMapper(),
+				systemIdentityBindingService,
 				"assistant-agent",
 				"gougu_oa",
 				7200,
@@ -92,6 +98,7 @@ class MigrationAuthServiceTest {
 		assertEquals("1001", result.userId());
 		assertTrue(redisSessionStore.containsKey("assistant:auth:test:atk:" + result.accessToken()));
 		assertTrue(redisSessionStore.containsKey("assistant:auth:test:rtk:" + result.refreshToken()));
+		verify(systemIdentityBindingService).ensureBound("1001", "gougu_oa", "admin", "admin123");
 	}
 
 	@Test
@@ -101,6 +108,7 @@ class MigrationAuthServiceTest {
 		ResponseStatusException error = assertThrows(ResponseStatusException.class,
 				() -> authService.login("admin", "bad-password", 1L, "gougu_oa"));
 		assertEquals(401, error.getStatusCode().value());
+		verifyNoInteractions(systemIdentityBindingService);
 	}
 
 	@Test

@@ -16,7 +16,7 @@
 package com.alibaba.assistant.agent.controlplane.connector;
 
 /**
- * Typed command for connector create/update operations.
+ * 连接器新增或更新命令。
  */
 public record ConnectorUpsertCommand(
         String systemCode,

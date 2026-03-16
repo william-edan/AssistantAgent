@@ -59,7 +59,7 @@ public class FlowDefinitionConverter {
 
 	/**
 	 * Parse flow definition from an execution plan JSON string.
-	 * Compatible with both new executionPlan format and legacy flow_steps format.
+	 * Supports full executionPlan definitions and concise single-step definitions.
 	 */
 	public FlowDefinition parseFromExecutionPlan(String executionPlanJson, ToolMeta toolMeta) {
 		// Try parsing DAG format from executionPlan

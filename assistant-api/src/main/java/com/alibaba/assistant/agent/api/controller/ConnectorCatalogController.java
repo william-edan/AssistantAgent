@@ -38,7 +38,7 @@ import org.springframework.web.server.ResponseStatusException;
 import java.security.Principal;
 
 /**
- * Control-plane read API for connector catalogs.
+ * 连接器目录只读查询入口。
  */
 @RestController
 @Profile("migration")

@@ -19,8 +19,8 @@ import com.alibaba.assistant.agent.controlplane.connector.AuthProfile;
 import com.alibaba.assistant.agent.controlplane.connector.AuthProfileService;
 import com.alibaba.assistant.agent.controlplane.connector.Connector;
 import com.alibaba.assistant.agent.controlplane.connector.ConnectorService;
-import com.alibaba.assistant.agent.controlplane.identity.PrincipalBindingV2;
-import com.alibaba.assistant.agent.controlplane.identity.PrincipalBindingV2Service;
+import com.alibaba.assistant.agent.controlplane.identity.PrincipalBinding;
+import com.alibaba.assistant.agent.controlplane.identity.PrincipalBindingService;
 import com.alibaba.assistant.agent.controlplane.identity.TokenBroker;
 import com.alibaba.assistant.agent.controlplane.identity.TokenLease;
 import org.springframework.stereotype.Service;
@@ -36,7 +36,10 @@ import java.util.Map;
 import java.util.Objects;
 
 /**
- * Credential broker backed by connector/auth-profile/principal-binding control-plane records.
+ * 基于控制面配置解析执行凭证的代理实现。
+ *
+ * <p>该类会串联连接器、认证配置、主体绑定和系统令牌代理，
+ * 把“平台用户 + 连接器”转换成真正可用于 HTTP 执行步骤的请求凭证。
  */
 @Service
 public class ControlPlaneCredentialBroker implements CredentialBroker {
@@ -45,33 +48,31 @@ public class ControlPlaneCredentialBroker implements CredentialBroker {
 
     private final AuthProfileService authProfileService;
 
-    private final PrincipalBindingV2Service principalBindingV2Service;
+    private final PrincipalBindingService principalBindingService;
 
-    private final TokenBroker legacyTokenBroker;
+    private final TokenBroker systemTokenBroker;
 
     public ControlPlaneCredentialBroker(
             ConnectorService connectorService,
             AuthProfileService authProfileService,
-            PrincipalBindingV2Service principalBindingV2Service,
-            TokenBroker legacyTokenBroker) {
+            PrincipalBindingService principalBindingService,
+            TokenBroker systemTokenBroker) {
         this.connectorService = connectorService;
         this.authProfileService = authProfileService;
-        this.principalBindingV2Service = principalBindingV2Service;
-        this.legacyTokenBroker = legacyTokenBroker;
+        this.principalBindingService = principalBindingService;
+        this.systemTokenBroker = systemTokenBroker;
     }
 
     @Override
     public ResolvedCredentialLease resolve(CredentialResolutionRequest request) {
         Connector connector = requireConnector(request);
         AuthProfile authProfile = selectAuthProfile(request, authProfileService.listActiveByConnector(request.connectorId()));
-        PrincipalBindingV2 binding = principalBindingV2Service
+        PrincipalBinding binding = principalBindingService
                 .findHighestPriorityActiveBinding(request.spaceId(), request.connectorId(), request.platformPrincipalId())
                 .orElseThrow(() -> new IllegalStateException("principal_binding_not_found"));
 
-        String compatibilitySystemCode = StringUtils.hasText(connector.getSystemCode())
-                ? connector.getSystemCode().trim()
-                : normalize(request.compatibilitySystemCode());
-        OptionalCredential optionalCredential = resolveCredentialValue(request, authProfile, compatibilitySystemCode);
+        String systemCode = normalize(connector.getSystemCode());
+        OptionalCredential optionalCredential = resolveCredentialValue(request, authProfile, systemCode);
 
         Map<String, String> headers = new LinkedHashMap<>();
         headers.put(resolveHeaderName(authProfile), resolveHeaderPrefix(authProfile) + optionalCredential.credentialValue());
@@ -83,7 +84,6 @@ public class ControlPlaneCredentialBroker implements CredentialBroker {
                 normalizeCredentialType(authProfile.getAuthType()),
                 headers,
                 optionalCredential.expiresAt(),
-                compatibilitySystemCode,
                 normalize(connector.getBaseUrl()));
     }
 
@@ -121,16 +121,16 @@ public class ControlPlaneCredentialBroker implements CredentialBroker {
     private OptionalCredential resolveCredentialValue(
             CredentialResolutionRequest request,
             AuthProfile authProfile,
-            String compatibilitySystemCode) {
+            String systemCode) {
         if (StringUtils.hasText(authProfile.getCredentialRef())) {
             return new OptionalCredential(
                     buildLeaseKey(request, authProfile.getAuthProfileCode(), "credential_ref"),
                     authProfile.getCredentialRef().trim(),
                     Instant.now().plus(Duration.ofMinutes(15)));
         }
-        if (StringUtils.hasText(compatibilitySystemCode) && legacyTokenBroker != null) {
-            TokenLease lease = legacyTokenBroker.acquire(request.platformPrincipalId(), compatibilitySystemCode)
-                    .orElseThrow(() -> new IllegalStateException("legacy_token_not_found"));
+        if (StringUtils.hasText(systemCode) && systemTokenBroker != null) {
+            TokenLease lease = systemTokenBroker.acquire(request.platformPrincipalId(), systemCode)
+                    .orElseThrow(() -> new IllegalStateException("system_token_not_found"));
             return new OptionalCredential(
                     lease.leaseId(),
                     lease.accessToken(),

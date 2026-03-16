@@ -78,13 +78,16 @@ public class MigrationAuthService {
 
 	private final String redisKeyPrefix;
 
+	private final SystemIdentityBindingService systemIdentityBindingService;
+
 	public MigrationAuthService(
 			LocalUserAccountMapper localUserAccountMapper,
 			LocalUserGrantService localUserGrantService,
 			StringRedisTemplate stringRedisTemplate,
 			ObjectMapper objectMapper,
+			SystemIdentityBindingService systemIdentityBindingService,
 			@Value("${assistant.auth.local.client-id:assistant-agent}") String defaultClientId,
-			@Value("${assistant.auth.current-system.default-system-code:gougu_oa}") String defaultSystemCode,
+			@Value("${assistant.chat.default-system-code:gougu_oa}") String defaultSystemCode,
 			@Value("${assistant.auth.local.access-token-ttl-seconds:7200}") long accessTokenTtlSeconds,
 			@Value("${assistant.auth.local.refresh-token-ttl-seconds:604800}") long refreshTokenTtlSeconds,
 			@Value("${assistant.auth.local.redis.key-prefix:" + DEFAULT_REDIS_KEY_PREFIX + "}") String redisKeyPrefix) {
@@ -92,6 +95,7 @@ public class MigrationAuthService {
 		this.localUserGrantService = localUserGrantService;
 		this.stringRedisTemplate = stringRedisTemplate;
 		this.objectMapper = objectMapper;
+		this.systemIdentityBindingService = systemIdentityBindingService;
 		this.defaultClientId = defaultClientId;
 		this.defaultSystemCode = defaultSystemCode;
 		this.accessTokenTtlSeconds = Math.max(accessTokenTtlSeconds, 300L);
@@ -123,6 +127,7 @@ public class MigrationAuthService {
 		}
 		String assistantUid = String.valueOf(user.getId());
 		Long effectiveTenantId = user.getTenantId() != null ? user.getTenantId() : tenantId;
+		systemIdentityBindingService.ensureBound(assistantUid, effectiveSystemCode, user.getUsername(), password);
 		return issueSession(
 				assistantUid,
 				user.getUsername(),
@@ -535,3 +540,5 @@ public class MigrationAuthService {
 	}
 
 }
+
+

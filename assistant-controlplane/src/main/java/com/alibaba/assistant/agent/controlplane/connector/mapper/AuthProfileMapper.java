@@ -20,7 +20,7 @@ import com.baomidou.mybatisplus.core.mapper.BaseMapper;
 import org.apache.ibatis.annotations.Mapper;
 
 /**
- * MyBatis mapper for auth_profile.
+ * {@code auth_profile} 表的 MyBatis Mapper。
  *
  * @author Assistant Agent Team
  * @since 1.0.0

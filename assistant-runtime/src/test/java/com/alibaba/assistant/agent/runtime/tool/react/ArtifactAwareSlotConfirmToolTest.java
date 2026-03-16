@@ -123,10 +123,8 @@ class ArtifactAwareSlotConfirmToolTest {
                 artifactCode + ".interaction",
                 "{\"slots\":[{\"name\":\"reason\",\"type\":\"string\",\"required\":true}]}",
                 null,
-                null,
-                null,
-                null,
-                null);
+                null
+        );
         RuntimeArtifact artifact = new RuntimeArtifact(
                 1L,
                 artifactCode,
@@ -142,7 +140,7 @@ class ArtifactAwareSlotConfirmToolTest {
                 Map.of(),
                 Map.of());
         return PublishedToolDescriptor.forArtifact(
-                "artifact-catalog",
+                "tool-meta-catalog",
                 "workflow:" + artifactCode,
                 "请假申请",
                 null,
@@ -152,6 +150,7 @@ class ArtifactAwareSlotConfirmToolTest {
                 artifact);
     }
 }
+
 
 
 

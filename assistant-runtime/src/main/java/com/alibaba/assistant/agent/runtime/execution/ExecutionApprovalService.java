@@ -33,14 +33,19 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
+import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.UUID;
 
 /**
- * Control-plane service for listing and deciding persisted approval requests.
+ * 执行审批服务。
+ *
+ * <p>负责控制面审批列表查询、审批详情查看以及同意/驳回后的流程恢复。
+ * 它连接了审批请求表、执行记录表、运行时恢复服务和审计事件，是“审批中断再继续”场景的主入口。</p>
  */
 @Service
 public class ExecutionApprovalService {
@@ -84,7 +89,9 @@ public class ExecutionApprovalService {
     }
 
     /**
-     * List approval requests for the target space with optional status, run, and execution identity filters.
+     * 查询某个空间下的审批请求列表。
+     *
+     * <p>支持按状态、运行实例、业务编码、执行主体和线程等维度过滤。</p>
      */
     public List<ExecutionApprovalRequestView> listRequests(
             String spaceCode,
@@ -137,14 +144,14 @@ public class ExecutionApprovalService {
     }
 
     /**
-     * List pending approval requests for the target space.
+     * 查询某个空间下待处理的审批请求。
      */
     public List<ExecutionApprovalRequestView> listPendingRequests(String spaceCode, String environment) {
         return listRequests(spaceCode, environment, null, null, null, null, null, null, null, null);
     }
 
     /**
-     * Load a single approval request detail for operator views.
+     * 查询单条审批请求详情。
      */
     public Optional<ExecutionApprovalDetailView> findRequest(String spaceCode, String environment, String requestId) {
         Optional<PlatformSpace> spaceOptional = findSpace(spaceCode, environment);
@@ -163,7 +170,9 @@ public class ExecutionApprovalService {
     }
 
     /**
-     * Approve a pending request and resume the paused execution.
+     * 同意审批并恢复执行。
+     *
+     * <p>审批通过后，会把审批状态、执行状态和审计事件一起更新，再继续恢复暂停的运行实例。</p>
      */
     public Optional<ExecutionApprovalDecisionView> approveRequest(
             String spaceCode,
@@ -257,7 +266,7 @@ public class ExecutionApprovalService {
         attributes.put("space_id", space.getId());
         attributes.put("space_environment", normalizeEnvironment(space.getEnvironment()));
         attributes.put("tool_source_mode", "exclusive");
-        attributes.put("tool_source_ids", List.of("artifact-catalog"));
+        attributes.put("tool_source_ids", List.of("tool-meta-catalog"));
         return artifactPublicationLookupService.listPublishedArtifacts(attributes).stream()
                 .filter(descriptor -> descriptor != null
                         && descriptor.artifact() != null
@@ -353,7 +362,7 @@ public class ExecutionApprovalService {
         }
         try {
             AuditEvent auditEvent = new AuditEvent();
-            auditEvent.setEventId(request.getRequestId() + ":" + eventType);
+            auditEvent.setEventId(buildDecisionAuditEventId(request, run, eventType));
             auditEvent.setTraceId(run.getRunId());
             auditEvent.setExecutionId(run.getRunId());
             auditEvent.setRunId(run.getRunId());
@@ -363,7 +372,7 @@ public class ExecutionApprovalService {
             auditEvent.setAssistantUid(firstNonBlank(normalizeOptional(actorUserId), normalizeOptional(request.getApproverPrincipalId())));
             auditEvent.setSystemCode(descriptor != null ? normalizeOptional(descriptor.executionSystemCode()) : null);
             auditEvent.setToolName(normalizeOptional(run.getArtifactCode()));
-            auditEvent.setAgentPhase(eventType);
+            auditEvent.setAgentPhase(resolveDecisionAgentPhase(request, run));
             Map<String, Object> payload = new LinkedHashMap<>();
             payload.put("requestId", request.getRequestId());
             payload.put("runId", run.getRunId());
@@ -380,6 +389,30 @@ public class ExecutionApprovalService {
             logger.warn("ExecutionApprovalService#persistDecisionAuditEvent - persist failed, requestId={}, eventType={}",
                     request.getRequestId(), eventType, e);
         }
+    }
+
+    /**
+     * 审批决策审计事件同样使用固定长度的确定性 ID，避免长 requestId 超过数据库列宽。
+     */
+    private String buildDecisionAuditEventId(ApprovalRequest request, ExecutionRun run, String eventType) {
+        String fingerprint = firstNonBlank(
+                normalizeOptional(run != null ? run.getRunId() : null),
+                "") + "|" + firstNonBlank(normalizeOptional(request != null ? request.getRequestId() : null), "-")
+                + "|" + firstNonBlank(normalizeOptional(request != null ? request.getStepId() : null), "-")
+                + "|" + firstNonBlank(normalizeOptional(eventType), "-")
+                + "|" + firstNonBlank(normalizeOptional(request != null ? request.getStatus() : null), "-");
+        return UUID.nameUUIDFromBytes(fingerprint.getBytes(StandardCharsets.UTF_8)).toString();
+    }
+
+    /**
+     * agentPhase 表示当前运行阶段，审批动作细节继续由 eventType 承载，避免不同语义混用。
+     */
+    private String resolveDecisionAgentPhase(ApprovalRequest request, ExecutionRun run) {
+        String runStatus = normalizeOptional(run != null ? run.getStatus() : null);
+        if (StringUtils.hasText(runStatus)) {
+            return runStatus;
+        }
+        return normalizeOptional(request != null ? request.getStatus() : null);
     }
 
     private String serializePayload(Map<String, Object> payload) {
@@ -437,3 +470,4 @@ public class ExecutionApprovalService {
             ExecutionRun run) {
     }
 }
+

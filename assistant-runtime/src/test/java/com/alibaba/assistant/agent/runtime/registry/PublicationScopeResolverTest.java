@@ -108,16 +108,16 @@ class PublicationScopeResolverTest {
                 "environment", "prod",
                 "agent_app_code", "finance-agent",
                 "tool_source_mode", "exclusive",
-                "tool_source_ids", List.of("artifact-catalog", "mcp-gateway"),
-                "disabled_tool_source_ids", "legacy-bridge"));
+                "tool_source_ids", List.of("tool-meta-catalog", "mcp-gateway"),
+                "disabled_tool_source_ids", "tool-meta-catalog"));
 
         assertEquals("default", scope.tenantId());
         assertEquals(9L, scope.spaceId());
         assertEquals("prod", scope.environment());
         assertEquals("finance-agent", scope.agentAppCode());
         assertEquals(ToolPublicationProvider.SourceSelectionMode.EXCLUSIVE, scope.sourceSelectionMode());
-        assertEquals(List.of("artifact-catalog", "mcp-gateway"), scope.requestedSourceIds());
-        assertEquals(List.of("legacy-bridge"), scope.blockedSourceIds());
+        assertEquals(List.of("tool-meta-catalog", "mcp-gateway"), scope.requestedSourceIds());
+        assertEquals(List.of("tool-meta-catalog"), scope.blockedSourceIds());
     }
 
     @Test
@@ -128,8 +128,8 @@ class PublicationScopeResolverTest {
         AgentAppPublicationPolicyResolver.PublicationSourcePolicy policy =
                 new AgentAppPublicationPolicyResolver.PublicationSourcePolicy(
                         ToolPublicationProvider.SourceSelectionMode.EXCLUSIVE,
-                        List.of("artifact-catalog", "mcp-gateway"),
-                        List.of("legacy-bridge"));
+                        List.of("tool-meta-catalog", "mcp-gateway"),
+                        List.of("tool-meta-catalog"));
         when(policyResolver.resolve(9L, "finance-agent")).thenReturn(Optional.of(policy));
 
         ToolPublicationProvider.PublicationScope scope = resolver.resolve(Map.of(
@@ -139,8 +139,8 @@ class PublicationScopeResolverTest {
                 "agent_app_code", "finance-agent"));
 
         assertEquals(ToolPublicationProvider.SourceSelectionMode.EXCLUSIVE, scope.sourceSelectionMode());
-        assertEquals(List.of("artifact-catalog", "mcp-gateway"), scope.requestedSourceIds());
-        assertEquals(List.of("legacy-bridge"), scope.blockedSourceIds());
+        assertEquals(List.of("tool-meta-catalog", "mcp-gateway"), scope.requestedSourceIds());
+        assertEquals(List.of("tool-meta-catalog"), scope.blockedSourceIds());
     }
 
     @Test
@@ -151,8 +151,8 @@ class PublicationScopeResolverTest {
         AgentAppPublicationPolicyResolver.PublicationSourcePolicy policy =
                 new AgentAppPublicationPolicyResolver.PublicationSourcePolicy(
                         ToolPublicationProvider.SourceSelectionMode.EXCLUSIVE,
-                        List.of("artifact-catalog"),
-                        List.of("legacy-bridge"));
+                        List.of("tool-meta-catalog"),
+                        List.of("tool-meta-catalog"));
         when(policyResolver.resolve(9L, "finance-agent")).thenReturn(Optional.of(policy));
 
         ToolPublicationProvider.PublicationScope scope = resolver.resolve(Map.of(
@@ -162,12 +162,13 @@ class PublicationScopeResolverTest {
                 "agent_app_code", "finance-agent",
                 "tool_source_mode", "merge",
                 "tool_source_ids", List.of("mcp-gateway"),
-                "disabled_tool_source_ids", List.of("artifact-catalog")));
+                "disabled_tool_source_ids", List.of("tool-meta-catalog")));
 
         assertEquals(ToolPublicationProvider.SourceSelectionMode.MERGE, scope.sourceSelectionMode());
         assertEquals(List.of("mcp-gateway"), scope.requestedSourceIds());
-        assertEquals(List.of("artifact-catalog"), scope.blockedSourceIds());
+        assertEquals(List.of("tool-meta-catalog"), scope.blockedSourceIds());
     }
+
     @Test
     void shouldDefaultToArtifactOnlyForScopedAgentAppCalls() {
         PlatformSpaceService platformSpaceService = mock(PlatformSpaceService.class);
@@ -180,24 +181,9 @@ class PublicationScopeResolverTest {
                 "agent_app_code", "finance-agent"));
 
         assertEquals(ToolPublicationProvider.SourceSelectionMode.EXCLUSIVE, scope.sourceSelectionMode());
-        assertEquals(List.of("artifact-catalog"), scope.requestedSourceIds());
-        assertEquals(List.of("legacy-bridge"), scope.blockedSourceIds());
-    }
-
-    @Test
-    void shouldAllowLegacyFallbackWhenExplicitlyRequested() {
-        PlatformSpaceService platformSpaceService = mock(PlatformSpaceService.class);
-        PublicationScopeResolver resolver = new PublicationScopeResolver(platformSpaceService);
-
-        ToolPublicationProvider.PublicationScope scope = resolver.resolve(Map.of(
-                "tenant_id", "default",
-                "space_id", 9L,
-                "environment", "prod",
-                "agent_app_code", "finance-agent",
-                "allow_legacy_fallback", true));
-
-        assertEquals(ToolPublicationProvider.SourceSelectionMode.MERGE, scope.sourceSelectionMode());
-        assertEquals(List.of("artifact-catalog"), scope.requestedSourceIds());
+        assertEquals(List.of("tool-meta-catalog"), scope.requestedSourceIds());
         assertEquals(List.of(), scope.blockedSourceIds());
     }
 }
+
+

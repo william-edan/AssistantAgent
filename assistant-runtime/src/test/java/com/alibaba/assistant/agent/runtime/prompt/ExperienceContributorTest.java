@@ -21,7 +21,7 @@ import com.alibaba.assistant.agent.extension.experience.model.ExperienceQuery;
 import com.alibaba.assistant.agent.extension.experience.model.ExperienceQueryContext;
 import com.alibaba.assistant.agent.extension.experience.model.ExperienceType;
 import com.alibaba.assistant.agent.extension.experience.spi.ExperienceProvider;
-import com.alibaba.assistant.agent.runtime.config.RuntimeConfigCompatibilityAdapter;
+import com.alibaba.assistant.agent.runtime.config.RuntimeConfigView;
 import com.alibaba.assistant.agent.prompt.PromptContribution;
 import com.alibaba.assistant.agent.prompt.PromptContributorContext;
 import org.junit.jupiter.api.Test;
@@ -44,7 +44,7 @@ class ExperienceContributorTest {
 	@Test
 	void shouldSkipWhenDynamicPromptDisabled() {
 		ExperienceProvider experienceProvider = mock(ExperienceProvider.class);
-		RuntimeConfigCompatibilityAdapter adapter = mock(RuntimeConfigCompatibilityAdapter.class);
+		RuntimeConfigView adapter = mock(RuntimeConfigView.class);
 		when(adapter.promptDynamicEnabled()).thenReturn(false);
 
 		ExperienceContributor contributor = new ExperienceContributor(experienceProvider, adapter);
@@ -56,7 +56,7 @@ class ExperienceContributorTest {
 	@Test
 	void shouldReturnEmptyContributionWhenNoExperienceFound() {
 		ExperienceProvider experienceProvider = mock(ExperienceProvider.class);
-		RuntimeConfigCompatibilityAdapter adapter = mock(RuntimeConfigCompatibilityAdapter.class);
+		RuntimeConfigView adapter = mock(RuntimeConfigView.class);
 		when(adapter.promptDynamicEnabled()).thenReturn(true);
 		when(experienceProvider.query(any(ExperienceQuery.class), any(ExperienceQueryContext.class)))
 				.thenReturn(List.of());
@@ -72,7 +72,7 @@ class ExperienceContributorTest {
 	@Test
 	void shouldInjectSanitizedHighQualityExperienceOnly() {
 		ExperienceProvider experienceProvider = mock(ExperienceProvider.class);
-		RuntimeConfigCompatibilityAdapter adapter = mock(RuntimeConfigCompatibilityAdapter.class);
+		RuntimeConfigView adapter = mock(RuntimeConfigView.class);
 		when(adapter.promptDynamicEnabled()).thenReturn(true);
 
 		Experience highQuality = experience("请假经验",
@@ -101,7 +101,7 @@ class ExperienceContributorTest {
 	@Test
 	void shouldQueryReactExperienceWithContextFromState() {
 		ExperienceProvider experienceProvider = mock(ExperienceProvider.class);
-		RuntimeConfigCompatibilityAdapter adapter = mock(RuntimeConfigCompatibilityAdapter.class);
+		RuntimeConfigView adapter = mock(RuntimeConfigView.class);
 		when(adapter.promptDynamicEnabled()).thenReturn(true);
 		when(experienceProvider.query(any(ExperienceQuery.class), any(ExperienceQueryContext.class)))
 				.thenReturn(List.of(experience("经验", "内容", null)));
@@ -158,3 +158,4 @@ class ExperienceContributorTest {
 	}
 
 }
+

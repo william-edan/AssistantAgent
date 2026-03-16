@@ -22,7 +22,7 @@ import com.alibaba.assistant.agent.extension.experience.model.ExperienceQuery;
 import com.alibaba.assistant.agent.extension.experience.model.ExperienceQueryContext;
 import com.alibaba.assistant.agent.extension.experience.model.ExperienceType;
 import com.alibaba.assistant.agent.extension.experience.spi.ExperienceProvider;
-import com.alibaba.assistant.agent.runtime.config.RuntimeConfigCompatibilityAdapter;
+import com.alibaba.assistant.agent.runtime.config.RuntimeConfigView;
 import com.alibaba.cloud.ai.graph.OverAllState;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -43,7 +43,7 @@ class AssistantIntentRouterTest {
 	void shouldReturnMainFlowWhenFastIntentDisabled() {
 		ExperienceProvider experienceProvider = mock(ExperienceProvider.class);
 		FastIntentService fastIntentService = mock(FastIntentService.class);
-		RuntimeConfigCompatibilityAdapter adapter = mock(RuntimeConfigCompatibilityAdapter.class);
+		RuntimeConfigView adapter = mock(RuntimeConfigView.class);
 		when(adapter.fastIntentEnabled()).thenReturn(false);
 
 		AssistantIntentRouter router = new AssistantIntentRouter(experienceProvider, fastIntentService, adapter);
@@ -59,7 +59,7 @@ class AssistantIntentRouterTest {
 	void shouldReturnFastIntentWhenMatchedExperienceExists() {
 		ExperienceProvider experienceProvider = mock(ExperienceProvider.class);
 		FastIntentService fastIntentService = mock(FastIntentService.class);
-		RuntimeConfigCompatibilityAdapter adapter = mock(RuntimeConfigCompatibilityAdapter.class);
+		RuntimeConfigView adapter = mock(RuntimeConfigView.class);
 		when(adapter.fastIntentEnabled()).thenReturn(true);
 
 		Experience matched = new Experience();
@@ -97,7 +97,7 @@ class AssistantIntentRouterTest {
 	void shouldUseStateInputWhenRouteInputIsBlank() {
 		ExperienceProvider experienceProvider = mock(ExperienceProvider.class);
 		FastIntentService fastIntentService = mock(FastIntentService.class);
-		RuntimeConfigCompatibilityAdapter adapter = mock(RuntimeConfigCompatibilityAdapter.class);
+		RuntimeConfigView adapter = mock(RuntimeConfigView.class);
 		when(adapter.fastIntentEnabled()).thenReturn(true);
 
 		Experience matched = new Experience();
@@ -121,7 +121,7 @@ class AssistantIntentRouterTest {
 	void shouldFallbackToMainFlowWhenNoMatchedExperience() {
 		ExperienceProvider experienceProvider = mock(ExperienceProvider.class);
 		FastIntentService fastIntentService = mock(FastIntentService.class);
-		RuntimeConfigCompatibilityAdapter adapter = mock(RuntimeConfigCompatibilityAdapter.class);
+		RuntimeConfigView adapter = mock(RuntimeConfigView.class);
 		when(adapter.fastIntentEnabled()).thenReturn(true);
 		when(experienceProvider.query(any(ExperienceQuery.class), any(ExperienceQueryContext.class)))
 				.thenReturn(List.of(new Experience()));
@@ -137,3 +137,4 @@ class AssistantIntentRouterTest {
 	}
 
 }
+

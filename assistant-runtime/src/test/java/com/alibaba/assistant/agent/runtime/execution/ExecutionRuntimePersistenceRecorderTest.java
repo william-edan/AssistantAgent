@@ -28,7 +28,11 @@ import com.alibaba.assistant.agent.execution.persistence.ExecutionRun;
 import com.alibaba.assistant.agent.execution.persistence.ExecutionRunService;
 import com.alibaba.assistant.agent.execution.persistence.ExecutionStep;
 import com.alibaba.assistant.agent.execution.persistence.ExecutionStepService;
+import com.alibaba.assistant.agent.runtime.agent.AssistantStateKeys;
 import com.alibaba.assistant.agent.runtime.compiler.RuntimeArtifact;
+import com.alibaba.assistant.agent.runtime.context.RuntimeSpaceResolver;
+import com.alibaba.assistant.agent.controlplane.space.PlatformSpace;
+import com.alibaba.assistant.agent.controlplane.space.PlatformSpaceService;
 import com.alibaba.assistant.agent.runtime.registry.PublishedToolDescriptor;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
@@ -129,6 +133,58 @@ class ExecutionRuntimePersistenceRecorderTest {
     }
 
     @Test
+    void shouldFallbackToSpaceIdFromFlowContextWhenArtifactMetadataMissing() {
+        ExecutionRunService executionRunService = mock(ExecutionRunService.class);
+        ExecutionStepService executionStepService = mock(ExecutionStepService.class);
+        ApprovalRequestService approvalRequestService = mock(ApprovalRequestService.class);
+        AuditEventService auditEventService = mock(AuditEventService.class);
+        ExecutionRuntimePersistenceRecorder recorder = new ExecutionRuntimePersistenceRecorder(
+                executionRunService,
+                executionStepService,
+                approvalRequestService,
+                auditEventService,
+                new ObjectMapper());
+        when(executionRunService.findLatestByRunId("RUN-1")).thenReturn(Optional.empty());
+        when(executionStepService.findByRunIdAndStepId("RUN-1", "create_leave")).thenReturn(Optional.empty());
+        when(executionStepService.findByRunIdAndStepId("RUN-1", "submit_approval")).thenReturn(Optional.empty());
+
+        recorder.record(descriptor(null), flowContext(88L), successfulResult(), successfulEvents());
+
+        ArgumentCaptor<ExecutionRun> runCaptor = ArgumentCaptor.forClass(ExecutionRun.class);
+        verify(executionRunService).save(runCaptor.capture());
+        assertEquals(88L, runCaptor.getValue().getSpaceId());
+    }
+
+    @Test
+    void shouldFallbackToConfiguredDefaultSpaceWhenFlowContextHasNoSpace() {
+        ExecutionRunService executionRunService = mock(ExecutionRunService.class);
+        ExecutionStepService executionStepService = mock(ExecutionStepService.class);
+        ApprovalRequestService approvalRequestService = mock(ApprovalRequestService.class);
+        AuditEventService auditEventService = mock(AuditEventService.class);
+        PlatformSpaceService platformSpaceService = mock(PlatformSpaceService.class);
+        PlatformSpace platformSpace = new PlatformSpace();
+        platformSpace.setId(31L);
+        platformSpace.setSpaceCode("default");
+        when(platformSpaceService.resolveDefaultRuntimeSpace("prod")).thenReturn(Optional.of(platformSpace));
+        ExecutionRuntimePersistenceRecorder recorder = new ExecutionRuntimePersistenceRecorder(
+                executionRunService,
+                executionStepService,
+                approvalRequestService,
+                auditEventService,
+                new ObjectMapper(),
+                new RuntimeSpaceResolver(platformSpaceService, "prod"));
+        when(executionRunService.findLatestByRunId("RUN-1")).thenReturn(Optional.empty());
+        when(executionStepService.findByRunIdAndStepId("RUN-1", "create_leave")).thenReturn(Optional.empty());
+        when(executionStepService.findByRunIdAndStepId("RUN-1", "submit_approval")).thenReturn(Optional.empty());
+
+        recorder.record(descriptor(null), flowContext(), successfulResult(), successfulEvents());
+
+        ArgumentCaptor<ExecutionRun> runCaptor = ArgumentCaptor.forClass(ExecutionRun.class);
+        verify(executionRunService).save(runCaptor.capture());
+        assertEquals(31L, runCaptor.getValue().getSpaceId());
+    }
+
+    @Test
     void shouldPersistApprovalRequestWhenExecutionWaitsForApproval() {
         ExecutionRunService executionRunService = mock(ExecutionRunService.class);
         ExecutionStepService executionStepService = mock(ExecutionStepService.class);
@@ -209,7 +265,42 @@ class ExecutionRuntimePersistenceRecorderTest {
         assertEquals("COMPLETED", stepCaptor.getValue().getStatus());
     }
 
+    @Test
+    void shouldGenerateDistinctAuditEventIdsForResumedExecution() {
+        ExecutionRunService executionRunService = mock(ExecutionRunService.class);
+        ExecutionStepService executionStepService = mock(ExecutionStepService.class);
+        ApprovalRequestService approvalRequestService = mock(ApprovalRequestService.class);
+        AuditEventService auditEventService = mock(AuditEventService.class);
+        ExecutionRuntimePersistenceRecorder recorder = new ExecutionRuntimePersistenceRecorder(
+                executionRunService,
+                executionStepService,
+                approvalRequestService,
+                auditEventService,
+                new ObjectMapper());
+
+        ExecutionRun existingRun = new ExecutionRun();
+        existingRun.setId(10L);
+        existingRun.setRunId("RUN-1");
+        existingRun.setStatus("WAITING_APPROVAL");
+        existingRun.setPausedStepId("submit_approval");
+        existingRun.setApprovalRequestId("RUN-1:submit_approval");
+        when(executionRunService.findLatestByRunId("RUN-1")).thenReturn(Optional.of(existingRun));
+        when(executionStepService.findByRunIdAndStepId("RUN-1", "submit_approval"))
+                .thenReturn(Optional.of(new ExecutionStep()));
+
+        recorder.record(descriptor(), flowContext(), resumedResult(), resumedEvents());
+
+        ArgumentCaptor<AuditEvent> auditCaptor = ArgumentCaptor.forClass(AuditEvent.class);
+        verify(auditEventService, times(4)).save(auditCaptor.capture());
+        List<String> eventIds = auditCaptor.getAllValues().stream().map(AuditEvent::getEventId).toList();
+        assertTrue(eventIds.stream().noneMatch(id -> "RUN-1:1".equals(id) || "RUN-1:2".equals(id)
+                || "RUN-1:3".equals(id) || "RUN-1:4".equals(id)));
+    }
     private PublishedToolDescriptor descriptor() {
+        return descriptor(1L);
+    }
+
+    private PublishedToolDescriptor descriptor(Long spaceId) {
         RuntimeArtifact.ActionBinding action = new RuntimeArtifact.ActionBinding(
                 1L,
                 "oa.leave.create",
@@ -220,12 +311,11 @@ class ExecutionRuntimePersistenceRecorderTest {
                 null,
                 null,
                 null,
-                null,
                 "medium",
                 null,
                 "write",
-                null,
-                1);
+                1
+        );
         RuntimeArtifact.StepBinding createLeave = new RuntimeArtifact.StepBinding(
                 "create_leave",
                 "创建请假记录",
@@ -240,12 +330,9 @@ class ExecutionRuntimePersistenceRecorderTest {
                 null,
                 null,
                 null,
-                null,
-                null,
-                null,
-                null,
                 1,
-                action);
+                action
+        );
         RuntimeArtifact.StepBinding submitApproval = new RuntimeArtifact.StepBinding(
                 "submit_approval",
                 "提交审批",
@@ -259,18 +346,15 @@ class ExecutionRuntimePersistenceRecorderTest {
                 null,
                 null,
                 null,
-                null,
-                null,
                 "{\"enabled\":true,\"channel\":\"controlplane\"}",
-                null,
-                null,
                 2,
-                action);
+                action
+        );
         FlowDefinition flowDefinition = new FlowDefinition();
         flowDefinition.setEntry(List.of("create_leave"));
         flowDefinition.setTerminal(List.of("submit_approval"));
         return PublishedToolDescriptor.forArtifact(
-                "artifact-catalog",
+                "tool-meta-catalog",
                 "workflow:oa.leave.apply",
                 "请假申请",
                 null,
@@ -278,7 +362,7 @@ class ExecutionRuntimePersistenceRecorderTest {
                 false,
                 "gougu_oa",
                 new RuntimeArtifact(
-                        1L,
+                        spaceId,
                         "oa.leave.apply",
                         RuntimeArtifact.ArtifactType.WORKFLOW,
                         "请假申请",
@@ -296,7 +380,18 @@ class ExecutionRuntimePersistenceRecorderTest {
     }
 
     private FlowContext flowContext() {
-        FlowContext context = new FlowContext(Map.of("reason", "事假"));
+        return flowContext(null);
+    }
+
+    private FlowContext flowContext(Long spaceId) {
+        Map<String, Object> initialInputs = new LinkedHashMap<>();
+        initialInputs.put("reason", "事假");
+        if (spaceId != null) {
+            initialInputs.put(AssistantStateKeys.SPACE_ID, spaceId);
+            initialInputs.put("space_id", spaceId);
+            initialInputs.put("spaceId", spaceId);
+        }
+        FlowContext context = new FlowContext(initialInputs);
         context.setRunId("RUN-1");
         context.setAssistantUid("u1");
         context.setThreadId("T-1");
@@ -425,3 +520,5 @@ class ExecutionRuntimePersistenceRecorderTest {
                         ExecutionEventType.RUN_COMPLETED, ExecutionLifecycleStatus.COMPLETED, base.plusSeconds(3), Map.of("finalOutputs", Map.of("message", "approved"))));
     }
 }
+
+

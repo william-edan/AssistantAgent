@@ -19,7 +19,7 @@ import com.alibaba.assistant.agent.controlplane.toolregistry.ToolMeta;
 import com.alibaba.assistant.agent.prompt.PromptContribution;
 import com.alibaba.assistant.agent.prompt.PromptContributorContext;
 import com.alibaba.assistant.agent.runtime.agent.AssistantStateKeys;
-import com.alibaba.assistant.agent.runtime.config.RuntimeConfigCompatibilityAdapter;
+import com.alibaba.assistant.agent.runtime.config.RuntimeConfigView;
 import com.alibaba.assistant.agent.slot.SlotSchemaParser;
 import com.alibaba.assistant.agent.slot.model.SlotAskMode;
 import com.alibaba.assistant.agent.slot.model.SlotDefinition;
@@ -45,7 +45,7 @@ class ActionBriefContributorTest {
 
 	@Test
 	void shouldSkipWhenDynamicPromptDisabled() {
-		RuntimeConfigCompatibilityAdapter adapter = mock(RuntimeConfigCompatibilityAdapter.class);
+		RuntimeConfigView adapter = mock(RuntimeConfigView.class);
 		SlotSchemaParser parser = mock(SlotSchemaParser.class);
 		when(adapter.promptDynamicEnabled()).thenReturn(false);
 
@@ -55,7 +55,7 @@ class ActionBriefContributorTest {
 
 	@Test
 	void shouldRenderActionBriefWithCollectedAndMissingSlots() {
-		RuntimeConfigCompatibilityAdapter adapter = mock(RuntimeConfigCompatibilityAdapter.class);
+		RuntimeConfigView adapter = mock(RuntimeConfigView.class);
 		SlotSchemaParser parser = mock(SlotSchemaParser.class);
 		when(adapter.promptDynamicEnabled()).thenReturn(true);
 
@@ -94,7 +94,7 @@ class ActionBriefContributorTest {
 
 	@Test
 	void shouldPreserveArtifactSnapshotMapFieldsForActionBrief() {
-		RuntimeConfigCompatibilityAdapter adapter = mock(RuntimeConfigCompatibilityAdapter.class);
+		RuntimeConfigView adapter = mock(RuntimeConfigView.class);
 		SlotSchemaParser parser = mock(SlotSchemaParser.class);
 		when(adapter.promptDynamicEnabled()).thenReturn(true);
 
@@ -107,7 +107,6 @@ class ActionBriefContributorTest {
 		matchedSnapshot.put("description", "发起请假流程");
 		matchedSnapshot.put("systemCode", "oa");
 		matchedSnapshot.put("slotSchema", "{\"slots\":[{\"name\":\"reason\",\"type\":\"string\",\"required\":true}]}");
-		matchedSnapshot.put("requestSchema", null);
 		matchedSnapshot.put("riskLevel", "HIGH");
 		matchedSnapshot.put("requiresConfirm", true);
 
@@ -128,7 +127,7 @@ class ActionBriefContributorTest {
 
 	@Test
 	void shouldDeferInferredSlotUntilSourcesAreCollected() {
-		RuntimeConfigCompatibilityAdapter adapter = mock(RuntimeConfigCompatibilityAdapter.class);
+		RuntimeConfigView adapter = mock(RuntimeConfigView.class);
 		SlotSchemaParser parser = mock(SlotSchemaParser.class);
 		when(adapter.promptDynamicEnabled()).thenReturn(true);
 
@@ -164,7 +163,7 @@ class ActionBriefContributorTest {
 
 	@Test
 	void shouldIncludeInferredSlotInFollowUpAfterSourcesAreCollectedButStillMissing() {
-		RuntimeConfigCompatibilityAdapter adapter = mock(RuntimeConfigCompatibilityAdapter.class);
+		RuntimeConfigView adapter = mock(RuntimeConfigView.class);
 		SlotSchemaParser parser = mock(SlotSchemaParser.class);
 		when(adapter.promptDynamicEnabled()).thenReturn(true);
 
@@ -238,3 +237,4 @@ class ActionBriefContributorTest {
 	}
 
 }
+

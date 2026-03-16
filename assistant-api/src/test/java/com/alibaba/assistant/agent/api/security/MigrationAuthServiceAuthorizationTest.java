@@ -57,6 +57,9 @@ class MigrationAuthServiceAuthorizationTest {
     @Mock
     private ValueOperations<String, String> valueOperations;
 
+    @Mock
+    private SystemIdentityBindingService systemIdentityBindingService;
+
     private MigrationAuthService authService;
 
     private final Map<String, String> redisSessionStore = new LinkedHashMap<>();
@@ -68,6 +71,7 @@ class MigrationAuthServiceAuthorizationTest {
                 localUserGrantService,
                 stringRedisTemplate,
                 new ObjectMapper(),
+                systemIdentityBindingService,
                 "assistant-agent",
                 "gougu_oa",
                 7200,

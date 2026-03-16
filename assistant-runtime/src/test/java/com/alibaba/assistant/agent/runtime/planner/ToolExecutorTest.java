@@ -15,437 +15,260 @@
  */
 package com.alibaba.assistant.agent.runtime.planner;
 
-import com.alibaba.assistant.agent.controlplane.space.PlatformSpaceService;
-import com.alibaba.assistant.agent.controlplane.toolregistry.ToolMeta;
-import com.alibaba.assistant.agent.controlplane.toolregistry.ToolMetaService;
-import com.alibaba.assistant.agent.execution.flow.DAGFlowExecutor;
-import com.alibaba.assistant.agent.execution.flow.FlowContext;
-import com.alibaba.assistant.agent.execution.flow.FlowDefinitionConverter;
-import com.alibaba.assistant.agent.execution.model.StepConfig;
-import com.alibaba.assistant.agent.execution.model.StepResult;
-import com.alibaba.assistant.agent.execution.step.HttpStepExecutor;
+import com.alibaba.assistant.agent.common.enums.Language;
+import com.alibaba.assistant.agent.common.tools.CodeactTool;
+import com.alibaba.assistant.agent.common.tools.CodeactToolMetadata;
+import com.alibaba.assistant.agent.common.tools.DefaultCodeactToolMetadata;
 import com.alibaba.assistant.agent.runtime.agent.AssistantStateKeys;
 import com.alibaba.assistant.agent.runtime.compiler.RuntimeArtifact;
 import com.alibaba.assistant.agent.runtime.execution.ArtifactRuntimeExecutor;
 import com.alibaba.assistant.agent.runtime.registry.ArtifactPublicationLookupService;
-import com.alibaba.assistant.agent.runtime.registry.PublicationScopeResolver;
 import com.alibaba.assistant.agent.runtime.registry.PublishedToolDescriptor;
 import com.alibaba.cloud.ai.graph.OverAllState;
+import com.alibaba.cloud.ai.graph.agent.interceptor.ToolInterceptor;
 import com.alibaba.cloud.ai.graph.agent.tools.ToolContextConstants;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import ch.qos.logback.classic.spi.ILoggingEvent;
-import ch.qos.logback.core.read.ListAppender;
 import org.junit.jupiter.api.Test;
-import org.mockito.ArgumentCaptor;
-import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.model.ToolContext;
+import org.springframework.ai.tool.definition.DefaultToolDefinition;
+import org.springframework.ai.tool.definition.ToolDefinition;
 
 import java.util.Collections;
-import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Optional;
-import java.util.stream.Collectors;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyMap;
-import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.never;
-import static org.mockito.Mockito.times;
-import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class ToolExecutorTest {
 
     @Test
-    void shouldReturnErrorWhenToolMetaNotFound() {
-        ToolMetaService toolMetaService = mock(ToolMetaService.class);
-        FlowDefinitionConverter flowDefinitionConverter = mock(FlowDefinitionConverter.class);
-        DAGFlowExecutor dagFlowExecutor = mock(DAGFlowExecutor.class);
-        HttpStepExecutor httpStepExecutor = mock(HttpStepExecutor.class);
-        ObjectMapper objectMapper = new ObjectMapper();
-
-        when(toolMetaService.findLatestEnabledByToolCode("default", "current_user")).thenReturn(Optional.empty());
+    void shouldReturnErrorWhenPublishedArtifactNotFound() {
+        ArtifactPublicationLookupService lookupService = mock(ArtifactPublicationLookupService.class);
+        when(lookupService.findPublishedArtifact(eq("oa.current.user"), isNull()))
+                .thenReturn(Optional.empty());
 
         ToolExecutor executor = new ToolExecutor(
-                toolMetaService,
-                flowDefinitionConverter,
-                dagFlowExecutor,
-                httpStepExecutor,
-                objectMapper,
-                Collections.emptyList());
+                new ObjectMapper(),
+                Collections.<ToolInterceptor>emptyList(),
+                lookupService,
+                mock(ArtifactRuntimeExecutor.class));
 
-        ToolExecutor.ExecutionResult result = executor.execute("default", "current_user", Map.of(), null);
+        ToolExecutor.ExecutionResult result = executor.execute("default", "oa.current.user", Map.of(), null);
 
         assertFalse(result.success());
         assertTrue(result.errorMessage().contains("not found"));
     }
 
     @Test
-    void shouldExecuteSimpleModeAndExtractOutputs() {
-        ToolMetaService toolMetaService = mock(ToolMetaService.class);
-        FlowDefinitionConverter flowDefinitionConverter = mock(FlowDefinitionConverter.class);
-        DAGFlowExecutor dagFlowExecutor = mock(DAGFlowExecutor.class);
-        HttpStepExecutor httpStepExecutor = mock(HttpStepExecutor.class);
-        ObjectMapper objectMapper = new ObjectMapper();
+    void shouldExecutePublishedArtifactAndProjectRiskSnapshotIntoState() {
+        ArtifactPublicationLookupService lookupService = mock(ArtifactPublicationLookupService.class);
+        ArtifactRuntimeExecutor artifactRuntimeExecutor = mock(ArtifactRuntimeExecutor.class);
 
-        ToolMeta currentUserTool = new ToolMeta();
-        currentUserTool.setToolCode("current_user");
-        currentUserTool.setSystemCode("oa");
-        currentUserTool.setApiEndpoint("/api/current_user");
-        currentUserTool.setHttpMethod("GET");
-        currentUserTool.setContentType("application/json");
-        when(toolMetaService.findLatestEnabledByToolCode("default", "current_user"))
-                .thenReturn(Optional.of(currentUserTool));
+        RuntimeArtifact artifact = artifact("oa.leave.apply", "HIGH");
+        PublishedToolDescriptor descriptor = PublishedToolDescriptor.forArtifact(
+                "tool-meta-catalog",
+                "oa.leave.apply@1",
+                "Leave apply",
+                null,
+                null,
+                false,
+                "oa",
+                artifact);
 
-        when(httpStepExecutor.execute(any(StepConfig.class), any(FlowContext.class)))
-                .thenReturn(StepResult.success(Map.of("employeeId", "E001", "name", "Alice")));
+        when(lookupService.findPublishedArtifact(eq("oa.leave.apply"), any()))
+                .thenReturn(Optional.of(descriptor));
+
+        AtomicReference<Map<String, Object>> capturedSnapshot = new AtomicReference<>();
+        when(artifactRuntimeExecutor.execute(eq(descriptor), anyMap(), any())).thenAnswer(invocation -> {
+            ToolContext context = invocation.getArgument(2);
+            OverAllState state = (OverAllState) context.getContext().get(ToolContextConstants.AGENT_STATE_CONTEXT_KEY);
+            @SuppressWarnings("unchecked")
+            Map<String, Object> snapshot = state.value(AssistantStateKeys.MATCHED_TOOL_META, Map.class).orElse(null);
+            capturedSnapshot.set(snapshot);
+            return Map.of(
+                    "success", true,
+                    "finalOutputs", Map.of("leaveId", "L-001"));
+        });
 
         ToolExecutor executor = new ToolExecutor(
-                toolMetaService,
-                flowDefinitionConverter,
-                dagFlowExecutor,
-                httpStepExecutor,
-                objectMapper,
-                Collections.emptyList());
+                new ObjectMapper(),
+                Collections.<ToolInterceptor>emptyList(),
+                lookupService,
+                artifactRuntimeExecutor);
 
         OverAllState state = new OverAllState();
         state.updateState(Map.of(
-                AssistantStateKeys.SYSTEM_CODE, "oa",
-                AssistantStateKeys.ASSISTANT_UID, "u1",
+                AssistantStateKeys.MATCHED_TOOL_META, Map.of("toolCode", "previous.tool"),
                 AssistantStateKeys.THREAD_ID, "thread-1"));
-        ToolContext context = new ToolContext(Map.of(ToolContextConstants.AGENT_STATE_CONTEXT_KEY, state));
+        ToolContext toolContext = new ToolContext(Map.of(ToolContextConstants.AGENT_STATE_CONTEXT_KEY, state));
 
-        ToolExecutor.ExecutionResult result = executor.execute("default", "current_user", Map.of(), context);
+        ToolExecutor.ExecutionResult result = executor.execute("default", "oa.leave.apply", Map.of(), toolContext);
+
+        assertTrue(result.success());
+        assertEquals("L-001", result.outputFields().get("leaveId"));
+        assertNotNull(capturedSnapshot.get());
+        assertEquals("oa.leave.apply", capturedSnapshot.get().get("toolCode"));
+        assertEquals("HIGH", capturedSnapshot.get().get("riskLevel"));
+        assertEquals(Boolean.TRUE, capturedSnapshot.get().get("requiresConfirm"));
+        assertEquals(Map.of("toolCode", "previous.tool"), state.value(AssistantStateKeys.MATCHED_TOOL_META, Map.class).orElse(null));
+    }
+
+    @Test
+    void shouldExecutePublishedDirectToolAndExtractDataPayload() {
+        ArtifactPublicationLookupService lookupService = mock(ArtifactPublicationLookupService.class);
+        ToolDefinition definition = DefaultToolDefinition.builder()
+                .name("oa.current.user")
+                .description("Current user")
+                .inputSchema("{\"type\":\"object\",\"properties\":{}}")
+                .build();
+        CodeactToolMetadata metadata = DefaultCodeactToolMetadata.builder()
+                .addSupportedLanguage(Language.PYTHON)
+                .displayName("Current user")
+                .addAlias("oa.current.user")
+                .build();
+        AtomicReference<String> capturedInput = new AtomicReference<>();
+        StubCodeactTool directTool = new StubCodeactTool(definition, metadata,
+                "{\"success\":true,\"data\":{\"employeeId\":\"E001\",\"name\":\"Alice\"}}",
+                capturedInput);
+        PublishedToolDescriptor descriptor = new PublishedToolDescriptor(
+                "tool-meta-catalog",
+                "oa.current.user@1",
+                "Current user",
+                null,
+                null,
+                false,
+                "oa",
+                null,
+                directTool);
+
+        when(lookupService.findPublishedArtifact(eq("oa.current.user"), isNull()))
+                .thenReturn(Optional.of(descriptor));
+
+        ToolExecutor executor = new ToolExecutor(
+                new ObjectMapper(),
+                Collections.<ToolInterceptor>emptyList(),
+                lookupService,
+                null);
+
+        ToolExecutor.ExecutionResult result = executor.execute(
+                "default",
+                "oa.current.user",
+                Map.of("assistantUid", "u1", "systemCode", "oa"),
+                null);
 
         assertTrue(result.success());
         assertEquals("E001", result.outputFields().get("employeeId"));
         assertEquals("Alice", result.outputFields().get("name"));
-        verify(httpStepExecutor, times(1)).execute(any(StepConfig.class), any(FlowContext.class));
+        assertNotNull(capturedInput.get());
+        assertTrue(capturedInput.get().contains("\"toolCode\":\"oa.current.user\""));
+        assertTrue(capturedInput.get().contains("\"params\""));
     }
 
     @Test
-    void shouldUseCamelCaseIdentityFromArgumentsWhenStateMissing() {
-        ToolMetaService toolMetaService = mock(ToolMetaService.class);
-        FlowDefinitionConverter flowDefinitionConverter = mock(FlowDefinitionConverter.class);
-        DAGFlowExecutor dagFlowExecutor = mock(DAGFlowExecutor.class);
-        HttpStepExecutor httpStepExecutor = mock(HttpStepExecutor.class);
-        ObjectMapper objectMapper = new ObjectMapper();
-
-        ToolMeta currentUserTool = new ToolMeta();
-        currentUserTool.setToolCode("current_user");
-        currentUserTool.setApiEndpoint("/api/current_user");
-        currentUserTool.setHttpMethod("GET");
-        currentUserTool.setContentType("application/json");
-        when(toolMetaService.findLatestEnabledByToolCode("default", "current_user"))
-                .thenReturn(Optional.of(currentUserTool));
-
-        when(httpStepExecutor.execute(any(StepConfig.class), any(FlowContext.class)))
-                .thenReturn(StepResult.success(Map.of("employeeId", "E001")));
-
-        ToolExecutor executor = new ToolExecutor(
-                toolMetaService,
-                flowDefinitionConverter,
-                dagFlowExecutor,
-                httpStepExecutor,
-                objectMapper,
-                Collections.emptyList());
-
-        Map<String, Object> args = Map.of(
-                "assistantUid", "u1",
-                "systemCode", "oa");
-        ToolExecutor.ExecutionResult result = executor.execute("default", "current_user", args, null);
-
-        assertTrue(result.success());
-        ArgumentCaptor<FlowContext> contextCaptor = ArgumentCaptor.forClass(FlowContext.class);
-        verify(httpStepExecutor, times(1)).execute(any(StepConfig.class), contextCaptor.capture());
-        assertEquals("oa", contextCaptor.getValue().getSystemCode());
-        assertEquals("u1", contextCaptor.getValue().getAssistantUid());
-    }
-
-    @Test
-    void shouldPreferPublishedArtifactBeforeLegacyToolMetaFallback() {
-        ToolMetaService toolMetaService = mock(ToolMetaService.class);
-        FlowDefinitionConverter flowDefinitionConverter = mock(FlowDefinitionConverter.class);
-        DAGFlowExecutor dagFlowExecutor = mock(DAGFlowExecutor.class);
-        HttpStepExecutor httpStepExecutor = mock(HttpStepExecutor.class);
+    void shouldReturnErrorWhenArtifactExecutorUnavailableForArtifactPublication() {
         ArtifactPublicationLookupService lookupService = mock(ArtifactPublicationLookupService.class);
-        ArtifactRuntimeExecutor artifactRuntimeExecutor = mock(ArtifactRuntimeExecutor.class);
-        ObjectMapper objectMapper = new ObjectMapper();
-
-        PublishedToolDescriptor descriptor = descriptor("oa.current.user", "oa");
-        when(lookupService.findPublishedArtifact(eq("oa.current.user"), any()))
+        PublishedToolDescriptor descriptor = PublishedToolDescriptor.forArtifact(
+                "tool-meta-catalog",
+                "oa.leave.apply@1",
+                "Leave apply",
+                null,
+                null,
+                false,
+                "oa",
+                artifact("oa.leave.apply", "LOW"));
+        when(lookupService.findPublishedArtifact(eq("oa.leave.apply"), isNull()))
                 .thenReturn(Optional.of(descriptor));
-        when(toolMetaService.findLatestEnabledByToolCode("default", "oa.current.user"))
-                .thenReturn(Optional.of(legacyToolMeta("oa.current.user")));
-        when(artifactRuntimeExecutor.execute(eq(descriptor), anyMap(), any()))
-                .thenReturn(Map.of(
-                        "success", true,
-                        "finalOutputs", Map.of("employeeId", "E001")));
 
         ToolExecutor executor = new ToolExecutor(
-                toolMetaService,
-                flowDefinitionConverter,
-                dagFlowExecutor,
-                httpStepExecutor,
-                objectMapper,
-                Collections.emptyList(),
+                new ObjectMapper(),
+                Collections.<ToolInterceptor>emptyList(),
                 lookupService,
-                artifactRuntimeExecutor,
                 null);
 
-        ToolExecutor.ExecutionResult result = executor.execute("default", "oa.current.user", Map.of(), null);
-
-        assertTrue(result.success());
-        assertEquals("E001", result.outputFields().get("employeeId"));
-        verify(artifactRuntimeExecutor, times(1)).execute(eq(descriptor), anyMap(), any());
-        verify(toolMetaService, never()).findLatestEnabledByToolCode(anyString(), eq("oa.current.user"));
-        verify(httpStepExecutor, never()).execute(any(StepConfig.class), any(FlowContext.class));
-    }
-
-    @Test
-    void shouldNotFallbackToLegacyToolMetaWhenScopedCallDefaultsToArtifactOnly() {
-        ToolMetaService toolMetaService = mock(ToolMetaService.class);
-        FlowDefinitionConverter flowDefinitionConverter = mock(FlowDefinitionConverter.class);
-        DAGFlowExecutor dagFlowExecutor = mock(DAGFlowExecutor.class);
-        HttpStepExecutor httpStepExecutor = mock(HttpStepExecutor.class);
-        ArtifactPublicationLookupService lookupService = mock(ArtifactPublicationLookupService.class);
-        ArtifactRuntimeExecutor artifactRuntimeExecutor = mock(ArtifactRuntimeExecutor.class);
-        PublicationScopeResolver publicationScopeResolver = new PublicationScopeResolver(mock(PlatformSpaceService.class));
-        ObjectMapper objectMapper = new ObjectMapper();
-        ch.qos.logback.classic.Logger logger = (ch.qos.logback.classic.Logger) LoggerFactory.getLogger(ToolExecutor.class);
-        ListAppender<ILoggingEvent> appender = new ListAppender<>();
-        appender.start();
-        logger.addAppender(appender);
-
-        when(lookupService.findPublishedArtifact(eq("gougu_oa.current_user"), any()))
-                .thenReturn(Optional.empty());
-        when(toolMetaService.findLatestEnabledByToolCode("default", "gougu_oa.current_user"))
-                .thenReturn(Optional.of(legacyToolMeta("gougu_oa.current_user")));
-
-        ToolExecutor executor = new ToolExecutor(
-                toolMetaService,
-                flowDefinitionConverter,
-                dagFlowExecutor,
-                httpStepExecutor,
-                objectMapper,
-                Collections.emptyList(),
-                lookupService,
-                artifactRuntimeExecutor,
-                publicationScopeResolver);
-
-        ToolExecutor.ExecutionResult result = executor.execute(
-                "default",
-                "gougu_oa.current_user",
-                Map.of(),
-                scopedToolContext(false));
+        ToolExecutor.ExecutionResult result = executor.execute("default", "oa.leave.apply", Map.of(), null);
 
         assertFalse(result.success());
-        assertTrue(result.errorMessage().contains("not found"));
-        verify(toolMetaService, never()).findLatestEnabledByToolCode(anyString(), eq("gougu_oa.current_user"));
-        verify(artifactRuntimeExecutor, never()).execute(any(), anyMap(), any());
-        }
-
-    @Test
-    void shouldLogWarningWhenScopedCallFallsBackToLegacyToolMeta() {
-        ToolMetaService toolMetaService = mock(ToolMetaService.class);
-        FlowDefinitionConverter flowDefinitionConverter = mock(FlowDefinitionConverter.class);
-        DAGFlowExecutor dagFlowExecutor = mock(DAGFlowExecutor.class);
-        HttpStepExecutor httpStepExecutor = mock(HttpStepExecutor.class);
-        ArtifactPublicationLookupService lookupService = mock(ArtifactPublicationLookupService.class);
-        ArtifactRuntimeExecutor artifactRuntimeExecutor = mock(ArtifactRuntimeExecutor.class);
-        PublicationScopeResolver publicationScopeResolver = new PublicationScopeResolver(mock(PlatformSpaceService.class));
-        ObjectMapper objectMapper = new ObjectMapper();
-        ch.qos.logback.classic.Logger logger = (ch.qos.logback.classic.Logger) LoggerFactory.getLogger(ToolExecutor.class);
-        ListAppender<ILoggingEvent> appender = new ListAppender<>();
-        appender.start();
-        logger.addAppender(appender);
-
-        try {
-            when(lookupService.findPublishedArtifact(eq("gougu_oa.current_user"), any()))
-                    .thenReturn(Optional.empty());
-            when(toolMetaService.findLatestEnabledByToolCode("default", "gougu_oa.current_user"))
-                    .thenReturn(Optional.of(legacyToolMeta("gougu_oa.current_user")));
-            when(httpStepExecutor.execute(any(StepConfig.class), any(FlowContext.class)))
-                    .thenReturn(StepResult.success(Map.of("employeeId", "E001")));
-
-            ToolExecutor executor = new ToolExecutor(
-                    toolMetaService,
-                    flowDefinitionConverter,
-                    dagFlowExecutor,
-                    httpStepExecutor,
-                    objectMapper,
-                    Collections.emptyList(),
-                    lookupService,
-                    artifactRuntimeExecutor,
-                    publicationScopeResolver);
-
-            ToolExecutor.ExecutionResult result = executor.execute(
-                    "default",
-                    "gougu_oa.current_user",
-                    Map.of(),
-                    scopedToolContext(true));
-
-            assertTrue(result.success());
-            String logs = appender.list.stream()
-                    .map(ILoggingEvent::getFormattedMessage)
-                    .collect(Collectors.joining("\n"));
-            assertTrue(logs.contains("ToolExecutor#execute - compatibility fallback to legacy ToolMeta"));
-            assertTrue(logs.contains("mode=fallback"));
-            assertTrue(logs.contains("toolCode=gougu_oa.current_user"));
-        }
-        finally {
-            logger.detachAppender(appender);
-            appender.stop();
-        }
+        assertTrue(result.errorMessage().contains("Artifact dependency executor is unavailable"));
     }
 
-    @Test
-    void shouldProjectPublishedArtifactRiskDrivenConfirmationIntoMatchedToolMetaSnapshot() {
-        ToolMetaService toolMetaService = mock(ToolMetaService.class);
-        FlowDefinitionConverter flowDefinitionConverter = mock(FlowDefinitionConverter.class);
-        DAGFlowExecutor dagFlowExecutor = mock(DAGFlowExecutor.class);
-        HttpStepExecutor httpStepExecutor = mock(HttpStepExecutor.class);
-        ArtifactPublicationLookupService lookupService = mock(ArtifactPublicationLookupService.class);
-        ArtifactRuntimeExecutor artifactRuntimeExecutor = mock(ArtifactRuntimeExecutor.class);
-        ObjectMapper objectMapper = new ObjectMapper();
-
-        PublishedToolDescriptor descriptor = descriptor("oa.leave.apply", "oa", null, "HIGH", null);
-        when(lookupService.findPublishedArtifact(eq("oa.leave.apply"), any()))
-                .thenReturn(Optional.of(descriptor));
-        when(artifactRuntimeExecutor.execute(eq(descriptor), anyMap(), any()))
-                .thenAnswer(invocation -> {
-                    ToolContext runtimeContext = invocation.getArgument(2);
-                    OverAllState state = (OverAllState) runtimeContext.getContext()
-                            .get(ToolContextConstants.AGENT_STATE_CONTEXT_KEY);
-                    @SuppressWarnings("unchecked")
-                    Map<String, Object> matchedToolMeta = state.value(AssistantStateKeys.MATCHED_TOOL_META, Map.class)
-                            .orElse(null);
-                    assertTrue(matchedToolMeta != null);
-                    assertEquals("HIGH", matchedToolMeta.get("riskLevel"));
-                    assertEquals(Boolean.TRUE, matchedToolMeta.get("requiresConfirm"));
-                    return Map.of(
-                            "success", true,
-                            "finalOutputs", Map.of("requestId", "REQ-1"));
-                });
-
-        ToolExecutor executor = new ToolExecutor(
-                toolMetaService,
-                flowDefinitionConverter,
-                dagFlowExecutor,
-                httpStepExecutor,
-                objectMapper,
-                Collections.emptyList(),
-                lookupService,
-                artifactRuntimeExecutor,
-                null);
-
-        OverAllState state = new OverAllState();
-        ToolContext context = new ToolContext(Map.of(ToolContextConstants.AGENT_STATE_CONTEXT_KEY, state));
-
-        ToolExecutor.ExecutionResult result = executor.execute(
-                "default",
-                "oa.leave.apply",
-                Map.of("reason", "personal"),
-                context);
-
-        assertTrue(result.success());
-        assertEquals("REQ-1", result.outputFields().get("requestId"));
-        verify(artifactRuntimeExecutor, times(1)).execute(eq(descriptor), anyMap(), any());
-    }
-    private ToolMeta legacyToolMeta(String toolCode) {
-        ToolMeta toolMeta = new ToolMeta();
-        toolMeta.setToolCode(toolCode);
-        toolMeta.setSystemCode("gougu_oa");
-        toolMeta.setApiEndpoint("/api/current_user");
-        toolMeta.setHttpMethod("GET");
-        toolMeta.setContentType("application/json");
-        return toolMeta;
-    }
-
-    private ToolContext scopedToolContext(boolean allowLegacyFallback) {
-        OverAllState state = new OverAllState();
-        Map<String, Object> values = new LinkedHashMap<>();
-        values.put("tenant_id", "default");
-        values.put(AssistantStateKeys.SPACE_ID, 9L);
-        values.put(AssistantStateKeys.SPACE_ENVIRONMENT, "prod");
-        values.put(AssistantStateKeys.AGENT_APP_CODE, "finance-agent");
-        if (allowLegacyFallback) {
-            values.put("allow_legacy_fallback", true);
-        }
-        state.updateState(values);
-        return new ToolContext(Map.of(ToolContextConstants.AGENT_STATE_CONTEXT_KEY, state));
-    }
-
-    private PublishedToolDescriptor descriptor(String artifactCode, String systemCode) {
-        return descriptor(artifactCode, systemCode, null, null, null);
-    }
-
-    private PublishedToolDescriptor descriptor(
-            String artifactCode,
-            String systemCode,
-            String confirmationPolicyJson,
-            String riskLevel,
-            Long approvalPolicyId) {
-        RuntimeArtifact.Interaction interaction = confirmationPolicyJson != null
-                ? new RuntimeArtifact.Interaction(
-                        1L,
-                        artifactCode + ".interaction",
-                        null,
-                        null,
-                        null,
-                        null,
-                        confirmationPolicyJson,
-                        null)
-                : null;
-        Map<String, RuntimeArtifact.ActionBinding> actions = riskLevel != null || approvalPolicyId != null
-                ? Map.of("submit", actionBinding(artifactCode + ".submit", riskLevel, approvalPolicyId))
-                : Map.of();
-        RuntimeArtifact artifact = new RuntimeArtifact(
+    private static RuntimeArtifact artifact(String toolCode, String riskLevel) {
+        return new RuntimeArtifact(
                 1L,
-                artifactCode,
-                RuntimeArtifact.ArtifactType.WORKFLOW,
-                "Current User",
+                toolCode,
+                RuntimeArtifact.ArtifactType.ACTION,
+                "Artifact " + toolCode,
                 1,
                 null,
                 null,
                 null,
                 null,
-                interaction,
-                new com.alibaba.assistant.agent.execution.flow.FlowDefinition(),
-                actions,
+                new RuntimeArtifact.Interaction(1L, toolCode, null, null, null),
+                null,
+                Map.of("submit", new RuntimeArtifact.ActionBinding(
+                        1L,
+                        toolCode + ".submit",
+                        1L,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        riskLevel,
+                        null,
+                        null,
+                        1)),
                 Map.of());
-        return PublishedToolDescriptor.forArtifact(
-                "artifact-catalog",
-                "workflow:" + artifactCode,
-                "Current User",
-                null,
-                null,
-                false,
-                systemCode,
-                artifact);
     }
 
-    private RuntimeArtifact.ActionBinding actionBinding(String actionCode, String riskLevel, Long approvalPolicyId) {
-        return new RuntimeArtifact.ActionBinding(
-                1L,
-                actionCode,
-                1L,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                riskLevel,
-                approvalPolicyId,
-                null,
-                null,
-                1);
+    private static final class StubCodeactTool implements CodeactTool {
+
+        private final ToolDefinition toolDefinition;
+        private final CodeactToolMetadata metadata;
+        private final String response;
+        private final AtomicReference<String> capturedInput;
+
+        private StubCodeactTool(
+                ToolDefinition toolDefinition,
+                CodeactToolMetadata metadata,
+                String response,
+                AtomicReference<String> capturedInput) {
+            this.toolDefinition = toolDefinition;
+            this.metadata = metadata;
+            this.response = response;
+            this.capturedInput = capturedInput;
+        }
+
+        @Override
+        public String call(String toolInput) {
+            capturedInput.set(toolInput);
+            return response;
+        }
+
+        @Override
+        public String call(String toolInput, ToolContext toolContext) {
+            capturedInput.set(toolInput);
+            return response;
+        }
+
+        @Override
+        public ToolDefinition getToolDefinition() {
+            return toolDefinition;
+        }
+
+        @Override
+        public CodeactToolMetadata getCodeactMetadata() {
+            return metadata;
+        }
     }
 }

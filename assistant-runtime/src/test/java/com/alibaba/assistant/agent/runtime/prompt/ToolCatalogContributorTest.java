@@ -15,21 +15,14 @@
  */
 package com.alibaba.assistant.agent.runtime.prompt;
 
-import com.alibaba.assistant.agent.controlplane.toolregistry.ToolMeta;
-import com.alibaba.assistant.agent.controlplane.toolregistry.ToolMetaService;
 import com.alibaba.assistant.agent.execution.flow.FlowDefinition;
 import com.alibaba.assistant.agent.prompt.PromptContribution;
 import com.alibaba.assistant.agent.prompt.PromptContributorContext;
 import com.alibaba.assistant.agent.runtime.compiler.RuntimeArtifact;
-import com.alibaba.assistant.agent.runtime.config.RuntimeConfigCompatibilityAdapter;
+import com.alibaba.assistant.agent.runtime.config.RuntimeConfigView;
 import com.alibaba.assistant.agent.runtime.registry.ArtifactPublicationLookupService;
-import com.alibaba.assistant.agent.runtime.registry.PublicationScopeResolver;
 import com.alibaba.assistant.agent.runtime.registry.PublishedToolDescriptor;
-import com.alibaba.assistant.agent.runtime.registry.ToolPublicationProvider;
-import ch.qos.logback.classic.spi.ILoggingEvent;
-import ch.qos.logback.core.read.ListAppender;
 import org.junit.jupiter.api.Test;
-import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.messages.Message;
 import org.springframework.ai.chat.messages.SystemMessage;
 import org.springframework.ai.chat.messages.UserMessage;
@@ -38,7 +31,6 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.stream.Collectors;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -46,12 +38,7 @@ import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.anyMap;
-import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.never;
-import static org.mockito.Mockito.times;
-import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 class ToolCatalogContributorTest {
@@ -59,38 +46,25 @@ class ToolCatalogContributorTest {
     @Test
     void shouldSkipWhenDynamicPromptDisabled() {
         ArtifactPublicationLookupService artifactLookupService = mock(ArtifactPublicationLookupService.class);
-        ToolMetaService toolMetaService = mock(ToolMetaService.class);
-        RuntimeConfigCompatibilityAdapter adapter = mock(RuntimeConfigCompatibilityAdapter.class);
-        PublicationScopeResolver publicationScopeResolver = mock(PublicationScopeResolver.class);
+        RuntimeConfigView adapter = mock(RuntimeConfigView.class);
         when(adapter.promptDynamicEnabled()).thenReturn(false);
 
-        ToolCatalogContributor contributor = new ToolCatalogContributor(
-                artifactLookupService,
-                toolMetaService,
-                adapter,
-                publicationScopeResolver);
-        boolean shouldContribute = contributor.shouldContribute(context(Map.of()));
+        ToolCatalogContributor contributor = new ToolCatalogContributor(artifactLookupService, adapter);
 
-        assertFalse(shouldContribute);
+        assertFalse(contributor.shouldContribute(context(Map.of())));
     }
 
     @Test
-    void shouldRenderArtifactCatalogBeforeLegacyFallback() {
+    void shouldRenderOnlyUserVisiblePublishedArtifactCatalog() {
         ArtifactPublicationLookupService artifactLookupService = mock(ArtifactPublicationLookupService.class);
-        ToolMetaService toolMetaService = mock(ToolMetaService.class);
-        RuntimeConfigCompatibilityAdapter adapter = mock(RuntimeConfigCompatibilityAdapter.class);
-        PublicationScopeResolver publicationScopeResolver = mock(PublicationScopeResolver.class);
+        RuntimeConfigView adapter = mock(RuntimeConfigView.class);
         when(adapter.promptDynamicEnabled()).thenReturn(true);
         when(adapter.promptMaxToolsInPrompt()).thenReturn(1);
         when(artifactLookupService.listPublishedArtifacts(anyMap())).thenReturn(List.of(
-                descriptor("workflow:oa.leave.apply", artifact("oa.leave.apply", "请假申请")),
-                descriptor("workflow:oa.current.user", artifact("oa.current.user", "当前用户"))));
+                descriptor("workflow:oa.leave.apply", artifact("oa.leave.apply", "请假申请"), "ACTION", "USER", "DIRECT"),
+                descriptor("workflow:oa.current.user", artifact("oa.current.user", "当前用户"), "QUERY", "PLANNER", "COMPOSABLE")));
 
-        ToolCatalogContributor contributor = new ToolCatalogContributor(
-                artifactLookupService,
-                toolMetaService,
-                adapter,
-                publicationScopeResolver);
+        ToolCatalogContributor contributor = new ToolCatalogContributor(artifactLookupService, adapter);
         PromptContribution contribution = contributor.contribute(context(Map.of()));
 
         assertNotNull(contribution);
@@ -100,203 +74,41 @@ class ToolCatalogContributorTest {
         assertTrue(message.getText().contains("oa.leave.apply"));
         assertFalse(message.getText().contains("oa.current.user"));
         assertTrue(message.getText().contains("artifact_execute"));
-        assertTrue(message.getText().contains("1/2"));
-        verifyNoInteractions(toolMetaService);
     }
 
     @Test
-    void shouldFallbackToLegacyCatalogWhenNoArtifactPublicationExistsForUnscopedCall() {
+    void shouldReturnEmptyContributionWhenNothingUserVisible() {
         ArtifactPublicationLookupService artifactLookupService = mock(ArtifactPublicationLookupService.class);
-        ToolMetaService toolMetaService = mock(ToolMetaService.class);
-        RuntimeConfigCompatibilityAdapter adapter = mock(RuntimeConfigCompatibilityAdapter.class);
-        PublicationScopeResolver publicationScopeResolver = mock(PublicationScopeResolver.class);
+        RuntimeConfigView adapter = mock(RuntimeConfigView.class);
         when(adapter.promptDynamicEnabled()).thenReturn(true);
         when(adapter.promptMaxToolsInPrompt()).thenReturn(5);
-        when(artifactLookupService.listPublishedArtifacts(anyMap())).thenReturn(List.of());
-        when(publicationScopeResolver.resolve(anyMap())).thenReturn(scope(
-                "tenant-a",
-                null,
-                "prod",
-                null,
-                ToolPublicationProvider.SourceSelectionMode.MERGE,
-                List.of(),
-                List.of()));
-        when(toolMetaService.listEnabledByTenantAndSystem(eq("tenant-a"), eq("gougu_oa")))
-                .thenReturn(List.of(tool("gougu_oa.leave_apply", "请假申请", null)));
+        when(artifactLookupService.listPublishedArtifacts(anyMap())).thenReturn(List.of(
+                descriptor("workflow:oa.user.query", artifact("oa.user.query", "用户查询"), "QUERY", "PLANNER", "COMPOSABLE"),
+                descriptor("workflow:oa.manager.resolver", artifact("oa.manager.resolver", "直属领导解析"), "QUERY", "INTERNAL", "DEPENDENCY_ONLY")));
 
-        ToolCatalogContributor contributor = new ToolCatalogContributor(
-                artifactLookupService,
-                toolMetaService,
-                adapter,
-                publicationScopeResolver);
-        PromptContribution contribution = contributor.contribute(context(Map.of(
-                "tenant_id", "tenant-a",
-                "system_code", "gougu_oa")));
+        ToolCatalogContributor contributor = new ToolCatalogContributor(artifactLookupService, adapter);
+        PromptContribution contribution = contributor.contribute(context(Map.of()));
 
-        assertEquals(1, contribution.messagesToAppend().size());
-        verify(toolMetaService, times(1)).listEnabledByTenantAndSystem("tenant-a", "gougu_oa");
+        assertTrue(contribution.messagesToAppend().isEmpty());
     }
 
-    @Test
-    void shouldNotFallbackToLegacyCatalogWhenScopedCallDefaultsToArtifactOnly() {
-        ArtifactPublicationLookupService artifactLookupService = mock(ArtifactPublicationLookupService.class);
-        ToolMetaService toolMetaService = mock(ToolMetaService.class);
-        RuntimeConfigCompatibilityAdapter adapter = mock(RuntimeConfigCompatibilityAdapter.class);
-        PublicationScopeResolver publicationScopeResolver = mock(PublicationScopeResolver.class);
-        when(adapter.promptDynamicEnabled()).thenReturn(true);
-        when(adapter.promptMaxToolsInPrompt()).thenReturn(5);
-        when(artifactLookupService.listPublishedArtifacts(anyMap())).thenReturn(List.of());
-        when(publicationScopeResolver.resolve(anyMap())).thenReturn(scope(
-                "default",
-                9L,
-                "prod",
-                "finance-agent",
-                ToolPublicationProvider.SourceSelectionMode.EXCLUSIVE,
-                List.of("artifact-catalog"),
-                List.of("legacy-bridge")));
-
-        ToolCatalogContributor contributor = new ToolCatalogContributor(
-                artifactLookupService,
-                toolMetaService,
-                adapter,
-                publicationScopeResolver);
-        PromptContribution contribution = contributor.contribute(context(Map.of(
-                "tenant_id", "default",
-                "space_id", 9L,
-                "environment", "prod",
-                "agent_app_code", "finance-agent",
-                "system_code", "gougu_oa")));
-
-        assertEquals(0, contribution.messagesToAppend().size());
-        verify(toolMetaService, never()).listEnabledByTenantAndSystem("default", "gougu_oa");
-    }
-
-    @Test
-    void shouldFallbackToLegacyCatalogWhenScopedCallAllowsLegacyFallback() {
-        ArtifactPublicationLookupService artifactLookupService = mock(ArtifactPublicationLookupService.class);
-        ToolMetaService toolMetaService = mock(ToolMetaService.class);
-        RuntimeConfigCompatibilityAdapter adapter = mock(RuntimeConfigCompatibilityAdapter.class);
-        PublicationScopeResolver publicationScopeResolver = mock(PublicationScopeResolver.class);
-        when(adapter.promptDynamicEnabled()).thenReturn(true);
-        when(adapter.promptMaxToolsInPrompt()).thenReturn(5);
-        when(artifactLookupService.listPublishedArtifacts(anyMap())).thenReturn(List.of());
-        when(publicationScopeResolver.resolve(anyMap())).thenReturn(scope(
-                "default",
-                9L,
-                "prod",
-                "finance-agent",
-                ToolPublicationProvider.SourceSelectionMode.MERGE,
-                List.of("artifact-catalog"),
-                List.of()));
-        when(toolMetaService.listEnabledByTenantAndSystem(eq("default"), eq("gougu_oa")))
-                .thenReturn(List.of(tool("gougu_oa.leave_apply", "请假申请", null)));
-
-        ToolCatalogContributor contributor = new ToolCatalogContributor(
-                artifactLookupService,
-                toolMetaService,
-                adapter,
-                publicationScopeResolver);
-        PromptContribution contribution = contributor.contribute(context(Map.of(
-                "tenant_id", "default",
-                "space_id", 9L,
-                "environment", "prod",
-                "agent_app_code", "finance-agent",
-                "allow_legacy_fallback", true,
-                "system_code", "gougu_oa")));
-
-        assertEquals(1, contribution.messagesToAppend().size());
-        verify(toolMetaService, times(1)).listEnabledByTenantAndSystem("default", "gougu_oa");
-    }
-
-    @Test
-    void shouldLogWarningWhenScopedCallFallsBackToLegacyCatalog() {
-        ArtifactPublicationLookupService artifactLookupService = mock(ArtifactPublicationLookupService.class);
-        ToolMetaService toolMetaService = mock(ToolMetaService.class);
-        RuntimeConfigCompatibilityAdapter adapter = mock(RuntimeConfigCompatibilityAdapter.class);
-        PublicationScopeResolver publicationScopeResolver = mock(PublicationScopeResolver.class);
-        when(adapter.promptDynamicEnabled()).thenReturn(true);
-        when(adapter.promptMaxToolsInPrompt()).thenReturn(5);
-        when(artifactLookupService.listPublishedArtifacts(anyMap())).thenReturn(List.of());
-        when(publicationScopeResolver.resolve(anyMap())).thenReturn(scope(
-                "default",
-                9L,
-                "prod",
-                "finance-agent",
-                ToolPublicationProvider.SourceSelectionMode.MERGE,
-                List.of("artifact-catalog"),
-                List.of()));
-        when(toolMetaService.listEnabledByTenantAndSystem(eq("default"), eq("gougu_oa")))
-                .thenReturn(List.of(tool("gougu_oa.leave_apply", "请假申请", null)));
-
-        ch.qos.logback.classic.Logger logger =
-                (ch.qos.logback.classic.Logger) LoggerFactory.getLogger(ToolCatalogContributor.class);
-        ListAppender<ILoggingEvent> appender = new ListAppender<>();
-        appender.start();
-        logger.addAppender(appender);
-
-        try {
-            ToolCatalogContributor contributor = new ToolCatalogContributor(
-                    artifactLookupService,
-                    toolMetaService,
-                    adapter,
-                    publicationScopeResolver);
-            PromptContribution contribution = contributor.contribute(context(Map.of(
-                    "tenant_id", "default",
-                    "space_id", 9L,
-                    "environment", "prod",
-                    "agent_app_code", "finance-agent",
-                    "allow_legacy_fallback", true,
-                    "system_code", "gougu_oa")));
-
-            assertEquals(1, contribution.messagesToAppend().size());
-            String logs = appender.list.stream()
-                    .map(ILoggingEvent::getFormattedMessage)
-                    .collect(Collectors.joining("\n"));
-            assertTrue(logs.contains("ToolCatalogContributor#contribute - compatibility fallback to legacy prompt catalog"));
-            assertTrue(logs.contains("mode=fallback"));
-            assertTrue(logs.contains("toolCode=gougu_oa.leave_apply"));
-        }
-        finally {
-            logger.detachAppender(appender);
-            appender.stop();
-        }
-    }
-
-    private ToolPublicationProvider.PublicationScope scope(
-            String tenantId,
-            Long spaceId,
-            String environment,
-            String agentAppCode,
-            ToolPublicationProvider.SourceSelectionMode mode,
-            List<String> requestedSourceIds,
-            List<String> blockedSourceIds) {
-        return new ToolPublicationProvider.PublicationScope(
-                tenantId,
-                spaceId,
-                environment,
-                agentAppCode,
-                mode,
-                requestedSourceIds,
-                blockedSourceIds);
-    }
-
-    private ToolMeta tool(String toolCode, String toolName, String desc) {
-        ToolMeta toolMeta = new ToolMeta();
-        toolMeta.setToolCode(toolCode);
-        toolMeta.setToolName(toolName);
-        toolMeta.setDescription(desc);
-        return toolMeta;
-    }
-
-    private PublishedToolDescriptor descriptor(String publicationKey, RuntimeArtifact artifact) {
+    private PublishedToolDescriptor descriptor(
+            String publicationKey,
+            RuntimeArtifact artifact,
+            String toolType,
+            String visibility,
+            String invocationPolicy) {
         return PublishedToolDescriptor.forArtifact(
-                "artifact-catalog",
+                "tool-meta-catalog",
                 publicationKey,
                 artifact.getDisplayName(),
                 null,
                 null,
                 false,
                 "gougu_oa",
+                toolType,
+                visibility,
+                invocationPolicy,
                 artifact);
     }
 
@@ -311,7 +123,7 @@ class ToolCatalogContributorTest {
                 null,
                 null,
                 null,
-                null,
+                new RuntimeArtifact.Interaction(1L, artifactCode, null, null, null),
                 new FlowDefinition(),
                 Map.of(),
                 Map.of());
@@ -340,6 +152,6 @@ class ToolCatalogContributorTest {
             }
         };
     }
-
 }
+
 

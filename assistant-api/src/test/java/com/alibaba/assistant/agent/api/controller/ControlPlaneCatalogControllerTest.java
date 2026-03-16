@@ -21,11 +21,10 @@ import com.alibaba.assistant.agent.api.security.AuthenticatedUserContext;
 import com.alibaba.assistant.agent.api.security.MigrationControlPlaneAuthorizationService;
 import com.alibaba.assistant.agent.controlplane.catalog.ControlPlaneCatalogOverview;
 import com.alibaba.assistant.agent.controlplane.catalog.ControlPlaneCatalogService;
-import com.alibaba.assistant.agent.controlplane.catalog.ResolvedActionSummaryView;
 import com.alibaba.assistant.agent.controlplane.catalog.ResolvedAgentAppSummaryView;
 import com.alibaba.assistant.agent.controlplane.catalog.ResolvedConnectorSummaryView;
 import com.alibaba.assistant.agent.controlplane.catalog.ResolvedPlatformSpaceView;
-import com.alibaba.assistant.agent.controlplane.catalog.ResolvedWorkflowSummaryView;
+import com.alibaba.assistant.agent.controlplane.toolregistry.ResolvedToolMetaSummaryView;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -101,8 +100,19 @@ class ControlPlaneCatalogControllerTest {
                         new ResolvedPlatformSpaceView(11L, "finance-space", "Finance Space", "prod", "active"),
                         List.of(new ResolvedConnectorSummaryView(21L, "oa-core", "gougu_oa", "OA Core", "openapi", "active", 2)),
                         List.of(new ResolvedAgentAppSummaryView(31L, "finance-agent", "Finance Agent", "active")),
-                        List.of(new ResolvedActionSummaryView(41L, "oa.leave.create", 21L, "medium", "write", "enabled", 3)),
-                        List.of(new ResolvedWorkflowSummaryView(51L, "oa.leave.apply", "请假申请", 61L, "enabled", 5)))));
+                        List.of(new ResolvedToolMetaSummaryView(
+                                41L,
+                                "gougu_oa.leave_application",
+                                "请假审批",
+                                "gougu_oa",
+                                "ACTION",
+                                "USER",
+                                "DIRECT",
+                                "SYNC",
+                                "LOW",
+                                true,
+                                "enabled",
+                                3)))));
 
         mockMvc.perform(get("/api/controlplane/spaces/finance-space/catalog-overview")
                         .param("environment", "prod")
@@ -114,8 +124,9 @@ class ControlPlaneCatalogControllerTest {
                 .andExpect(jsonPath("$.data.connectors.length()").value(1))
                 .andExpect(jsonPath("$.data.connectors[0].connectorCode").value("oa-core"))
                 .andExpect(jsonPath("$.data.agentApps[0].agentAppCode").value("finance-agent"))
-                .andExpect(jsonPath("$.data.actions[0].actionCode").value("oa.leave.create"))
-                .andExpect(jsonPath("$.data.workflows[0].workflowCode").value("oa.leave.apply"));
+                .andExpect(jsonPath("$.data.tools[0].toolCode").value("gougu_oa.leave_application"))
+                .andExpect(jsonPath("$.data.tools[0].toolType").value("ACTION"))
+                .andExpect(jsonPath("$.data.tools[0].visibility").value("USER"));
     }
 
     @Test

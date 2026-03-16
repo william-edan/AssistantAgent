@@ -62,8 +62,7 @@ import java.lang.annotation.Target;
  * }</pre>
  *
  * <h2>默认行为</h2>
- * <p>如果 Hook 类没有添加此注解，默认被视为 {@link AgentPhase#REACT} 阶段的 Hook，
- * 以保持向后兼容性。
+ * <p>如果 Hook 类没有添加此注解，默认按 {@link AgentPhase#REACT} 阶段处理。
  *
  * @author Assistant Agent Team
  * @since 1.0.0

@@ -15,7 +15,10 @@
  */
 package com.alibaba.assistant.agent.runtime.registry;
 
+import com.alibaba.assistant.agent.common.tools.CodeactTool;
+import com.alibaba.assistant.agent.common.tools.CodeactToolMetadata;
 import org.springframework.ai.chat.model.ToolContext;
+import org.springframework.ai.tool.definition.ToolDefinition;
 import org.springframework.lang.Nullable;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
@@ -26,7 +29,7 @@ import java.util.Map;
 import java.util.Optional;
 
 /**
- * Lookup service for artifact publications resolved through the provider backbone.
+ * 已发布业务工具查询服务。
  */
 @Service
 public class ArtifactPublicationLookupService {
@@ -47,48 +50,91 @@ public class ArtifactPublicationLookupService {
     }
 
     /**
-     * List artifact publications for prompt/runtime attribute maps.
+     * 列出面向用户目录可见的业务工具。
      */
     public List<PublishedToolDescriptor> listPublishedArtifacts(Map<String, Object> attributes) {
         return listPublishedArtifacts(publicationScopeResolver.resolve(attributes));
     }
 
     /**
-     * List artifact publications for a tool execution context.
+     * 列出面向用户目录可见的业务工具。
      */
     public List<PublishedToolDescriptor> listPublishedArtifacts(@Nullable ToolContext toolContext) {
         return listPublishedArtifacts(publicationScopeResolver.resolve(toolContext));
     }
 
     /**
-     * Resolve a single published artifact by artifact code.
+     * 按工具编码解析单个已发布工具。内部依赖工具也允许被解析。
      */
     public Optional<PublishedToolDescriptor> findPublishedArtifact(String artifactCode, @Nullable ToolContext toolContext) {
         if (!StringUtils.hasText(artifactCode)) {
             return Optional.empty();
         }
         String normalizedCode = artifactCode.trim();
-        return listPublishedArtifacts(toolContext).stream()
+        ToolPublicationProvider.PublicationScope scope = publicationScopeResolver.resolve(toolContext);
+        List<PublishedToolDescriptor> descriptors = listSelectedPublications(scope);
+        return descriptors.stream()
+                .filter(this::isArtifactPublication)
                 .filter(descriptor -> matchesArtifactCode(descriptor, normalizedCode))
-                .findFirst();
+                .findFirst()
+                .or(() -> descriptors.stream()
+                        .filter(this::isDirectToolPublication)
+                        .filter(descriptor -> matchesDirectToolCode(descriptor, normalizedCode))
+                        .findFirst());
     }
 
     private List<PublishedToolDescriptor> listPublishedArtifacts(ToolPublicationProvider.PublicationScope scope) {
-        List<PublishedToolDescriptor> descriptors = new ArrayList<>();
+        List<PublishedToolDescriptor> artifacts = new ArrayList<>();
+        for (PublishedToolDescriptor descriptor : listSelectedPublications(scope)) {
+            if (isUserVisibleArtifact(descriptor)) {
+                artifacts.add(descriptor);
+            }
+        }
+        return List.copyOf(artifacts);
+    }
+
+    private List<PublishedToolDescriptor> listSelectedPublications(ToolPublicationProvider.PublicationScope scope) {
         List<ToolPublicationProvider> selectedProviders = toolPublicationProviderSelector
                 .selectProviders(scope, toolPublicationProviders);
-        for (ToolPublicationProvider provider : selectedProviders) {
+        return listPublications(scope, selectedProviders);
+    }
+
+    private List<PublishedToolDescriptor> listPublications(
+            ToolPublicationProvider.PublicationScope scope,
+            List<ToolPublicationProvider> providers) {
+        List<PublishedToolDescriptor> descriptors = new ArrayList<>();
+        for (ToolPublicationProvider provider : providers) {
             if (provider == null) {
                 continue;
             }
-            for (PublishedToolDescriptor descriptor : provider.listPublishedTools(scope)) {
-                if (descriptor != null && descriptor.isArtifactPublication() && descriptor.artifact() != null
-                        && StringUtils.hasText(descriptor.artifact().getArtifactCode())) {
+            List<PublishedToolDescriptor> providerDescriptors = provider.listPublishedTools(scope);
+            if (providerDescriptors == null || providerDescriptors.isEmpty()) {
+                continue;
+            }
+            for (PublishedToolDescriptor descriptor : providerDescriptors) {
+                if (descriptor != null) {
                     descriptors.add(descriptor);
                 }
             }
         }
         return List.copyOf(descriptors);
+    }
+
+    private boolean isUserVisibleArtifact(PublishedToolDescriptor descriptor) {
+        return isArtifactPublication(descriptor) && descriptor.isUserVisible();
+    }
+
+    private boolean isArtifactPublication(PublishedToolDescriptor descriptor) {
+        return descriptor != null
+                && descriptor.isArtifactPublication()
+                && descriptor.artifact() != null
+                && StringUtils.hasText(descriptor.artifact().getArtifactCode());
+    }
+
+    private boolean isDirectToolPublication(PublishedToolDescriptor descriptor) {
+        return descriptor != null
+                && descriptor.isDirectToolPublication()
+                && descriptor.directTool() != null;
     }
 
     private boolean matchesArtifactCode(PublishedToolDescriptor descriptor, String artifactCode) {
@@ -100,5 +146,24 @@ public class ArtifactPublicationLookupService {
         }
         return StringUtils.hasText(descriptor.publicationKey())
                 && descriptor.publicationKey().toLowerCase().endsWith(artifactCode.toLowerCase());
+    }
+
+    private boolean matchesDirectToolCode(PublishedToolDescriptor descriptor, String artifactCode) {
+        if (descriptor == null || descriptor.directTool() == null || !StringUtils.hasText(artifactCode)) {
+            return false;
+        }
+        CodeactTool directTool = descriptor.directTool();
+        CodeactToolMetadata metadata = directTool.getCodeactMetadata();
+        if (metadata != null) {
+            for (String alias : metadata.aliases()) {
+                if (StringUtils.hasText(alias) && artifactCode.equalsIgnoreCase(alias.trim())) {
+                    return true;
+                }
+            }
+        }
+        ToolDefinition definition = directTool.getToolDefinition();
+        return definition != null
+                && StringUtils.hasText(definition.name())
+                && artifactCode.equalsIgnoreCase(definition.name().trim());
     }
 }

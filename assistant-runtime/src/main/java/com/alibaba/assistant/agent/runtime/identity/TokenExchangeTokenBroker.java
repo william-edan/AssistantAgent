@@ -42,14 +42,11 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * Token broker that acquires tokens via HTTP token exchange.
- * <p>
- * When identity_binding has no stored credentials, this broker looks up
- * system_access_profile for the token exchange endpoint configuration,
- * calls the endpoint to obtain a real token, and caches it in memory.
+ * 基于令牌交换的身份代理实现。
  *
- * @author Assistant Agent Team
- * @since 1.0.0
+ * <p>当平台用户和企业系统用户已经建立绑定关系后，
+ * 该组件会读取系统接入配置，调用外部系统的令牌交换接口获取真实访问令牌，并在内存中做短期缓存。
+ * 这是平台用户“以自己的企业身份”去调用 OA/ERP/CRM 的关键一环。</p>
  */
 @Primary
 @Service
@@ -77,7 +74,7 @@ public class TokenExchangeTokenBroker implements TokenBroker {
 
 	@Override
 	public Optional<TokenLease> acquire(String assistantUid, String systemCode) {
-		// Check cache first
+		// 先查本地缓存，避免同一用户反复触发外部令牌交换接口。
 		String cacheKey = assistantUid + ":" + systemCode;
 		CachedToken cached = tokenCache.get(cacheKey);
 		if (cached != null && !cached.isExpired()) {
@@ -85,7 +82,7 @@ public class TokenExchangeTokenBroker implements TokenBroker {
 			return Optional.of(cached.toLease(assistantUid, systemCode));
 		}
 
-		// Look up identity binding
+		// 再查平台用户和企业系统用户之间的绑定关系。
 		IdentityBinding binding = identityBindingMapper.selectOne(
 				new LambdaQueryWrapper<IdentityBinding>()
 						.eq(IdentityBinding::getAssistantUid, assistantUid)
@@ -98,7 +95,7 @@ public class TokenExchangeTokenBroker implements TokenBroker {
 			return Optional.empty();
 		}
 
-		// If credentials are stored directly, use them
+		// 如果绑定记录里已经直接存了可用凭证，则直接返回。
 		if (StringUtils.hasText(binding.getCredentials())) {
 			logger.debug("TokenExchangeTokenBroker#acquire - reason=directCredentials, systemCode={}", systemCode);
 			String leaseId = UUID.randomUUID().toString();
@@ -106,7 +103,7 @@ public class TokenExchangeTokenBroker implements TokenBroker {
 					LocalDateTime.now().plusSeconds(7200)));
 		}
 
-		// No stored credentials — perform token exchange
+		// 否则根据系统接入配置发起一次令牌交换。
 		return exchangeToken(binding, cacheKey);
 	}
 
@@ -118,7 +115,7 @@ public class TokenExchangeTokenBroker implements TokenBroker {
 	private Optional<TokenLease> exchangeToken(IdentityBinding binding, String cacheKey) {
 		String systemCode = binding.getSystemCode();
 		try {
-			// Query system_access_profile for token exchange config
+			// 从 system_access_profile 读取令牌交换所需的地址、模板和过期时间。
 			Map<String, Object> profile = jdbcTemplate.queryForMap(
 					"SELECT base_url, token_endpoint, token_method, token_request_tpl, "
 							+ "token_response_path, token_ttl_seconds "
@@ -138,7 +135,7 @@ public class TokenExchangeTokenBroker implements TokenBroker {
 				return Optional.empty();
 			}
 
-			// Build request body from template — replace ${system_user_id}
+			// 用绑定里的 system_user_id 替换模板变量，组装出外部系统需要的请求体。
 			String requestBody = tokenRequestTpl;
 			if (StringUtils.hasText(requestBody)) {
 				requestBody = requestBody.replace("${system_user_id}", binding.getSystemUserId());
@@ -147,7 +144,7 @@ public class TokenExchangeTokenBroker implements TokenBroker {
 				requestBody = "{\"system_user_id\": \"" + binding.getSystemUserId() + "\"}";
 			}
 
-			// Call token endpoint
+			// 真正调用外部系统令牌交换接口。
 			String fullUrl = baseUrl + tokenEndpoint;
 			logger.info("TokenExchangeTokenBroker#exchangeToken - reason=callingTokenEndpoint, "
 					+ "url={}, systemCode={}, systemUserId={}", fullUrl, systemCode, binding.getSystemUserId());
@@ -191,7 +188,7 @@ public class TokenExchangeTokenBroker implements TokenBroker {
 	}
 
 	/**
-	 * Extract a value from JSON using a dot-separated path like "data.token".
+	 * 按点分路径从 JSON 里提取字段，例如 {@code data.token}。
 	 */
 	private String extractByPath(String json, String path) {
 		try {

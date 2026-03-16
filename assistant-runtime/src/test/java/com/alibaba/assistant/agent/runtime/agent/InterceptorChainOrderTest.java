@@ -17,9 +17,8 @@ package com.alibaba.assistant.agent.runtime.agent;
 
 import com.alibaba.assistant.agent.controlplane.audit.AuditEventService;
 import com.alibaba.assistant.agent.controlplane.identity.TokenBroker;
-import com.alibaba.assistant.agent.controlplane.toolregistry.ToolMetaService;
 import com.alibaba.assistant.agent.runtime.config.AssistantRuntimeProperties;
-import com.alibaba.assistant.agent.runtime.config.RuntimeConfigCompatibilityAdapter;
+import com.alibaba.assistant.agent.runtime.config.RuntimeConfigView;
 import com.alibaba.assistant.agent.runtime.guard.BudgetTracker;
 import com.alibaba.assistant.agent.runtime.interceptor.AuditToolInterceptor;
 import com.alibaba.assistant.agent.runtime.interceptor.HumanInTheLoopToolInterceptor;
@@ -30,8 +29,6 @@ import com.alibaba.assistant.agent.runtime.interceptor.PolicyGuardToolIntercepto
 import com.alibaba.cloud.ai.graph.agent.interceptor.Interceptor;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
-import org.springframework.mock.env.MockEnvironment;
-
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -42,18 +39,15 @@ class InterceptorChainOrderTest {
 	@Test
 	void shouldSortInterceptorsByExplicitOrder() {
 		TokenBroker tokenBroker = mock(TokenBroker.class);
-		ToolMetaService toolMetaService = mock(ToolMetaService.class);
 		AuditEventService auditEventService = mock(AuditEventService.class);
 
-		RuntimeConfigCompatibilityAdapter adapter = new RuntimeConfigCompatibilityAdapter(
-				new AssistantRuntimeProperties(),
-				new MockEnvironment());
+		RuntimeConfigView adapter = new RuntimeConfigView(new AssistantRuntimeProperties());
 		BudgetTracker budgetTracker = new BudgetTracker(adapter);
 
 		List<Interceptor> input = List.of(
 				new AuditToolInterceptor(auditEventService),
 				new HumanInTheLoopToolInterceptor(new ObjectMapper()),
-				new PolicyGuardToolInterceptor(new ObjectMapper(), toolMetaService, budgetTracker, adapter),
+				new PolicyGuardToolInterceptor(new ObjectMapper(), budgetTracker, adapter),
 				new IdentityEnricherToolInterceptor(tokenBroker, new ObjectMapper()),
 				new InternalPromptContributionToolInterceptor(),
 				new PolicyCheckModelInterceptor());
@@ -69,3 +63,5 @@ class InterceptorChainOrderTest {
 	}
 
 }
+
+

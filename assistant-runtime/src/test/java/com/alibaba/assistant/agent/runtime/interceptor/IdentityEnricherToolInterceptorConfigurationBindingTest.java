@@ -33,24 +33,9 @@ class IdentityEnricherToolInterceptorConfigurationBindingTest {
 			.withBean(IdentityEnricherToolInterceptor.class);
 
 	@Test
-	void shouldFallbackToLegacyCurrentSystemProperty() {
+	void shouldBindChatDefaultSystemProperty() {
 		contextRunner
-				.withPropertyValues("assistant.auth.current-system.default-system-code=legacy-system")
-				.run(context -> {
-					assertThat(context).hasSingleBean(IdentityEnricherToolInterceptor.class);
-					IdentityEnricherToolInterceptor interceptor =
-							context.getBean(IdentityEnricherToolInterceptor.class);
-					assertThat(ReflectionTestUtils.getField(interceptor, "defaultSystemCode"))
-							.isEqualTo("legacy-system");
-				});
-	}
-
-	@Test
-	void shouldPreferChatDefaultSystemPropertyWhenPresent() {
-		contextRunner
-				.withPropertyValues(
-						"assistant.chat.default-system-code=chat-system",
-						"assistant.auth.current-system.default-system-code=legacy-system")
+				.withPropertyValues("assistant.chat.default-system-code=chat-system")
 				.run(context -> {
 					assertThat(context).hasSingleBean(IdentityEnricherToolInterceptor.class);
 					IdentityEnricherToolInterceptor interceptor =

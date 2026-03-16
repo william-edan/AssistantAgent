@@ -78,7 +78,7 @@ class AgentAppPublicationPolicyControllerTest {
                         "finance-agent",
                         new AgentAppPublicationSourcePolicy(
                                 "exclusive",
-                                List.of("artifact-catalog"),
+                                List.of("tool-meta-catalog"),
                                 List.of("legacy-bridge")))));
 
         mockMvc.perform(get("/api/controlplane/spaces/enterprise-default/agent-apps/finance-agent/publication-source-policy")
@@ -90,7 +90,7 @@ class AgentAppPublicationPolicyControllerTest {
                 .andExpect(jsonPath("$.data.environment").value("test"))
                 .andExpect(jsonPath("$.data.agentAppCode").value("finance-agent"))
                 .andExpect(jsonPath("$.data.sourceSelectionMode").value("EXCLUSIVE"))
-                .andExpect(jsonPath("$.data.allowedSourceIds[0]").value("artifact-catalog"))
+                .andExpect(jsonPath("$.data.allowedSourceIds[0]").value("tool-meta-catalog"))
                 .andExpect(jsonPath("$.data.blockedSourceIds[0]").value("legacy-bridge"));
     }
 
@@ -98,7 +98,7 @@ class AgentAppPublicationPolicyControllerTest {
     void shouldReplacePublicationSourcePolicy() throws Exception {
         AgentAppPublicationSourcePolicy updatedPolicy = new AgentAppPublicationSourcePolicy(
                 "exclusive",
-                List.of("artifact-catalog", "mcp-gateway"),
+                List.of("tool-meta-catalog", "mcp-gateway"),
                 List.of("legacy-bridge"));
         when(authorizationService.canManageAgentAppPublicationPolicy(
                 any(AuthenticatedUserContext.class), eq("enterprise-default"), eq("prod"), eq("finance-agent")))
@@ -122,7 +122,7 @@ class AgentAppPublicationPolicyControllerTest {
                         .content("""
                                 {
                                   "sourceSelectionMode": "exclusive",
-                                  "allowedSourceIds": ["artifact-catalog", "mcp-gateway"],
+                                  "allowedSourceIds": ["tool-meta-catalog", "mcp-gateway"],
                                   "blockedSourceIds": ["legacy-bridge"]
                                 }
                                 """))
@@ -138,7 +138,7 @@ class AgentAppPublicationPolicyControllerTest {
                 eq("finance-agent"),
                 policyCaptor.capture());
         assertEquals("EXCLUSIVE", policyCaptor.getValue().sourceSelectionMode());
-        assertEquals(List.of("artifact-catalog", "mcp-gateway"), policyCaptor.getValue().allowedSourceIds());
+        assertEquals(List.of("tool-meta-catalog", "mcp-gateway"), policyCaptor.getValue().allowedSourceIds());
         assertEquals(List.of("legacy-bridge"), policyCaptor.getValue().blockedSourceIds());
     }
 
@@ -146,7 +146,7 @@ class AgentAppPublicationPolicyControllerTest {
     void shouldNormalizePublicationSourcePolicyRequestLists() throws Exception {
         AgentAppPublicationSourcePolicy normalizedPolicy = new AgentAppPublicationSourcePolicy(
                 "exclusive",
-                List.of("artifact-catalog", "mcp-gateway"),
+                List.of("tool-meta-catalog", "mcp-gateway"),
                 List.of("legacy-bridge"));
         when(authorizationService.canManageAgentAppPublicationPolicy(
                 any(AuthenticatedUserContext.class), eq("enterprise-default"), eq("prod"), eq("finance-agent")))
@@ -170,14 +170,14 @@ class AgentAppPublicationPolicyControllerTest {
                         .content("""
                                 {
                                   "sourceSelectionMode": " exclusive ",
-                                  "allowedSourceIds": [" artifact-catalog ", "", "mcp-gateway", "   "],
+                                  "allowedSourceIds": [" tool-meta-catalog ", "", "mcp-gateway", "   "],
                                   "blockedSourceIds": [" legacy-bridge ", null, ""]
                                 }
                                 """))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.sourceSelectionMode").value("EXCLUSIVE"))
                 .andExpect(jsonPath("$.data.allowedSourceIds.length()").value(2))
-                .andExpect(jsonPath("$.data.allowedSourceIds[0]").value("artifact-catalog"))
+                .andExpect(jsonPath("$.data.allowedSourceIds[0]").value("tool-meta-catalog"))
                 .andExpect(jsonPath("$.data.blockedSourceIds.length()").value(1))
                 .andExpect(jsonPath("$.data.blockedSourceIds[0]").value("legacy-bridge"));
     }
@@ -225,3 +225,4 @@ class AgentAppPublicationPolicyControllerTest {
                 List.of("assistant:chat", "assistant:controlplane"));
     }
 }
+

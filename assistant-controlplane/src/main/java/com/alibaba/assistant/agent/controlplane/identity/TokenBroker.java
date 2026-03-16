@@ -18,8 +18,10 @@ package com.alibaba.assistant.agent.controlplane.identity;
 import java.util.Optional;
 
 /**
- * Token broker interface for acquiring and managing access tokens
- * to downstream business systems on behalf of assistant users.
+ * 下游系统访问令牌代理接口。
+ *
+ * <p>运行时通过该接口代表平台用户向企业系统申请、复用或吊销短期访问令牌，
+ * 以便执行请假、汇报、会议室预订等真实业务动作。
  *
  * @author Assistant Agent Team
  * @since 1.0.0
@@ -27,17 +29,20 @@ import java.util.Optional;
 public interface TokenBroker {
 
 	/**
-	 * Acquire a valid token lease for the given user and system.
-	 * May return a cached lease if still valid, or request a new one.
-	 * @param assistantUid the assistant user identifier
-	 * @param systemCode the target system code
-	 * @return a valid token lease, or empty if credentials not available
+	 * 为指定平台用户和目标系统获取可用的令牌租约。
+	 *
+	 * <p>实现可以直接返回尚未过期的缓存租约，也可以实时向企业系统重新申请。
+	 *
+	 * @param assistantUid 平台侧用户标识
+	 * @param systemCode 目标系统编码
+	 * @return 可用的令牌租约；若当前用户尚未完成绑定或无可用凭证则返回空
 	 */
 	Optional<TokenLease> acquire(String assistantUid, String systemCode);
 
 	/**
-	 * Revoke/invalidate an existing token lease.
-	 * @param leaseId the lease to revoke
+	 * 吊销或失效化既有令牌租约。
+	 *
+	 * @param leaseId 要吊销的租约标识
 	 */
 	void revoke(String leaseId);
 

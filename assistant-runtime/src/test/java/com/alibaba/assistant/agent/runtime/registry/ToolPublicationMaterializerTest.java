@@ -23,8 +23,6 @@ import com.alibaba.assistant.agent.common.tools.DefaultCodeactToolMetadata;
 import com.alibaba.assistant.agent.common.tools.definition.CodeactToolDefinition;
 import com.alibaba.assistant.agent.execution.flow.FlowDefinition;
 import com.alibaba.assistant.agent.runtime.compiler.RuntimeArtifact;
-import com.alibaba.assistant.agent.runtime.tool.codeact.ArtifactToolFactory;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 import org.springframework.ai.tool.definition.DefaultToolDefinition;
 import org.springframework.ai.tool.definition.ToolDefinition;
@@ -40,10 +38,10 @@ import static org.mockito.Mockito.when;
 
 class ToolPublicationMaterializerTest {
 
+
 	@Test
-	void shouldMaterializeArtifactAndDirectToolPublicationsInDeclaredOrder() {
-		ArtifactToolFactory artifactToolFactory = new ArtifactToolFactory(new ObjectMapper());
-		ToolPublicationMaterializer materializer = new ToolPublicationMaterializer(artifactToolFactory);
+	void shouldSkipArtifactExecuteWrappersFromPlannerToolRegistry() {
+		ToolPublicationMaterializer materializer = new ToolPublicationMaterializer();
 		CodeactTool directTool = mockCodeactTool("legacy_leave_execute");
 		RuntimeArtifact artifact = new RuntimeArtifact(
 				1L,
@@ -62,12 +60,12 @@ class ToolPublicationMaterializerTest {
 
 		List<CodeactTool> tools = materializer.materialize(List.of(
 				PublishedToolDescriptor.forDirectTool(
-						"legacy-bridge",
+						"tool-meta-catalog",
 						"legacy:leave",
-						"Legacy Leave",
+						"Published Leave",
 						directTool),
 				new PublishedToolDescriptor(
-						"artifact-catalog",
+						"tool-meta-catalog",
 						"workflow:oa.leave.apply",
 						"请假申请",
 						"oa_tools",
@@ -76,19 +74,18 @@ class ToolPublicationMaterializerTest {
 						null,
 						artifact)));
 
-		assertEquals(2, tools.size());
+		assertEquals(1, tools.size());
 		assertSame(directTool, tools.get(0));
-		assertEquals("oa_leave_apply_execute", tools.get(1).getToolDefinition().name());
 	}
+
 
 	@Test
 	void shouldIgnoreDescriptorsWithoutExecutablePayload() {
-		ArtifactToolFactory artifactToolFactory = new ArtifactToolFactory(new ObjectMapper());
-		ToolPublicationMaterializer materializer = new ToolPublicationMaterializer(artifactToolFactory);
+		ToolPublicationMaterializer materializer = new ToolPublicationMaterializer();
 
 		List<CodeactTool> tools = materializer.materialize(List.of(
 				new PublishedToolDescriptor(
-						"artifact-catalog",
+						"tool-meta-catalog",
 						"broken",
 						"Broken",
 						null,
@@ -96,6 +93,38 @@ class ToolPublicationMaterializerTest {
 						false,
 						null,
 						(RuntimeArtifact) null)));
+
+		assertTrue(tools.isEmpty());
+	}
+
+	@Test
+	void shouldSkipInternalQueryArtifactsFromUserFacingToolRegistry() {
+		ToolPublicationMaterializer materializer = new ToolPublicationMaterializer();
+		RuntimeArtifact artifact = new RuntimeArtifact(
+				1L,
+				"gougu_oa.leave_type_options",
+				RuntimeArtifact.ArtifactType.ACTION,
+				"请假类型选项",
+				1,
+				null,
+				null,
+				null,
+				null,
+				new RuntimeArtifact.Interaction(1L, "query", null, "{\"toolType\":\"QUERY\"}", null),
+				new FlowDefinition(),
+				Map.of(),
+				Map.of());
+
+		List<CodeactTool> tools = materializer.materialize(List.of(
+				new PublishedToolDescriptor(
+						"tool-meta-catalog",
+						"tool:gougu_oa.leave_type_options",
+						"请假类型选项",
+						"oa_tools",
+						"OA workflow tools",
+						false,
+						"gougu_oa",
+						artifact)));
 
 		assertTrue(tools.isEmpty());
 	}

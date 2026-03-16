@@ -19,8 +19,8 @@ import com.alibaba.assistant.agent.controlplane.connector.AuthProfile;
 import com.alibaba.assistant.agent.controlplane.connector.AuthProfileService;
 import com.alibaba.assistant.agent.controlplane.connector.Connector;
 import com.alibaba.assistant.agent.controlplane.connector.ConnectorService;
-import com.alibaba.assistant.agent.controlplane.identity.PrincipalBindingV2;
-import com.alibaba.assistant.agent.controlplane.identity.PrincipalBindingV2Service;
+import com.alibaba.assistant.agent.controlplane.identity.PrincipalBinding;
+import com.alibaba.assistant.agent.controlplane.identity.PrincipalBindingService;
 import com.alibaba.assistant.agent.controlplane.identity.TokenBroker;
 import com.alibaba.assistant.agent.controlplane.identity.TokenLease;
 import org.junit.jupiter.api.Test;
@@ -38,16 +38,16 @@ import static org.mockito.Mockito.when;
 class ControlPlaneCredentialBrokerTest {
 
     @Test
-    void shouldResolveLeaseViaConnectorAndLegacyTokenBroker() {
+    void shouldResolveLeaseViaConnectorSystemTokenBroker() {
         ConnectorService connectorService = mock(ConnectorService.class);
         AuthProfileService authProfileService = mock(AuthProfileService.class);
-        PrincipalBindingV2Service principalBindingV2Service = mock(PrincipalBindingV2Service.class);
-        TokenBroker legacyTokenBroker = mock(TokenBroker.class);
+        PrincipalBindingService principalBindingService = mock(PrincipalBindingService.class);
+        TokenBroker systemTokenBroker = mock(TokenBroker.class);
         ControlPlaneCredentialBroker broker = new ControlPlaneCredentialBroker(
                 connectorService,
                 authProfileService,
-                principalBindingV2Service,
-                legacyTokenBroker);
+                principalBindingService,
+                systemTokenBroker);
 
         Connector connector = new Connector();
         connector.setId(10L);
@@ -65,14 +65,14 @@ class ControlPlaneCredentialBrokerTest {
         authProfile.setTokenHeaderPrefix("Bearer ");
         when(authProfileService.listActiveByConnector(10L)).thenReturn(List.of(authProfile));
 
-        PrincipalBindingV2 binding = new PrincipalBindingV2();
+        PrincipalBinding binding = new PrincipalBinding();
         binding.setId(21L);
-        when(principalBindingV2Service.findHighestPriorityActiveBinding(1L, 10L, "1001"))
+        when(principalBindingService.findHighestPriorityActiveBinding(1L, 10L, "1001"))
                 .thenReturn(Optional.of(binding));
 
-        when(legacyTokenBroker.acquire("1001", "gougu_oa"))
+        when(systemTokenBroker.acquire("1001", "gougu_oa"))
                 .thenReturn(Optional.of(new TokenLease(
-                        "legacy-lease",
+                        "lease-1",
                         "token-123",
                         "gougu_oa",
                         "1001",
@@ -86,30 +86,28 @@ class ControlPlaneCredentialBrokerTest {
                 "local_user",
                 List.of("leave.write"),
                 "RUN-1",
-                "submit_approval",
-                "gougu_oa"));
+                "submit_approval"));
 
         assertEquals("oa-user", lease.authProfileCode());
         assertEquals(21L, lease.principalBindingId());
         assertEquals(10L, lease.connectorId());
         assertEquals("BEARER", lease.credentialType());
         assertEquals("Bearer token-123", lease.headers().get("Authorization"));
-        assertEquals("gougu_oa", lease.compatibilitySystemCode());
         assertEquals("http://oa.internal", lease.baseUrl());
         assertTrue(lease.expiresAt().isAfter(Instant.now()));
     }
 
     @Test
-    void shouldFallbackToCredentialReferenceWhenLegacyTokenUnavailable() {
+    void shouldUseCredentialReferenceWhenAuthProfileProvidesIt() {
         ConnectorService connectorService = mock(ConnectorService.class);
         AuthProfileService authProfileService = mock(AuthProfileService.class);
-        PrincipalBindingV2Service principalBindingV2Service = mock(PrincipalBindingV2Service.class);
-        TokenBroker legacyTokenBroker = mock(TokenBroker.class);
+        PrincipalBindingService principalBindingService = mock(PrincipalBindingService.class);
+        TokenBroker systemTokenBroker = mock(TokenBroker.class);
         ControlPlaneCredentialBroker broker = new ControlPlaneCredentialBroker(
                 connectorService,
                 authProfileService,
-                principalBindingV2Service,
-                legacyTokenBroker);
+                principalBindingService,
+                systemTokenBroker);
 
         Connector connector = new Connector();
         connector.setId(20L);
@@ -128,9 +126,9 @@ class ControlPlaneCredentialBrokerTest {
         authProfile.setTokenHeaderPrefix("");
         when(authProfileService.listActiveByConnector(20L)).thenReturn(List.of(authProfile));
 
-        PrincipalBindingV2 binding = new PrincipalBindingV2();
+        PrincipalBinding binding = new PrincipalBinding();
         binding.setId(31L);
-        when(principalBindingV2Service.findHighestPriorityActiveBinding(1L, 20L, "1001"))
+        when(principalBindingService.findHighestPriorityActiveBinding(1L, 20L, "1001"))
                 .thenReturn(Optional.of(binding));
 
         ResolvedCredentialLease lease = broker.resolve(new CredentialResolutionRequest(
@@ -141,8 +139,7 @@ class ControlPlaneCredentialBrokerTest {
                 "local_user",
                 List.of(),
                 "RUN-2",
-                "sync_expense",
-                null));
+                "sync_expense"));
 
         assertEquals("erp-service", lease.authProfileCode());
         assertEquals("vault://erp/service-account", lease.headers().get("X-API-Key"));

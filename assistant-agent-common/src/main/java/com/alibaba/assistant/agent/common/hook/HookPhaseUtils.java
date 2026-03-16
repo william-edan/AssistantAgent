@@ -79,7 +79,7 @@ public final class HookPhaseUtils {
             return annotation.value();
         }
 
-        // 默认返回 REACT（向后兼容）
+        // 未显式声明阶段时，默认按 REACT 处理
         return new AgentPhase[]{ AgentPhase.REACT };
     }
 

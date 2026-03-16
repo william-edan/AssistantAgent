@@ -234,6 +234,7 @@ class ExecutionApprovalServiceTest {
         verify(auditEventService).save(captor.capture());
         AuditEvent event = captor.getValue();
         assertEquals("APPROVAL_APPROVED", event.getEventType());
+        assertEquals("WAITING_APPROVAL", event.getAgentPhase());
         assertEquals("RUN-3", event.getRunId());
         assertEquals("submit_approval", event.getStepId());
         assertEquals("u2001", event.getAssistantUid());
@@ -304,10 +305,78 @@ class ExecutionApprovalServiceTest {
         verify(auditEventService).save(captor.capture());
         AuditEvent event = captor.getValue();
         assertEquals("APPROVAL_REJECTED", event.getEventType());
+        assertEquals("CANCELLED", event.getAgentPhase());
         assertEquals("RUN-4", event.getRunId());
         assertEquals("submit_approval", event.getStepId());
         assertEquals("u3001", event.getAssistantUid());
         assertEquals("REJECTED", event.getStatus());
+    }
+
+    @Test
+    void shouldGenerateCompactAuditEventIdForLongApprovalRequestId() {
+        PlatformSpaceService platformSpaceService = mock(PlatformSpaceService.class);
+        ApprovalRequestService approvalRequestService = mock(ApprovalRequestService.class);
+        ExecutionRunService executionRunService = mock(ExecutionRunService.class);
+        ExecutionStepService executionStepService = mock(ExecutionStepService.class);
+        ArtifactPublicationLookupService artifactPublicationLookupService = mock(ArtifactPublicationLookupService.class);
+        ArtifactRuntimeResumeService artifactRuntimeResumeService = mock(ArtifactRuntimeResumeService.class);
+        AuditEventService auditEventService = mock(AuditEventService.class);
+        ExecutionApprovalService service = new ExecutionApprovalService(
+                platformSpaceService,
+                approvalRequestService,
+                executionRunService,
+                executionStepService,
+                artifactPublicationLookupService,
+                artifactRuntimeResumeService,
+                auditEventService,
+                new ObjectMapper());
+
+        PlatformSpace space = new PlatformSpace();
+        space.setId(11L);
+        space.setSpaceCode("finance-space");
+        space.setEnvironment("prod");
+        ExecutionRun run = new ExecutionRun();
+        run.setRunId("7549b1f8-7b46-4d90-8f4d-aaac7c0e4b40");
+        run.setArtifactCode("gougu_oa.platform_approval_probe");
+        run.setArtifactType("ACTION");
+        run.setSpaceId(11L);
+        run.setStatus("WAITING_APPROVAL");
+        run.setPausedStepId("approval_probe");
+        run.setPlatformPrincipalId("u1001");
+        ApprovalRequest request = new ApprovalRequest();
+        request.setRequestId("7549b1f8-7b46-4d90-8f4d-aaac7c0e4b40:approval_probe");
+        request.setRunId("7549b1f8-7b46-4d90-8f4d-aaac7c0e4b40");
+        request.setStepId("approval_probe");
+        request.setStatus("WAITING_APPROVAL");
+        request.setApprovalChannel("platform");
+        request.setRequestedAt(LocalDateTime.of(2026, 3, 15, 23, 0));
+        ApprovalRequest approvedRequest = new ApprovalRequest();
+        approvedRequest.setRequestId(request.getRequestId());
+        approvedRequest.setRunId(request.getRunId());
+        approvedRequest.setStepId(request.getStepId());
+        approvedRequest.setStatus("APPROVED");
+        approvedRequest.setApprovalChannel("platform");
+        approvedRequest.setRequestedAt(request.getRequestedAt());
+        approvedRequest.setRespondedAt(LocalDateTime.of(2026, 3, 15, 23, 1));
+
+        when(platformSpaceService.findActiveByCode("finance-space", "prod")).thenReturn(Optional.of(space));
+        when(approvalRequestService.findLatestByRequestId(request.getRequestId())).thenReturn(Optional.of(request), Optional.of(approvedRequest));
+        when(executionRunService.findLatestByRunId(run.getRunId())).thenReturn(Optional.of(run), Optional.of(run));
+        when(artifactPublicationLookupService.listPublishedArtifacts(org.mockito.ArgumentMatchers.anyMap()))
+                .thenReturn(List.of(descriptor(11L, "gougu_oa.platform_approval_probe")));
+        when(artifactRuntimeResumeService.approveAndResume(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.eq(request.getRequestId())))
+                .thenReturn(Map.of("success", true, "runId", run.getRunId()));
+
+        Optional<ExecutionApprovalDecisionView> decision = service.approveRequest(
+                "finance-space",
+                "prod",
+                request.getRequestId(),
+                "u2001");
+
+        assertTrue(decision.isPresent());
+        ArgumentCaptor<AuditEvent> captor = ArgumentCaptor.forClass(AuditEvent.class);
+        verify(auditEventService).save(captor.capture());
+        assertTrue(captor.getValue().getEventId().length() <= 64);
     }
 
     private PublishedToolDescriptor descriptor(Long spaceId, String artifactCode) {
@@ -326,7 +395,7 @@ class ExecutionApprovalServiceTest {
                 Map.of(),
                 Map.of());
         return PublishedToolDescriptor.forArtifact(
-                "artifact-catalog",
+                "tool-meta-catalog",
                 "workflow:" + artifactCode,
                 "请假申请",
                 null,
@@ -336,4 +405,7 @@ class ExecutionApprovalServiceTest {
                 artifact);
     }
 }
+
+
+
 

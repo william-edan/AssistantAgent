@@ -15,7 +15,7 @@
  */
 package com.alibaba.assistant.agent.runtime.prompt;
 
-import com.alibaba.assistant.agent.runtime.config.RuntimeConfigCompatibilityAdapter;
+import com.alibaba.assistant.agent.runtime.config.RuntimeConfigView;
 import com.alibaba.assistant.agent.prompt.PromptContribution;
 import com.alibaba.assistant.agent.prompt.PromptContributor;
 import com.alibaba.assistant.agent.prompt.PromptContributorContext;
@@ -38,10 +38,10 @@ public class CoreInstructionContributor implements PromptContributor {
 
 	private static final DateTimeFormatter TIME_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
 
-	private final RuntimeConfigCompatibilityAdapter compatibilityAdapter;
+	private final RuntimeConfigView runtimeConfigView;
 
-	public CoreInstructionContributor(RuntimeConfigCompatibilityAdapter compatibilityAdapter) {
-		this.compatibilityAdapter = compatibilityAdapter;
+	public CoreInstructionContributor(RuntimeConfigView runtimeConfigView) {
+		this.runtimeConfigView = runtimeConfigView;
 	}
 
 	@Override
@@ -56,7 +56,7 @@ public class CoreInstructionContributor implements PromptContributor {
 
 	@Override
 	public boolean shouldContribute(PromptContributorContext context) {
-		return compatibilityAdapter.promptDynamicEnabled();
+		return runtimeConfigView.promptDynamicEnabled();
 	}
 
 	@Override
@@ -86,4 +86,6 @@ public class CoreInstructionContributor implements PromptContributor {
 	}
 
 }
+
+
 

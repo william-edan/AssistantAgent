@@ -15,10 +15,18 @@
  */
 package com.alibaba.assistant.agent.api.controller;
 
+import com.alibaba.assistant.agent.api.protocol.FrontendEvent;
+import com.alibaba.assistant.agent.api.protocol.FrontendEventType;
+import com.alibaba.assistant.agent.api.protocol.FrontendStage;
+import com.alibaba.assistant.agent.api.protocol.V3ProtocolAdapter;
 import com.alibaba.cloud.ai.graph.streaming.OutputType;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 
+import java.util.List;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ChatControllerChunkDeduplicatorTest {
 
@@ -47,5 +55,49 @@ class ChatControllerChunkDeduplicatorTest {
 
 		assertEquals("，我将为您生成工作汇报。",
 				deduplicator.nextChunk(OutputType.AGENT_MODEL_FINISHED, "请提供本期工作内容，我将为您生成工作汇报。"));
+	}
+
+	@Test
+	void shouldFlushVisibleAssistantTextAsSingleDoneMessage() {
+		ChatController.AssistantTextBuffer buffer = new ChatController.AssistantTextBuffer();
+		ChatController.StageTracker stageTracker = new ChatController.StageTracker();
+		V3ProtocolAdapter protocolAdapter = new V3ProtocolAdapter(new ObjectMapper());
+
+		buffer.capture("请先选择汇报类型，我会自动带出本期时间范围。");
+
+		List<FrontendEvent> events = buffer.flush("thread-visible", protocolAdapter, stageTracker);
+
+		assertEquals(2, events.size());
+		assertEquals(FrontendEventType.STAGE, events.get(0).eventType());
+		assertEquals(FrontendStage.DONE, events.get(0).stage());
+		assertEquals(FrontendEventType.MESSAGE, events.get(1).eventType());
+		assertEquals("请先选择汇报类型，我会自动带出本期时间范围。", events.get(1).payload().get("text"));
+	}
+
+	@Test
+	void shouldDropInternalPlanningNarrationWhenFlushed() {
+		ChatController.AssistantTextBuffer buffer = new ChatController.AssistantTextBuffer();
+		ChatController.StageTracker stageTracker = new ChatController.StageTracker();
+		V3ProtocolAdapter protocolAdapter = new V3ProtocolAdapter(new ObjectMapper());
+
+		buffer.capture("用户明确表示“我要写汇报”，意图清晰，匹配可用工具 `gougu_oa.work_report`，需先调用slot_collect 收集必要参数。");
+
+		List<FrontendEvent> events = buffer.flush("thread-hidden", protocolAdapter, stageTracker);
+
+		assertTrue(events.isEmpty());
+	}
+
+	@Test
+	void shouldDropBufferedAssistantTextAfterToolInteraction() {
+		ChatController.AssistantTextBuffer buffer = new ChatController.AssistantTextBuffer();
+		ChatController.StageTracker stageTracker = new ChatController.StageTracker();
+		V3ProtocolAdapter protocolAdapter = new V3ProtocolAdapter(new ObjectMapper());
+
+		buffer.capture("我来帮你处理这个流程。");
+		buffer.markToolInteraction();
+
+		List<FrontendEvent> events = buffer.flush("thread-tool", protocolAdapter, stageTracker);
+
+		assertTrue(events.isEmpty());
 	}
 }

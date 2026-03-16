@@ -39,7 +39,7 @@ import org.springframework.web.server.ResponseStatusException;
 import java.security.Principal;
 
 /**
- * Control-plane API for managing scoped local-user access in migration mode.
+ * 迁移模式下本地用户控制面权限策略管理入口。
  */
 @RestController
 @Profile("migration")

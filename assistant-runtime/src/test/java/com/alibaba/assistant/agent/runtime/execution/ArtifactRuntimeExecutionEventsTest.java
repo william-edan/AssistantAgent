@@ -46,7 +46,7 @@ class ArtifactRuntimeExecutionEventsTest {
         ArtifactRuntimeExecutor executor = new ArtifactRuntimeExecutor(dagFlowExecutor);
         RuntimeArtifact artifact = runtimeArtifact("oa.leave.apply");
         PublishedToolDescriptor descriptor = PublishedToolDescriptor.forArtifact(
-                "artifact-catalog",
+                "tool-meta-catalog",
                 "workflow:oa.leave.apply",
                 "请假申请",
                 null,
@@ -96,7 +96,7 @@ class ArtifactRuntimeExecutionEventsTest {
         ArtifactRuntimeExecutor executor = new ArtifactRuntimeExecutor(dagFlowExecutor);
         RuntimeArtifact artifact = runtimeArtifact("oa.leave.apply");
         PublishedToolDescriptor descriptor = PublishedToolDescriptor.forArtifact(
-                "artifact-catalog",
+                "tool-meta-catalog",
                 "workflow:oa.leave.apply",
                 "请假申请",
                 null,
@@ -149,5 +149,6 @@ class ArtifactRuntimeExecutionEventsTest {
                 Map.of());
     }
 }
+
 
 

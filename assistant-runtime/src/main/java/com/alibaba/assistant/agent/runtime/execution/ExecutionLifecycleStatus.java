@@ -16,7 +16,7 @@
 package com.alibaba.assistant.agent.runtime.execution;
 
 /**
- * Shared lifecycle status vocabulary for execution persistence and streaming.
+ * 执行持久化与流式协议共用的生命周期状态枚举。
  */
 public enum ExecutionLifecycleStatus {
 

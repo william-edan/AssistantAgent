@@ -27,7 +27,6 @@ import java.util.*;
 
 /**
  * Parser for slot schema.
- * Parses slot_schema JSON and also supports backward compatibility with request_schema.
  *
  * @author Assistant Agent Team
  * @since 1.0.0
@@ -45,7 +44,6 @@ public class SlotSchemaParser {
 
 	/**
 	 * Parse slot definitions from a ToolMetaSnapshot.
-	 * Prefers slot_schema if available, falls back to request_schema for backward compatibility.
 	 *
 	 * @param snapshot the tool meta snapshot
 	 * @return list of slot definitions
@@ -62,17 +60,6 @@ public class SlotSchemaParser {
 			}
 			catch (Exception e) {
 				logger.warn("SlotSchemaParser#parse - failed to parse slot_schema, toolCode={}, error={}",
-						snapshot.getToolCode(), e.getMessage());
-			}
-		}
-
-		String requestSchema = snapshot.getRequestSchema();
-		if (requestSchema != null && !requestSchema.trim().isEmpty()) {
-			try {
-				return parseRequestSchema(requestSchema);
-			}
-			catch (Exception e) {
-				logger.warn("SlotSchemaParser#parse - failed to parse request_schema, toolCode={}, error={}",
 						snapshot.getToolCode(), e.getMessage());
 			}
 		}
@@ -97,39 +84,6 @@ public class SlotSchemaParser {
 			if (slot != null) {
 				slots.add(slot);
 			}
-		}
-
-		return slots;
-	}
-
-	/**
-	 * Parse old request_schema format (JSON Schema) to slot definitions.
-	 */
-	public List<SlotDefinition> parseRequestSchema(String requestSchema) throws Exception {
-		JsonNode rootNode = objectMapper.readTree(requestSchema);
-		JsonNode propertiesNode = rootNode.get("properties");
-		JsonNode requiredNode = rootNode.get("required");
-
-		if (propertiesNode == null) {
-			return Collections.emptyList();
-		}
-
-		Set<String> requiredFields = new HashSet<>();
-		if (requiredNode != null && requiredNode.isArray()) {
-			for (JsonNode field : requiredNode) {
-				requiredFields.add(field.asText());
-			}
-		}
-
-		List<SlotDefinition> slots = new ArrayList<>();
-		Iterator<Map.Entry<String, JsonNode>> fields = propertiesNode.fields();
-
-		while (fields.hasNext()) {
-			Map.Entry<String, JsonNode> entry = fields.next();
-			String fieldName = entry.getKey();
-			JsonNode fieldNode = entry.getValue();
-			SlotDefinition slot = parsePropertyToSlot(fieldName, fieldNode, requiredFields.contains(fieldName));
-			slots.add(slot);
 		}
 
 		return slots;
@@ -245,6 +199,14 @@ public class SlotSchemaParser {
 		}
 		if (displayConfigNode != null && !displayConfigNode.isNull()) {
 			slot.setDisplayConfig(parseDisplayConfig(displayConfigNode));
+		}
+
+		JsonNode submitNode = slotNode.get("submit");
+		if (submitNode == null) {
+			submitNode = slotNode.get("submitToExecution");
+		}
+		if (submitNode != null && !submitNode.isNull()) {
+			slot.setSubmit(submitNode.asBoolean());
 		}
 
 		return slot;
@@ -367,41 +329,6 @@ public class SlotSchemaParser {
 		return config;
 	}
 
-	private SlotDefinition parsePropertyToSlot(String name, JsonNode fieldNode, boolean required) {
-		SlotDefinition slot = new SlotDefinition();
-
-		slot.setName(name);
-		slot.setType(getTextOrNull(fieldNode, "type"));
-		slot.setTitle(getTextOrNull(fieldNode, "title"));
-		slot.setDescription(getTextOrNull(fieldNode, "description"));
-		slot.setAiHint(getTextOrNull(fieldNode, "ai_hint"));
-		slot.setRequired(required);
-		slot.setPriority(required ? SlotPriority.CORE : SlotPriority.OPTIONAL);
-
-		JsonNode defaultNode = fieldNode.get("default");
-		if (defaultNode == null) {
-			defaultNode = fieldNode.get("default_value");
-		}
-		if (defaultNode == null) {
-			defaultNode = fieldNode.get("defaultValue");
-		}
-		if (defaultNode != null && !defaultNode.isNull()) {
-			slot.setDefaultValue(parseJsonValue(defaultNode));
-		}
-
-		JsonNode enumMappingNode = fieldNode.get("enum_mapping");
-		if (enumMappingNode != null && enumMappingNode.isObject()) {
-			slot.setOptions(parseEnumMapping(enumMappingNode));
-		}
-
-		JsonNode dataSourceNode = fieldNode.get("data_source");
-		if (dataSourceNode != null && dataSourceNode.isObject()) {
-			slot.setOptions(parseDataSource(dataSourceNode));
-		}
-
-		return slot;
-	}
-
 	private SlotOptions parseOptions(JsonNode optionsNode) {
 		SlotOptions options = new SlotOptions();
 
@@ -434,6 +361,22 @@ public class SlotSchemaParser {
 		}
 		if (apiConfigNode != null) {
 			options.setApiConfig(parseApiConfigFromDb(apiConfigNode));
+		}
+
+		JsonNode toolConfigNode = optionsNode.get("tool");
+		if (toolConfigNode == null) {
+			toolConfigNode = optionsNode.get("toolConfig");
+		}
+		if (toolConfigNode == null
+				&& (optionsNode.has("toolCode") || optionsNode.has("tool_code") || optionsNode.has("resultPath")
+						|| optionsNode.has("result_path"))) {
+			toolConfigNode = optionsNode;
+		}
+		if (toolConfigNode != null) {
+			options.setToolConfig(parseToolConfig(toolConfigNode));
+			if (options.getSource() == null) {
+				options.setSource(SlotOptions.SourceType.TOOL);
+			}
 		}
 
 		JsonNode autoSelectNode = optionsNode.get("auto_select");
@@ -522,6 +465,29 @@ public class SlotSchemaParser {
 		return autoSelect;
 	}
 
+	private ToolOptionResolverConfig parseToolConfig(JsonNode toolConfigNode) {
+		ToolOptionResolverConfig toolConfig = new ToolOptionResolverConfig();
+		toolConfig.setToolCode(firstNonBlank(
+				getTextOrNull(toolConfigNode, "toolCode"),
+				getTextOrNull(toolConfigNode, "tool_code")));
+		toolConfig.setResultPath(firstNonBlank(
+				getTextOrNull(toolConfigNode, "resultPath"),
+				getTextOrNull(toolConfigNode, "result_path")));
+		toolConfig.setLabelField(firstNonBlank(
+				getTextOrNull(toolConfigNode, "labelField"),
+				getTextOrNull(toolConfigNode, "label_field")));
+		toolConfig.setValueField(firstNonBlank(
+				getTextOrNull(toolConfigNode, "valueField"),
+				getTextOrNull(toolConfigNode, "value_field")));
+		toolConfig.setDescriptionField(firstNonBlank(
+				getTextOrNull(toolConfigNode, "descriptionField"),
+				getTextOrNull(toolConfigNode, "description_field")));
+		toolConfig.setDisabledField(firstNonBlank(
+				getTextOrNull(toolConfigNode, "disabledField"),
+				getTextOrNull(toolConfigNode, "disabled_field")));
+		return toolConfig;
+	}
+
 	private SlotOptions parseEnumMapping(JsonNode enumMappingNode) {
 		SlotOptions options = new SlotOptions();
 		options.setSource(SlotOptions.SourceType.STATIC);
@@ -603,6 +569,15 @@ public class SlotSchemaParser {
 		}
 		JsonNode fieldNode = node.get(fieldName);
 		return fieldNode.isNull() ? null : fieldNode.asText();
+	}
+
+	private String firstNonBlank(String... values) {
+		for (String value : values) {
+			if (value != null && !value.trim().isEmpty()) {
+				return value;
+			}
+		}
+		return null;
 	}
 
 	private Object parseJsonValue(JsonNode node) {

@@ -40,7 +40,7 @@ import org.springframework.web.server.ResponseStatusException;
 import java.security.Principal;
 
 /**
- * Control-plane API for agent-app publication source policy management.
+ * Agent 应用发布来源策略管理入口。
  */
 @RestController
 @Profile("migration")

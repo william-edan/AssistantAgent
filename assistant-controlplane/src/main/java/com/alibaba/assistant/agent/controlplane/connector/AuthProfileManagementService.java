@@ -29,7 +29,7 @@ import java.util.Map;
 import java.util.Optional;
 
 /**
- * Typed control-plane facade for auth-profile management.
+ * 认证配置管理的控制面门面服务。
  */
 @Service
 public class AuthProfileManagementService {

@@ -145,7 +145,7 @@ class AgentAppPublicationPolicySecurityIntegrationTest {
                         "prod",
                         7L,
                         "finance-agent",
-                        new AgentAppPublicationSourcePolicy("exclusive", List.of("artifact-catalog"), List.of("legacy-bridge")))));
+                        new AgentAppPublicationSourcePolicy("exclusive", List.of("tool-meta-catalog"), List.of("legacy-bridge")))));
 
         mockMvc.perform(get(PATH).header(AUTHORIZATION, "Bearer token-app-admin"))
                 .andExpect(status().isOk())
@@ -201,5 +201,6 @@ class AgentAppPublicationPolicySecurityIntegrationTest {
         }
     }
 }
+
 
 

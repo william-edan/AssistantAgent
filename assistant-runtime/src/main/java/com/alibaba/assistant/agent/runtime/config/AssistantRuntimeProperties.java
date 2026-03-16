@@ -20,11 +20,7 @@ import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Component;
 
 /**
- * Runtime properties for migration orchestration capabilities.
- *
- * <p>Note: during migration, values can be overridden by legacy keys under
- * {@code spring.ai.alibaba.codeact.extension.*} through
- * {@link RuntimeConfigCompatibilityAdapter}.
+ * Runtime properties for orchestration capabilities.
  *
  * @author Assistant Agent Team
  * @since 1.0.0
@@ -205,3 +201,5 @@ public class AssistantRuntimeProperties {
 	}
 
 }
+
+

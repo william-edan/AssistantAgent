@@ -24,14 +24,12 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.server.ResponseStatusException;
 
 /**
- * Normalizes control-plane controller errors into the standard operator envelope.
+ * 把控制面异常统一包装为标准响应结构。
  */
 @RestControllerAdvice(assignableTypes = {
-        ActionSpecManagementController.class,
         AgentAppManagementController.class,
         AgentAppPublicationPolicyController.class,
         AuthProfileManagementController.class,
-        BusinessQueryActionManagementController.class,
         ConnectorCatalogController.class,
         ConnectorManagementController.class,
         ControlPlaneCatalogController.class,
@@ -39,13 +37,10 @@ import org.springframework.web.server.ResponseStatusException;
         ExecutionEventTimelineController.class,
         ExecutionHistoryController.class,
         ExecutionRunListController.class,
-        InteractionSpecManagementController.class,
         LocalUserControlPlaneAccessPolicyController.class,
         LocalUserManagementController.class,
-        PreconditionCheckManagementController.class,
-        ReferenceResolverManagementController.class,
-        WorkflowCatalogController.class,
-        WorkflowManagementController.class
+        ToolCatalogController.class,
+        ToolMetaManagementController.class
 })
 @Profile("migration")
 public class ControlPlaneErrorResponseAdvice {

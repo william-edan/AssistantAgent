@@ -139,10 +139,7 @@ public final class RuntimeArtifact {
 			String interactionCode,
 			String slotSchemaJson,
 			String askStrategyJson,
-			String autoFillRulesJson,
-			String summaryLayoutJson,
-			String confirmationPolicyJson,
-			String editPolicyJson) {
+			String confirmationPolicyJson) {
 	}
 
 	/**
@@ -158,11 +155,9 @@ public final class RuntimeArtifact {
 			String bindingStrategiesJson,
 			String inputSchemaJson,
 			String outputSchemaJson,
-			String idempotencyPolicyJson,
 			String riskLevel,
 			Long approvalPolicyId,
 			String sideEffectLevel,
-			String observabilityProfileJson,
 			Integer version) {
 	}
 
@@ -182,11 +177,7 @@ public final class RuntimeArtifact {
 			String dependsOnJson,
 			String conditionJson,
 			String joinPolicyJson,
-			String retryPolicyJson,
-			String timeoutPolicyJson,
 			String approvalGateJson,
-			String compensationTargetRef,
-			String resumePolicyJson,
 			Integer stepOrder,
 			ActionBinding action) {
 	}

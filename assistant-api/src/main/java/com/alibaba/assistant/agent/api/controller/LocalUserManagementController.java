@@ -41,7 +41,7 @@ import org.springframework.web.server.ResponseStatusException;
 import java.security.Principal;
 
 /**
- * Control-plane management API for migration local users.
+ * 迁移模式下本地用户管理入口。
  */
 @RestController
 @Profile("migration")

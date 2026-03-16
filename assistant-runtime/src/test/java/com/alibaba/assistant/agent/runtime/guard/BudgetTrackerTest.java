@@ -16,7 +16,7 @@
 package com.alibaba.assistant.agent.runtime.guard;
 
 import com.alibaba.assistant.agent.runtime.config.AssistantRuntimeProperties;
-import com.alibaba.assistant.agent.runtime.config.RuntimeConfigCompatibilityAdapter;
+import com.alibaba.assistant.agent.runtime.config.RuntimeConfigView;
 import com.alibaba.cloud.ai.graph.OverAllState;
 import org.junit.jupiter.api.Test;
 import org.springframework.mock.env.MockEnvironment;
@@ -31,7 +31,7 @@ class BudgetTrackerTest {
 	void shouldInitAndRecordToolCalls() {
 		MockEnvironment environment = new MockEnvironment();
 		AssistantRuntimeProperties properties = new AssistantRuntimeProperties();
-		RuntimeConfigCompatibilityAdapter adapter = new RuntimeConfigCompatibilityAdapter(properties, environment);
+		RuntimeConfigView adapter = new RuntimeConfigView(properties);
 		BudgetTracker tracker = new BudgetTracker(adapter);
 
 		OverAllState state = new OverAllState();
@@ -52,7 +52,7 @@ class BudgetTrackerTest {
 				.withProperty("assistant.runtime.budget.max-latency-ms", "12000");
 		AssistantRuntimeProperties properties = new AssistantRuntimeProperties();
 		properties.getBudget().setMaxToolCalls(2);
-		RuntimeConfigCompatibilityAdapter adapter = new RuntimeConfigCompatibilityAdapter(properties, environment);
+		RuntimeConfigView adapter = new RuntimeConfigView(properties);
 		BudgetTracker tracker = new BudgetTracker(adapter);
 
 		OverAllState state = new OverAllState();
@@ -68,7 +68,7 @@ class BudgetTrackerTest {
 		MockEnvironment environment = new MockEnvironment();
 		AssistantRuntimeProperties properties = new AssistantRuntimeProperties();
 		properties.getBudget().setMaxLatencyMs(1000);
-		RuntimeConfigCompatibilityAdapter adapter = new RuntimeConfigCompatibilityAdapter(properties, environment);
+		RuntimeConfigView adapter = new RuntimeConfigView(properties);
 		BudgetTracker tracker = new BudgetTracker(adapter);
 
 		OverAllState state = new OverAllState();
@@ -80,3 +80,5 @@ class BudgetTrackerTest {
 	}
 
 }
+
+

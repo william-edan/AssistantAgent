@@ -16,50 +16,40 @@
 package com.alibaba.assistant.agent.runtime.registry;
 
 import com.alibaba.assistant.agent.common.tools.CodeactTool;
-import com.alibaba.assistant.agent.runtime.tool.codeact.ArtifactToolFactory;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.Optional;
 import java.util.Set;
 
 /**
- * Materializes published tool descriptors into runtime CodeactTool instances.
+ * 将发布描述物化为运行时工具实例。
  */
 @Component
 public class ToolPublicationMaterializer {
 
-	private final ArtifactToolFactory artifactToolFactory;
-
-	public ToolPublicationMaterializer(ArtifactToolFactory artifactToolFactory) {
-		this.artifactToolFactory = artifactToolFactory;
-	}
 
 	/**
-	 * Materialize descriptors in declared provider order.
+	 * 按发布顺序生成可供运行时编排的工具。
 	 */
 	public List<CodeactTool> materialize(List<PublishedToolDescriptor> descriptors) {
 		List<CodeactTool> tools = new ArrayList<>();
 		Set<String> usedToolNames = new LinkedHashSet<>();
 		for (PublishedToolDescriptor descriptor : descriptors != null ? descriptors : List.<PublishedToolDescriptor>of()) {
-			if (descriptor == null) {
+			if (descriptor == null || !descriptor.isPlannerExposed()) {
 				continue;
 			}
-			if (descriptor.isDirectToolPublication() && descriptor.directTool() != null) {
-				String toolName = descriptor.directTool().getToolDefinition() != null
-						? descriptor.directTool().getToolDefinition().name() : null;
-				if (StringUtils.hasText(toolName) && usedToolNames.add(toolName)) {
-					tools.add(descriptor.directTool());
-				}
+			if (!descriptor.isDirectToolPublication() || descriptor.directTool() == null) {
 				continue;
 			}
-			Optional<CodeactTool> artifactTool = artifactToolFactory.createTool(descriptor, usedToolNames);
-			artifactTool.ifPresent(tools::add);
+			String toolName = descriptor.directTool().getToolDefinition() != null
+					? descriptor.directTool().getToolDefinition().name() : null;
+			if (StringUtils.hasText(toolName) && usedToolNames.add(toolName)) {
+				tools.add(descriptor.directTool());
+			}
 		}
 		return List.copyOf(tools);
 	}
-
 }

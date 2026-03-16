@@ -16,7 +16,7 @@
 package com.alibaba.assistant.agent.controlplane.connector;
 
 /**
- * Resolved auth-profile view for a connector catalog response.
+ * 连接器目录查询返回的认证配置视图。
  */
 public record ResolvedAuthProfileView(
         Long authProfileId,

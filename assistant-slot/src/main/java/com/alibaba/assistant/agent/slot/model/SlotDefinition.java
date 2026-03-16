@@ -26,205 +26,219 @@ import java.util.Map;
  */
 public class SlotDefinition {
 
-	private String name;
+    private String name;
 
-	private String type;
+    private String type;
 
-	private String title;
+    private String title;
 
-	private String description;
+    private String description;
 
-	private String aiHint;
+    private String aiHint;
 
-	private SlotPriority priority;
+    private SlotPriority priority;
 
-	private boolean required;
+    private boolean required;
 
-	private SlotAskMode askMode;
+    private SlotAskMode askMode;
 
-	private Object defaultValue;
+    private Object defaultValue;
 
-	private SlotOptions options;
+    private SlotOptions options;
 
-	private SlotAutoSelect autoSelect;
+    private SlotAutoSelect autoSelect;
 
-	private List<String> dependsOn;
+    private List<String> dependsOn;
 
-	private List<String> inferredFrom;
+    private List<String> inferredFrom;
 
-	private String conditionalRequired;
+    private String conditionalRequired;
 
-	private Map<String, Object> validation;
+    private Map<String, Object> validation;
 
-	private ComputedFieldConfig computed;
+    private ComputedFieldConfig computed;
 
-	private String uiComponent;
+    private String uiComponent;
 
-	private SlotDisplayConfig displayConfig;
+    private SlotDisplayConfig displayConfig;
 
-	public SlotDefinition() {
-		this.priority = SlotPriority.CORE;
-		this.required = false;
-		this.askMode = SlotAskMode.AUTO;
-	}
+    private boolean submit = true;
 
-	public boolean hasOptions() {
-		return options != null && ((options.getValues() != null && !options.getValues().isEmpty())
-				|| (options.getEnumMapping() != null && !options.getEnumMapping().isEmpty())
-				|| options.getApiConfig() != null);
-	}
+    public SlotDefinition() {
+        this.priority = SlotPriority.CORE;
+        this.required = false;
+        this.askMode = SlotAskMode.AUTO;
+        this.submit = true;
+    }
 
-	public boolean needsApiResolution() {
-		return options != null && (options.getSource() == SlotOptions.SourceType.API
-				|| options.getSource() == SlotOptions.SourceType.SEARCH);
-	}
+    public boolean hasOptions() {
+        return options != null && ((options.getValues() != null && !options.getValues().isEmpty())
+                || (options.getEnumMapping() != null && !options.getEnumMapping().isEmpty())
+                || options.getToolConfig() != null
+                || options.getApiConfig() != null);
+    }
 
-	public boolean isComputed() {
-		return computed != null && computed.isEnabled();
-	}
+    public boolean needsDynamicResolution() {
+        return options != null && (options.getSource() == SlotOptions.SourceType.TOOL
+                || options.getSource() == SlotOptions.SourceType.API
+                || options.getSource() == SlotOptions.SourceType.SEARCH
+                || options.getSource() == SlotOptions.SourceType.API_SEARCH);
+    }
 
-	public String getName() {
-		return name;
-	}
+    public boolean isComputed() {
+        return computed != null && computed.isEnabled();
+    }
 
-	public void setName(String name) {
-		this.name = name;
-	}
+    public String getName() {
+        return name;
+    }
 
-	public String getType() {
-		return type;
-	}
+    public void setName(String name) {
+        this.name = name;
+    }
 
-	public void setType(String type) {
-		this.type = type;
-	}
+    public String getType() {
+        return type;
+    }
 
-	public String getTitle() {
-		return title;
-	}
+    public void setType(String type) {
+        this.type = type;
+    }
 
-	public void setTitle(String title) {
-		this.title = title;
-	}
+    public String getTitle() {
+        return title;
+    }
 
-	public String getDescription() {
-		return description;
-	}
+    public void setTitle(String title) {
+        this.title = title;
+    }
 
-	public void setDescription(String description) {
-		this.description = description;
-	}
+    public String getDescription() {
+        return description;
+    }
 
-	public String getAiHint() {
-		return aiHint;
-	}
+    public void setDescription(String description) {
+        this.description = description;
+    }
 
-	public void setAiHint(String aiHint) {
-		this.aiHint = aiHint;
-	}
+    public String getAiHint() {
+        return aiHint;
+    }
 
-	public SlotPriority getPriority() {
-		return priority;
-	}
+    public void setAiHint(String aiHint) {
+        this.aiHint = aiHint;
+    }
 
-	public void setPriority(SlotPriority priority) {
-		this.priority = priority;
-	}
+    public SlotPriority getPriority() {
+        return priority;
+    }
 
-	public boolean isRequired() {
-		return required;
-	}
+    public void setPriority(SlotPriority priority) {
+        this.priority = priority;
+    }
 
-	public void setRequired(boolean required) {
-		this.required = required;
-	}
+    public boolean isRequired() {
+        return required;
+    }
 
-	public SlotAskMode getAskMode() {
-		return askMode;
-	}
+    public void setRequired(boolean required) {
+        this.required = required;
+    }
 
-	public void setAskMode(SlotAskMode askMode) {
-		this.askMode = askMode;
-	}
+    public SlotAskMode getAskMode() {
+        return askMode;
+    }
 
-	public Object getDefaultValue() {
-		return defaultValue;
-	}
+    public void setAskMode(SlotAskMode askMode) {
+        this.askMode = askMode;
+    }
 
-	public void setDefaultValue(Object defaultValue) {
-		this.defaultValue = defaultValue;
-	}
+    public Object getDefaultValue() {
+        return defaultValue;
+    }
 
-	public SlotOptions getOptions() {
-		return options;
-	}
+    public void setDefaultValue(Object defaultValue) {
+        this.defaultValue = defaultValue;
+    }
 
-	public void setOptions(SlotOptions options) {
-		this.options = options;
-	}
+    public SlotOptions getOptions() {
+        return options;
+    }
 
-	public SlotAutoSelect getAutoSelect() {
-		return autoSelect;
-	}
+    public void setOptions(SlotOptions options) {
+        this.options = options;
+    }
 
-	public void setAutoSelect(SlotAutoSelect autoSelect) {
-		this.autoSelect = autoSelect;
-	}
+    public SlotAutoSelect getAutoSelect() {
+        return autoSelect;
+    }
 
-	public List<String> getDependsOn() {
-		return dependsOn;
-	}
+    public void setAutoSelect(SlotAutoSelect autoSelect) {
+        this.autoSelect = autoSelect;
+    }
 
-	public void setDependsOn(List<String> dependsOn) {
-		this.dependsOn = dependsOn;
-	}
+    public List<String> getDependsOn() {
+        return dependsOn;
+    }
 
-	public List<String> getInferredFrom() {
-		return inferredFrom;
-	}
+    public void setDependsOn(List<String> dependsOn) {
+        this.dependsOn = dependsOn;
+    }
 
-	public void setInferredFrom(List<String> inferredFrom) {
-		this.inferredFrom = inferredFrom;
-	}
+    public List<String> getInferredFrom() {
+        return inferredFrom;
+    }
 
-	public String getConditionalRequired() {
-		return conditionalRequired;
-	}
+    public void setInferredFrom(List<String> inferredFrom) {
+        this.inferredFrom = inferredFrom;
+    }
 
-	public void setConditionalRequired(String conditionalRequired) {
-		this.conditionalRequired = conditionalRequired;
-	}
+    public String getConditionalRequired() {
+        return conditionalRequired;
+    }
 
-	public Map<String, Object> getValidation() {
-		return validation;
-	}
+    public void setConditionalRequired(String conditionalRequired) {
+        this.conditionalRequired = conditionalRequired;
+    }
 
-	public void setValidation(Map<String, Object> validation) {
-		this.validation = validation;
-	}
+    public Map<String, Object> getValidation() {
+        return validation;
+    }
 
-	public ComputedFieldConfig getComputed() {
-		return computed;
-	}
+    public void setValidation(Map<String, Object> validation) {
+        this.validation = validation;
+    }
 
-	public void setComputed(ComputedFieldConfig computed) {
-		this.computed = computed;
-	}
+    public ComputedFieldConfig getComputed() {
+        return computed;
+    }
 
-	public String getUiComponent() {
-		return uiComponent;
-	}
+    public void setComputed(ComputedFieldConfig computed) {
+        this.computed = computed;
+    }
 
-	public void setUiComponent(String uiComponent) {
-		this.uiComponent = uiComponent;
-	}
+    public String getUiComponent() {
+        return uiComponent;
+    }
 
-	public SlotDisplayConfig getDisplayConfig() {
-		return displayConfig;
-	}
+    public void setUiComponent(String uiComponent) {
+        this.uiComponent = uiComponent;
+    }
 
-	public void setDisplayConfig(SlotDisplayConfig displayConfig) {
-		this.displayConfig = displayConfig;
-	}
+    public SlotDisplayConfig getDisplayConfig() {
+        return displayConfig;
+    }
+
+    public void setDisplayConfig(SlotDisplayConfig displayConfig) {
+        this.displayConfig = displayConfig;
+    }
+
+    public boolean isSubmit() {
+        return submit;
+    }
+
+    public void setSubmit(boolean submit) {
+        this.submit = submit;
+    }
 
 }

@@ -22,45 +22,61 @@ import com.baomidou.mybatisplus.annotation.TableName;
 import java.time.LocalDateTime;
 
 /**
- * Auth profile entity for downstream connector credential strategies.
+ * 鉴权配置实体。
  *
- * @author Assistant Agent Team
- * @since 1.0.0
+ * <p>用于描述某个连接器应该如何获取和携带访问凭证，
+ * 包括鉴权类型、令牌端点、请求头格式、凭证引用和刷新策略。</p>
  */
 @TableName("auth_profile")
 public class AuthProfile {
 
+	/** 主键 ID。 */
 	@TableId(type = IdType.AUTO)
 	private Long id;
 
+	/** 所属空间 ID。 */
 	private Long spaceId;
 
+	/** 对应的连接器 ID。 */
 	private Long connectorId;
 
+	/** 鉴权配置编码。 */
 	private String authProfileCode;
 
+	/** 鉴权类型，例如 TOKEN_EXCHANGE、STATIC_TOKEN。 */
 	private String authType;
 
+	/** 使用策略，例如默认、只读或高风险专用。 */
 	private String usagePolicy;
 
+	/** 令牌获取接口地址。 */
 	private String tokenEndpoint;
 
+	/** 访问令牌写入的请求头名称。 */
 	private String tokenHeaderName;
 
+	/** 请求头前缀，例如 Bearer。 */
 	private String tokenHeaderPrefix;
 
+	/** 目标受众标识。 */
 	private String audience;
 
+	/** 作用域集合。 */
 	private String scopesJson;
 
+	/** 外部凭证或密钥引用。 */
 	private String credentialRef;
 
+	/** 刷新策略配置。 */
 	private String refreshPolicyJson;
 
+	/** 当前状态。 */
 	private String status;
 
+	/** 创建时间。 */
 	private LocalDateTime createdAt;
 
+	/** 更新时间。 */
 	private LocalDateTime updatedAt;
 
 	public Long getId() {

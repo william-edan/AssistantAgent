@@ -20,7 +20,7 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 
 /**
- * Stable event envelope emitted by artifact-native execution.
+ * 原生执行链输出的稳定事件包。
  */
 public record ExecutionEvent(
 		String runId,

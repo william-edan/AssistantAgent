@@ -18,7 +18,7 @@ package com.alibaba.assistant.agent.runtime.execution;
 import java.time.LocalDateTime;
 
 /**
- * Read model for approval request detail pages.
+ * 审批详情页使用的读模型。
  */
 public record ExecutionApprovalDetailView(
         String requestId,

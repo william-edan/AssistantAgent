@@ -26,7 +26,7 @@ import java.util.List;
 import java.util.Optional;
 
 /**
- * Service for auth_profile lookup operations.
+ * 认证配置查询服务。
  *
  * @author Assistant Agent Team
  * @since 1.0.0
@@ -37,10 +37,10 @@ public class AuthProfileService extends ServiceImpl<AuthProfileMapper, AuthProfi
     private static final String STATUS_ACTIVE = "active";
 
     /**
-     * List active auth profiles for a connector.
+     * 查询某个连接器下处于启用状态的认证配置。
      *
-     * @param connectorId connector id
-     * @return active auth profiles ordered by id
+     * @param connectorId 连接器主键
+     * @return 按主键升序排列的启用认证配置
      */
     public List<AuthProfile> listActiveByConnector(Long connectorId) {
         if (connectorId == null) {
@@ -55,7 +55,7 @@ public class AuthProfileService extends ServiceImpl<AuthProfileMapper, AuthProfi
     }
 
     /**
-     * Find latest active auth profile by code under a connector.
+     * 按编码查询某个连接器下最新的启用认证配置。
      */
     public Optional<AuthProfile> findLatestActiveByCode(Long connectorId, String authProfileCode) {
         if (connectorId == null || !StringUtils.hasText(authProfileCode)) {

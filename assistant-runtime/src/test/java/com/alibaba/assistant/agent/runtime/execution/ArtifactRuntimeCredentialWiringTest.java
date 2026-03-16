@@ -49,7 +49,7 @@ class ArtifactRuntimeCredentialWiringTest {
         ArtifactRuntimeExecutor executor = new ArtifactRuntimeExecutor(dagFlowExecutor, credentialBroker, new ObjectMapper());
         RuntimeArtifact artifact = runtimeArtifact("oa.leave.apply");
         PublishedToolDescriptor descriptor = PublishedToolDescriptor.forArtifact(
-                "artifact-catalog",
+                "tool-meta-catalog",
                 "workflow:oa.leave.apply",
                 "请假申请",
                 null,
@@ -68,9 +68,7 @@ class ArtifactRuntimeCredentialWiringTest {
                 10L,
                 "BEARER",
                 Map.of("Authorization", "Bearer token-123"),
-                Instant.now().plusSeconds(600),
-                "gougu_oa",
-                "http://oa.internal"));
+                Instant.now().plusSeconds(600), "http://oa.internal"));
 
         executor.execute(descriptor, Map.of("reason", "事假", "assistant_uid", "1001"), null);
 
@@ -110,12 +108,11 @@ class ArtifactRuntimeCredentialWiringTest {
                 null,
                 null,
                 null,
-                null,
                 "HIGH",
                 null,
                 "WRITE",
-                null,
-                1);
+                1
+        );
         RuntimeArtifact.StepBinding stepBinding = new RuntimeArtifact.StepBinding(
                 "submit_approval",
                 "提交审批",
@@ -130,12 +127,9 @@ class ArtifactRuntimeCredentialWiringTest {
                 null,
                 null,
                 null,
-                null,
-                null,
-                null,
-                null,
                 1,
-                actionBinding);
+                actionBinding
+        );
         return new RuntimeArtifact(
                 1L,
                 artifactCode,
@@ -152,4 +146,6 @@ class ArtifactRuntimeCredentialWiringTest {
                 new LinkedHashMap<>(Map.of("submit_approval", stepBinding)));
     }
 }
+
+
 

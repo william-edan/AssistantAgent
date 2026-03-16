@@ -15,6 +15,8 @@
  */
 package com.alibaba.assistant.agent.controlplane.catalog;
 
+import com.alibaba.assistant.agent.controlplane.toolregistry.ResolvedToolMetaSummaryView;
+
 import java.util.List;
 
 /**
@@ -24,6 +26,5 @@ public record ControlPlaneCatalogOverview(
         ResolvedPlatformSpaceView space,
         List<ResolvedConnectorSummaryView> connectors,
         List<ResolvedAgentAppSummaryView> agentApps,
-        List<ResolvedActionSummaryView> actions,
-        List<ResolvedWorkflowSummaryView> workflows) {
+        List<ResolvedToolMetaSummaryView> tools) {
 }

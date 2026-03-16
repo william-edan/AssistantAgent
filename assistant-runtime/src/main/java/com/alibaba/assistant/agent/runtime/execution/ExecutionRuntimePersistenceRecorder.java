@@ -26,7 +26,9 @@ import com.alibaba.assistant.agent.execution.persistence.ExecutionRun;
 import com.alibaba.assistant.agent.execution.persistence.ExecutionRunService;
 import com.alibaba.assistant.agent.execution.persistence.ExecutionStep;
 import com.alibaba.assistant.agent.execution.persistence.ExecutionStepService;
+import com.alibaba.assistant.agent.runtime.agent.AssistantStateKeys;
 import com.alibaba.assistant.agent.runtime.compiler.RuntimeArtifact;
+import com.alibaba.assistant.agent.runtime.context.RuntimeSpaceResolver;
 import com.alibaba.assistant.agent.runtime.registry.PublishedToolDescriptor;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -34,18 +36,25 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
+import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 
 /**
- * Persists artifact execution results into execution run/step, approval, and audit records.
+ * 执行运行记录持久化器。
+ *
+ * <p>负责把一次动作或工作流执行过程拆分并落库到：
+ * {@code execution_run}、{@code execution_step}、{@code approval_request} 和审计事件表。
+ * 前端任务中心、控制面执行历史和审批列表最终都依赖这里写出的数据。</p>
  */
 @Service
 public class ExecutionRuntimePersistenceRecorder {
+
 
     private final ExecutionRunService executionRunService;
     private final ExecutionStepService executionStepService;
@@ -53,18 +62,31 @@ public class ExecutionRuntimePersistenceRecorder {
     private final AuditEventService auditEventService;
     private final ObjectMapper objectMapper;
 
-    @Autowired
+    private final RuntimeSpaceResolver runtimeSpaceResolver;
+
     public ExecutionRuntimePersistenceRecorder(
             ExecutionRunService executionRunService,
             ExecutionStepService executionStepService,
             ApprovalRequestService approvalRequestService,
             AuditEventService auditEventService,
             ObjectMapper objectMapper) {
+        this(executionRunService, executionStepService, approvalRequestService, auditEventService, objectMapper, null);
+    }
+
+    @Autowired
+    public ExecutionRuntimePersistenceRecorder(
+            ExecutionRunService executionRunService,
+            ExecutionStepService executionStepService,
+            ApprovalRequestService approvalRequestService,
+            AuditEventService auditEventService,
+            ObjectMapper objectMapper,
+            RuntimeSpaceResolver runtimeSpaceResolver) {
         this.executionRunService = executionRunService;
         this.executionStepService = executionStepService;
         this.approvalRequestService = approvalRequestService;
         this.auditEventService = auditEventService;
         this.objectMapper = objectMapper;
+        this.runtimeSpaceResolver = runtimeSpaceResolver;
     }
 
     public void record(
@@ -84,6 +106,7 @@ public class ExecutionRuntimePersistenceRecorder {
                 && StringUtils.hasText(flowResult.getPausedStepId())) {
             flowResult.setApprovalRequestId(runId + ":" + flowResult.getPausedStepId());
         }
+        // 运行记录、步骤记录、审批记录和审计事件必须基于同一批执行事件生成，避免前后端读到不一致的数据。
         List<ExecutionEvent> safeEvents = executionEvents != null ? executionEvents : List.of();
         upsertRun(descriptor, flowContext, safeEvents, flowResult);
         upsertSteps(descriptor, runId, safeEvents);
@@ -97,10 +120,11 @@ public class ExecutionRuntimePersistenceRecorder {
             List<ExecutionEvent> executionEvents,
             FlowExecutionResult flowResult) {
         ExecutionRun run = executionRunService.findLatestByRunId(flowContext.getRunId()).orElseGet(ExecutionRun::new);
+        Long resolvedSpaceId = resolveSpaceId(descriptor, flowContext);
         run.setRunId(flowContext.getRunId());
         run.setArtifactCode(descriptor.artifact().getArtifactCode());
         run.setArtifactType(descriptor.artifact().getArtifactType().name());
-        run.setSpaceId(descriptor.artifact().getSpaceId());
+        run.setSpaceId(resolvedSpaceId);
         run.setPlatformPrincipalId(normalize(flowContext.getAssistantUid()));
         run.setThreadId(normalize(flowContext.getThreadId()));
         run.setStatus(resolveRunStatus(executionEvents, flowResult));
@@ -173,7 +197,7 @@ public class ExecutionRuntimePersistenceRecorder {
             List<ExecutionEvent> executionEvents) {
         for (ExecutionEvent event : executionEvents) {
             AuditEvent auditEvent = new AuditEvent();
-            auditEvent.setEventId(runId + ":" + event.sequence());
+            auditEvent.setEventId(buildAuditEventId(runId, event));
             auditEvent.setTraceId(runId);
             auditEvent.setExecutionId(runId);
             auditEvent.setRunId(runId);
@@ -192,6 +216,20 @@ public class ExecutionRuntimePersistenceRecorder {
         }
     }
 
+    /**
+     * 使用运行轨迹生成确定性事件 ID，避免恢复执行时 sequence 重置导致主键冲突。
+     */
+    private String buildAuditEventId(String runId, ExecutionEvent event) {
+        String fingerprint = firstNonBlank(
+                normalize(runId),
+                "") + "|" + firstNonBlank(normalize(event.stepId()), "-")
+                + "|" + event.eventType().name()
+                + "|" + event.lifecycleStatus().name()
+                + "|" + (event.occurredAt() != null ? event.occurredAt().toEpochMilli() : 0L)
+                + "|" + event.sequence();
+        return UUID.nameUUIDFromBytes(fingerprint.getBytes(StandardCharsets.UTF_8)).toString();
+    }
+
     private void saveOrUpdateRun(ExecutionRun run) {
         if (run.getId() == null) {
             executionRunService.save(run);
@@ -199,6 +237,26 @@ public class ExecutionRuntimePersistenceRecorder {
         else {
             executionRunService.updateById(run);
         }
+    }
+
+    private Long resolveSpaceId(PublishedToolDescriptor descriptor, FlowContext flowContext) {
+        Long artifactSpaceId = descriptor != null && descriptor.artifact() != null
+                ? descriptor.artifact().getSpaceId()
+                : null;
+        if (artifactSpaceId != null) {
+            return artifactSpaceId;
+        }
+        if (flowContext == null || flowContext.getInitialInputs().isEmpty()) {
+            return null;
+        }
+        Long resolvedSpaceId = firstNonNull(
+                asLong(flowContext.getInitialInputs().get(AssistantStateKeys.SPACE_ID)),
+                asLong(flowContext.getInitialInputs().get("space_id")),
+                asLong(flowContext.getInitialInputs().get("spaceId")));
+        if (resolvedSpaceId != null || runtimeSpaceResolver == null) {
+            return resolvedSpaceId;
+        }
+        return runtimeSpaceResolver.resolve(flowContext.getInitialInputs()).spaceId();
     }
 
     private void saveOrUpdateStep(ExecutionStep step) {
@@ -373,6 +431,38 @@ public class ExecutionRuntimePersistenceRecorder {
             return normalize(requestId);
         }
         return normalize(requestId.substring(0, requestId.indexOf(':')));
+    }
+
+    private Long asLong(Object value) {
+        if (value instanceof Number number) {
+            return number.longValue();
+        }
+        if (value == null) {
+            return null;
+        }
+        String text = String.valueOf(value).trim();
+        if (!StringUtils.hasText(text)) {
+            return null;
+        }
+        try {
+            return Long.parseLong(text);
+        }
+        catch (NumberFormatException ignored) {
+            return null;
+        }
+    }
+
+    @SafeVarargs
+    private final <T> T firstNonNull(T... values) {
+        if (values == null) {
+            return null;
+        }
+        for (T value : values) {
+            if (value != null) {
+                return value;
+            }
+        }
+        return null;
     }
 
     private String normalize(String value) {

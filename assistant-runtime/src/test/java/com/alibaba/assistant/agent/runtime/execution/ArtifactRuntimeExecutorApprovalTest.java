@@ -88,13 +88,10 @@ class ArtifactRuntimeExecutorApprovalTest {
                 null,
                 null,
                 null,
-                null,
-                null,
                 "{\"enabled\":true,\"channel\":\"controlplane\"}",
-                null,
-                null,
                 1,
-                null);
+                null
+        );
         RuntimeArtifact artifact = new RuntimeArtifact(
                 1L,
                 "oa.leave.apply",
@@ -110,7 +107,7 @@ class ArtifactRuntimeExecutorApprovalTest {
                 Map.of(),
                 Map.of("submit_approval", stepBinding));
         return PublishedToolDescriptor.forArtifact(
-                "artifact-catalog",
+                "tool-meta-catalog",
                 "workflow:oa.leave.apply",
                 "请假申请",
                 null,
@@ -126,3 +123,4 @@ class ArtifactRuntimeExecutorApprovalTest {
                 "thread_id", "T-1"));
     }
 }
+

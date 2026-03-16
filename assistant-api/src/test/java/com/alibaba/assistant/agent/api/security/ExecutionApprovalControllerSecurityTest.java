@@ -16,6 +16,7 @@
 package com.alibaba.assistant.agent.api.security;
 
 import com.alibaba.assistant.agent.api.controller.ExecutionApprovalController;
+import com.alibaba.assistant.agent.api.service.ChatApprovalDecisionSyncService;
 import com.alibaba.assistant.agent.runtime.execution.ExecutionApprovalDetailView;
 import com.alibaba.assistant.agent.runtime.execution.ExecutionApprovalService;
 import jakarta.servlet.Filter;
@@ -216,10 +217,16 @@ class ExecutionApprovalControllerSecurityTest {
         }
 
         @Bean
+        ChatApprovalDecisionSyncService chatApprovalDecisionSyncService() {
+            return mock(ChatApprovalDecisionSyncService.class);
+        }
+
+        @Bean
         ExecutionApprovalController executionApprovalController(
                 ExecutionApprovalService executionApprovalService,
-                MigrationControlPlaneAuthorizationService authorizationService) {
-            return new ExecutionApprovalController(executionApprovalService, authorizationService);
+                MigrationControlPlaneAuthorizationService authorizationService,
+                ChatApprovalDecisionSyncService chatApprovalDecisionSyncService) {
+            return new ExecutionApprovalController(executionApprovalService, authorizationService, chatApprovalDecisionSyncService);
         }
 
         @Bean
@@ -229,5 +236,3 @@ class ExecutionApprovalControllerSecurityTest {
         }
     }
 }
-
-

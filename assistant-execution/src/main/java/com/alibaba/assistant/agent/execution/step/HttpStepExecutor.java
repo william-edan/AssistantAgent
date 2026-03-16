@@ -39,14 +39,11 @@ import java.util.Map;
 import java.util.Optional;
 
 /**
- * HTTP step executor. Resolves variables from FlowContext, executes HTTP requests,
- * evaluates success conditions, and extracts outputs via JsonPath.
- * <p>
- * Uses SystemAccessProfilePort + TokenBroker for authentication instead of
- * direct DB lookups. Preserves form-urlencoded behavior ({@code _ajax=1}, PHP array serialization).
+ * HTTP 步骤执行器。
  *
- * @author Assistant Agent Team
- * @since 1.0.0
+ * <p>负责把流程上下文中的变量解析成 HTTP 请求参数，调用外部系统接口，
+ * 再根据成功条件和 JsonPath 提取规则生成步骤输出。
+ * 这是平台通过接口对接企业系统时最核心的执行器之一。</p>
  */
 @Component
 public class HttpStepExecutor {
@@ -83,7 +80,9 @@ public class HttpStepExecutor {
 	}
 
 	/**
-	 * Execute an HTTP step.
+	 * 执行单个 HTTP 步骤。
+	 *
+	 * <p>执行顺序是：解析输入参数、补齐鉴权、发起请求、判断成功条件、提取输出。</p>
 	 */
 	public StepResult execute(StepConfig config, FlowContext context) {
 		try {

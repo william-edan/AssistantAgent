@@ -41,7 +41,7 @@ import org.springframework.web.server.ResponseStatusException;
 import java.security.Principal;
 
 /**
- * Control-plane management API for connectors.
+ * 连接器管理入口。
  */
 @RestController
 @Profile("migration")
@@ -77,7 +77,7 @@ public class ConnectorManagementController {
                         connectorManagementService.listConnectors(spaceCode, normalizedEnvironment, keyword))));
     }
 
-    @GetMapping("/{connectorCode}")
+    @GetMapping("/manage/{connectorCode}")
     public ResponseEntity<ConnectorResponse> getConnector(
             @PathVariable String spaceCode,
             @PathVariable String connectorCode,
@@ -91,7 +91,7 @@ public class ConnectorManagementController {
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "connector_not_found"));
         return ResponseEntity.ok(ConnectorResponse.ok(ConnectorData.from(resolved)));
     }
-    @PutMapping("/{connectorCode}")
+    @PutMapping("/manage/{connectorCode}")
     public ResponseEntity<ConnectorResponse> upsertConnector(
             @PathVariable String spaceCode,
             @PathVariable String connectorCode,

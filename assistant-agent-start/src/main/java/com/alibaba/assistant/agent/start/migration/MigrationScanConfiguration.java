@@ -31,17 +31,16 @@ import org.springframework.context.annotation.Profile;
 @Configuration
 @Profile("migration")
 @ComponentScan(basePackages = {
-	"com.alibaba.assistant.agent.api",
-	"com.alibaba.assistant.agent.runtime",
-	"com.alibaba.assistant.agent.slot",
-	"com.alibaba.assistant.agent.execution",
-	"com.alibaba.assistant.agent.controlplane",
-	"com.alibaba.assistant.agent.infra"
+        "com.alibaba.assistant.agent.api",
+        "com.alibaba.assistant.agent.runtime",
+        "com.alibaba.assistant.agent.slot",
+        "com.alibaba.assistant.agent.execution",
+        "com.alibaba.assistant.agent.controlplane",
+        "com.alibaba.assistant.agent.infra"
 })
 @MapperScan(basePackages = {
-	"com.alibaba.assistant.agent.controlplane.toolregistry.mapper",
-	"com.alibaba.assistant.agent.controlplane.audit.mapper",
-	"com.alibaba.assistant.agent.controlplane.identity.mapper"
+        "com.alibaba.assistant.agent.controlplane",
+        "com.alibaba.assistant.agent.execution.persistence.mapper"
 })
 public class MigrationScanConfiguration {
 

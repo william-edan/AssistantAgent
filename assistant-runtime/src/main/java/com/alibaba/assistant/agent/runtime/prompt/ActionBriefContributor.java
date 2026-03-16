@@ -20,7 +20,7 @@ import com.alibaba.assistant.agent.prompt.PromptContribution;
 import com.alibaba.assistant.agent.prompt.PromptContributor;
 import com.alibaba.assistant.agent.prompt.PromptContributorContext;
 import com.alibaba.assistant.agent.runtime.agent.AssistantStateKeys;
-import com.alibaba.assistant.agent.runtime.config.RuntimeConfigCompatibilityAdapter;
+import com.alibaba.assistant.agent.runtime.config.RuntimeConfigView;
 import com.alibaba.assistant.agent.slot.SlotSchemaParser;
 import com.alibaba.assistant.agent.slot.model.SlotAskMode;
 import com.alibaba.assistant.agent.slot.model.SlotDefinition;
@@ -58,17 +58,17 @@ public class ActionBriefContributor implements PromptContributor {
 
 	private static final int MAX_COLLECTED_SLOT_LINES = 8;
 
-	private final RuntimeConfigCompatibilityAdapter compatibilityAdapter;
+	private final RuntimeConfigView runtimeConfigView;
 
 	private final SlotSchemaParser slotSchemaParser;
 
 	private final ObjectMapper objectMapper;
 
 	public ActionBriefContributor(
-			RuntimeConfigCompatibilityAdapter compatibilityAdapter,
+			RuntimeConfigView runtimeConfigView,
 			SlotSchemaParser slotSchemaParser,
 			ObjectMapper objectMapper) {
-		this.compatibilityAdapter = compatibilityAdapter;
+		this.runtimeConfigView = runtimeConfigView;
 		this.slotSchemaParser = slotSchemaParser;
 		this.objectMapper = objectMapper;
 	}
@@ -85,7 +85,7 @@ public class ActionBriefContributor implements PromptContributor {
 
 	@Override
 	public boolean shouldContribute(PromptContributorContext context) {
-		return compatibilityAdapter.promptDynamicEnabled() && resolveActionMeta(context.getAttributes()).isPresent();
+		return runtimeConfigView.promptDynamicEnabled() && resolveActionMeta(context.getAttributes()).isPresent();
 	}
 
 	@Override
@@ -190,7 +190,6 @@ public class ActionBriefContributor implements PromptContributor {
 				toolMeta.getDescription(),
 				toolMeta.getSystemCode(),
 				toolMeta.getParameterSchema(),
-				null,
 				toolMeta.getRiskLevel(),
 				toolMeta.getRequiresConfirm());
 	}
@@ -202,7 +201,6 @@ public class ActionBriefContributor implements PromptContributor {
 				null,
 				snapshot.getSystemCode(),
 				snapshot.getSlotSchema(),
-				snapshot.getRequestSchema(),
 				null,
 				null);
 	}
@@ -225,10 +223,7 @@ public class ActionBriefContributor implements PromptContributor {
 				asText(rawMeta.get("slotSchema")),
 				asText(rawMeta.get("slot_schema")),
 				parameterSchema);
-		String requestSchema = firstNonEmpty(
-				asText(rawMeta.get("requestSchema")),
-				asText(rawMeta.get("request_schema")),
-				parameterSchema);
+
 		String riskLevel = firstNonEmpty(asText(rawMeta.get("riskLevel")), asText(rawMeta.get("risk_level")));
 		Boolean requiresConfirm = asBoolean(firstNonNull(rawMeta.get("requiresConfirm"), rawMeta.get("requires_confirm")));
 		if (!StringUtils.hasText(toolCode) && !StringUtils.hasText(toolName)) {
@@ -240,21 +235,18 @@ public class ActionBriefContributor implements PromptContributor {
 				description,
 				systemCode,
 				slotSchema,
-				requestSchema,
 				riskLevel,
 				requiresConfirm));
 	}
 
 	private List<SlotDefinition> resolveSlotDefinitions(ActionMeta actionMeta) {
-		if ((!StringUtils.hasText(actionMeta.slotSchema()) && !StringUtils.hasText(actionMeta.requestSchema()))
-				|| !StringUtils.hasText(actionMeta.toolCode())) {
+		if (!StringUtils.hasText(actionMeta.slotSchema()) || !StringUtils.hasText(actionMeta.toolCode())) {
 			return List.of();
 		}
 		try {
 			ToolMetaSnapshot snapshot = new ToolMetaSnapshot();
 			snapshot.setToolCode(actionMeta.toolCode());
 			snapshot.setSlotSchema(actionMeta.slotSchema());
-			snapshot.setRequestSchema(actionMeta.requestSchema());
 			snapshot.setSystemCode(actionMeta.systemCode());
 
 			List<SlotDefinition> definitions = slotSchemaParser.parse(snapshot);
@@ -646,9 +638,14 @@ public class ActionBriefContributor implements PromptContributor {
 			String description,
 			String systemCode,
 			String slotSchema,
-			String requestSchema,
 			String riskLevel,
 			Boolean requiresConfirm) {
 	}
 
 }
+
+
+
+
+
+

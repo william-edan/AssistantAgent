@@ -21,86 +21,226 @@ import com.alibaba.assistant.agent.runtime.compiler.RuntimeArtifact;
 import org.springframework.ai.tool.definition.ToolDefinition;
 import org.springframework.util.StringUtils;
 
+import java.util.Locale;
+
 /**
- * Published tool descriptor consumed by the runtime registry.
+ * 运行时发布描述，统一承载工具类型、可见性和调用策略。
  */
 public record PublishedToolDescriptor(
-		String sourceType,
-		String publicationKey,
-		String displayName,
-		String targetClassName,
-		String targetClassDescription,
-		boolean alwaysAvailable,
-		String executionSystemCode,
-		RuntimeArtifact artifact,
-		CodeactTool directTool) {
+        String sourceType,
+        String publicationKey,
+        String displayName,
+        String targetClassName,
+        String targetClassDescription,
+        boolean alwaysAvailable,
+        String executionSystemCode,
+        String toolType,
+        String visibility,
+        String invocationPolicy,
+        RuntimeArtifact artifact,
+        CodeactTool directTool) {
 
-	public PublishedToolDescriptor(
-			String sourceType,
-			String publicationKey,
-			String displayName,
-			String targetClassName,
-			String targetClassDescription,
-			boolean alwaysAvailable,
-			String executionSystemCode,
-			RuntimeArtifact artifact) {
-		this(sourceType, publicationKey, displayName, targetClassName, targetClassDescription,
-				alwaysAvailable, executionSystemCode, artifact, null);
-	}
+    private static final String DEFAULT_TOOL_TYPE = "ACTION";
 
-	public static PublishedToolDescriptor forArtifact(
-			String sourceType,
-			String publicationKey,
-			String displayName,
-			String targetClassName,
-			String targetClassDescription,
-			boolean alwaysAvailable,
-			String executionSystemCode,
-			RuntimeArtifact artifact) {
-		return new PublishedToolDescriptor(sourceType, publicationKey, displayName, targetClassName,
-				targetClassDescription, alwaysAvailable, executionSystemCode, artifact, null);
-	}
+    private static final String DEFAULT_VISIBILITY = "USER";
 
-	public static PublishedToolDescriptor forDirectTool(
-			String sourceType,
-			String publicationKey,
-			String displayName,
-			CodeactTool directTool) {
-		CodeactToolMetadata metadata = directTool != null ? directTool.getCodeactMetadata() : null;
-		ToolDefinition definition = directTool != null ? directTool.getToolDefinition() : null;
-		return new PublishedToolDescriptor(
-				sourceType,
-				publicationKey,
-				firstNonBlank(displayName,
-						metadata != null ? metadata.displayName() : null,
-						definition != null ? definition.description() : null,
-						definition != null ? definition.name() : null),
-				metadata != null ? metadata.targetClassName() : null,
-				metadata != null ? metadata.targetClassDescription() : null,
-				metadata != null && metadata.alwaysAvailable(),
-				null,
-				null,
-				directTool);
-	}
+    private static final String DEFAULT_INVOCATION_POLICY = "DIRECT";
 
-	public boolean isArtifactPublication() {
-		return artifact != null;
-	}
+    public PublishedToolDescriptor(
+            String sourceType,
+            String publicationKey,
+            String displayName,
+            String targetClassName,
+            String targetClassDescription,
+            boolean alwaysAvailable,
+            String executionSystemCode,
+            RuntimeArtifact artifact) {
+        this(sourceType, publicationKey, displayName, targetClassName, targetClassDescription,
+                alwaysAvailable, executionSystemCode, DEFAULT_TOOL_TYPE, DEFAULT_VISIBILITY,
+                DEFAULT_INVOCATION_POLICY, artifact, null);
+    }
 
-	public boolean isDirectToolPublication() {
-		return directTool != null;
-	}
+    public PublishedToolDescriptor(
+            String sourceType,
+            String publicationKey,
+            String displayName,
+            String targetClassName,
+            String targetClassDescription,
+            boolean alwaysAvailable,
+            String executionSystemCode,
+            RuntimeArtifact artifact,
+            CodeactTool directTool) {
+        this(sourceType, publicationKey, displayName, targetClassName, targetClassDescription,
+                alwaysAvailable, executionSystemCode, DEFAULT_TOOL_TYPE, DEFAULT_VISIBILITY,
+                DEFAULT_INVOCATION_POLICY, artifact, directTool);
+    }
 
-	private static String firstNonBlank(String... values) {
-		if (values == null) {
-			return null;
-		}
-		for (String value : values) {
-			if (StringUtils.hasText(value)) {
-				return value;
-			}
-		}
-		return null;
-	}
+    public PublishedToolDescriptor {
+        toolType = normalizeToolType(toolType);
+        visibility = normalizeVisibility(visibility);
+        invocationPolicy = normalizeInvocationPolicy(invocationPolicy, visibility);
+    }
 
+    public static PublishedToolDescriptor forArtifact(
+            String sourceType,
+            String publicationKey,
+            String displayName,
+            String targetClassName,
+            String targetClassDescription,
+            boolean alwaysAvailable,
+            String executionSystemCode,
+            RuntimeArtifact artifact) {
+        return forArtifact(sourceType, publicationKey, displayName, targetClassName, targetClassDescription,
+                alwaysAvailable, executionSystemCode, DEFAULT_TOOL_TYPE, DEFAULT_VISIBILITY,
+                DEFAULT_INVOCATION_POLICY, artifact);
+    }
+
+    public static PublishedToolDescriptor forArtifact(
+            String sourceType,
+            String publicationKey,
+            String displayName,
+            String targetClassName,
+            String targetClassDescription,
+            boolean alwaysAvailable,
+            String executionSystemCode,
+            String toolType,
+            String visibility,
+            String invocationPolicy,
+            RuntimeArtifact artifact) {
+        return new PublishedToolDescriptor(
+                sourceType,
+                publicationKey,
+                displayName,
+                targetClassName,
+                targetClassDescription,
+                alwaysAvailable,
+                executionSystemCode,
+                toolType,
+                visibility,
+                invocationPolicy,
+                artifact,
+                null);
+    }
+
+    public static PublishedToolDescriptor forDirectTool(
+            String sourceType,
+            String publicationKey,
+            String displayName,
+            CodeactTool directTool) {
+        return newPublishedDirectTool(sourceType, publicationKey, displayName, DEFAULT_TOOL_TYPE,
+                DEFAULT_VISIBILITY, DEFAULT_INVOCATION_POLICY, directTool);
+    }
+
+    public static PublishedToolDescriptor forDirectTool(
+            String sourceType,
+            String publicationKey,
+            String displayName,
+            String toolType,
+            String visibility,
+            String invocationPolicy,
+            CodeactTool directTool) {
+        return newPublishedDirectTool(sourceType, publicationKey, displayName, toolType, visibility,
+                invocationPolicy, directTool);
+    }
+
+    public boolean isArtifactPublication() {
+        return artifact != null;
+    }
+
+    public boolean isDirectToolPublication() {
+        return directTool != null;
+    }
+
+    /**
+     * 规划器可见表示可被主流程编排，但不一定面向最终用户。
+     */
+    public boolean isPlannerExposed() {
+        if ("DEPENDENCY_ONLY".equalsIgnoreCase(invocationPolicy)) {
+            return false;
+        }
+        return !"INTERNAL".equalsIgnoreCase(visibility);
+    }
+
+    /**
+     * 用户可见表示可以进入前端目录、主对话工具表和任务展示。
+     */
+    public boolean isUserVisible() {
+        if ("DEPENDENCY_ONLY".equalsIgnoreCase(invocationPolicy)) {
+            return false;
+        }
+        return "USER".equalsIgnoreCase(visibility);
+    }
+
+    private static PublishedToolDescriptor newPublishedDirectTool(
+            String sourceType,
+            String publicationKey,
+            String displayName,
+            String toolType,
+            String visibility,
+            String invocationPolicy,
+            CodeactTool directTool) {
+        CodeactToolMetadata metadata = directTool != null ? directTool.getCodeactMetadata() : null;
+        ToolDefinition definition = directTool != null ? directTool.getToolDefinition() : null;
+        return new PublishedToolDescriptor(
+                sourceType,
+                publicationKey,
+                firstNonBlank(displayName,
+                        metadata != null ? metadata.displayName() : null,
+                        definition != null ? definition.description() : null,
+                        definition != null ? definition.name() : null),
+                metadata != null ? metadata.targetClassName() : null,
+                metadata != null ? metadata.targetClassDescription() : null,
+                metadata != null && metadata.alwaysAvailable(),
+                null,
+                toolType,
+                visibility,
+                invocationPolicy,
+                null,
+                directTool);
+    }
+
+    private static String normalizeToolType(String rawToolType) {
+        if (!StringUtils.hasText(rawToolType)) {
+            return DEFAULT_TOOL_TYPE;
+        }
+        String normalized = rawToolType.trim().toUpperCase(Locale.ROOT);
+        return switch (normalized) {
+            case "QUERY", "ACTION", "WORKFLOW", "AGENT_TASK" -> normalized;
+            default -> DEFAULT_TOOL_TYPE;
+        };
+    }
+
+    private static String normalizeVisibility(String rawVisibility) {
+        if (!StringUtils.hasText(rawVisibility)) {
+            return DEFAULT_VISIBILITY;
+        }
+        String normalized = rawVisibility.trim().toUpperCase(Locale.ROOT);
+        return switch (normalized) {
+            case "USER", "PLANNER", "INTERNAL" -> normalized;
+            default -> DEFAULT_VISIBILITY;
+        };
+    }
+
+    private static String normalizeInvocationPolicy(String rawInvocationPolicy, String visibility) {
+        if (!StringUtils.hasText(rawInvocationPolicy)) {
+            return "INTERNAL".equalsIgnoreCase(visibility) ? "DEPENDENCY_ONLY" : DEFAULT_INVOCATION_POLICY;
+        }
+        String normalized = rawInvocationPolicy.trim().toUpperCase(Locale.ROOT);
+        return switch (normalized) {
+            case "DIRECT", "COMPOSABLE", "DEPENDENCY_ONLY" -> normalized;
+            default -> "INTERNAL".equalsIgnoreCase(visibility) ? "DEPENDENCY_ONLY" : DEFAULT_INVOCATION_POLICY;
+        };
+    }
+
+    private static String firstNonBlank(String... values) {
+        if (values == null) {
+            return null;
+        }
+        for (String value : values) {
+            if (StringUtils.hasText(value)) {
+                return value;
+            }
+        }
+        return null;
+    }
 }

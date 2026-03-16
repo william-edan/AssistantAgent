@@ -17,7 +17,7 @@ package com.alibaba.assistant.agent.runtime.prompt;
 
 import com.alibaba.assistant.agent.prompt.PromptContribution;
 import com.alibaba.assistant.agent.prompt.PromptContributorContext;
-import com.alibaba.assistant.agent.runtime.config.RuntimeConfigCompatibilityAdapter;
+import com.alibaba.assistant.agent.runtime.config.RuntimeConfigView;
 import org.junit.jupiter.api.Test;
 import org.springframework.ai.chat.messages.Message;
 import org.springframework.ai.chat.messages.SystemMessage;
@@ -36,7 +36,7 @@ class CoreInstructionContributorTest {
 
     @Test
     void shouldSkipWhenDynamicPromptDisabled() {
-        RuntimeConfigCompatibilityAdapter adapter = mock(RuntimeConfigCompatibilityAdapter.class);
+        RuntimeConfigView adapter = mock(RuntimeConfigView.class);
         when(adapter.promptDynamicEnabled()).thenReturn(false);
 
         CoreInstructionContributor contributor = new CoreInstructionContributor(adapter);
@@ -46,7 +46,7 @@ class CoreInstructionContributorTest {
 
     @Test
     void shouldIncludeCurrentTimeAnchorAndArtifactExecuteRule() {
-        RuntimeConfigCompatibilityAdapter adapter = mock(RuntimeConfigCompatibilityAdapter.class);
+        RuntimeConfigView adapter = mock(RuntimeConfigView.class);
         when(adapter.promptDynamicEnabled()).thenReturn(true);
 
         CoreInstructionContributor contributor = new CoreInstructionContributor(adapter);
@@ -94,3 +94,4 @@ class CoreInstructionContributorTest {
     }
 
 }
+

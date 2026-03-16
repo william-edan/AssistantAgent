@@ -16,7 +16,7 @@
 package com.alibaba.assistant.agent.runtime.execution;
 
 /**
- * Stable execution event types shared by runtime, persistence, and streaming layers.
+ * 运行时、持久化层和流式协议共用的稳定执行事件类型。
  */
 public enum ExecutionEventType {
 

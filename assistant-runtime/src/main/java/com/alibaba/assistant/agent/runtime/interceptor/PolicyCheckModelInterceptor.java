@@ -571,11 +571,8 @@ public class PolicyCheckModelInterceptor extends ModelInterceptor {
 	}
 
 	private static boolean isExecuteToolName(String toolName) {
-		if (!StringUtils.hasText(toolName)) {
-			return false;
-		}
-		String normalized = toolName.trim().toLowerCase(Locale.ROOT);
-		return normalized.endsWith("_execute") || normalized.matches(".*_execute_[0-9]+$");
+		return StringUtils.hasText(toolName)
+				&& "artifact_execute".equalsIgnoreCase(toolName.trim());
 	}
 
 	private String readStateString(OverAllState state, String key) {

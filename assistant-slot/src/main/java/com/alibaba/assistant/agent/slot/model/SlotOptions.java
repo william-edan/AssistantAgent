@@ -31,6 +31,8 @@ public class SlotOptions {
 		STATIC,
 		/** Enum mapping (key-value pairs) */
 		ENUM,
+		/** Dynamic values from reusable tools */
+		TOOL,
 		/** Dynamic values from API */
 		API,
 		/** Search-based values */
@@ -46,6 +48,8 @@ public class SlotOptions {
 	private Map<String, Object> enumMapping;
 
 	private ApiConfig apiConfig;
+
+	private ToolOptionResolverConfig toolConfig;
 
 	private AutoSelectConfig autoSelect;
 
@@ -284,6 +288,14 @@ public class SlotOptions {
 
 	public void setApiConfig(ApiConfig apiConfig) {
 		this.apiConfig = apiConfig;
+	}
+
+	public ToolOptionResolverConfig getToolConfig() {
+		return toolConfig;
+	}
+
+	public void setToolConfig(ToolOptionResolverConfig toolConfig) {
+		this.toolConfig = toolConfig;
 	}
 
 	public AutoSelectConfig getAutoSelect() {

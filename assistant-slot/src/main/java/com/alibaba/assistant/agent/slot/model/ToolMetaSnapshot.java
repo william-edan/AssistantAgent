@@ -29,8 +29,6 @@ public class ToolMetaSnapshot {
 
 	private String slotSchema;
 
-	private String requestSchema;
-
 	private String executionPlan;
 
 	private String behaviorConfig;
@@ -40,10 +38,9 @@ public class ToolMetaSnapshot {
 	public ToolMetaSnapshot() {
 	}
 
-	public ToolMetaSnapshot(String toolCode, String slotSchema, String requestSchema) {
+	public ToolMetaSnapshot(String toolCode, String slotSchema) {
 		this.toolCode = toolCode;
 		this.slotSchema = slotSchema;
-		this.requestSchema = requestSchema;
 	}
 
 	public String getToolCode() {
@@ -60,14 +57,6 @@ public class ToolMetaSnapshot {
 
 	public void setSlotSchema(String slotSchema) {
 		this.slotSchema = slotSchema;
-	}
-
-	public String getRequestSchema() {
-		return requestSchema;
-	}
-
-	public void setRequestSchema(String requestSchema) {
-		this.requestSchema = requestSchema;
 	}
 
 	public String getExecutionPlan() {

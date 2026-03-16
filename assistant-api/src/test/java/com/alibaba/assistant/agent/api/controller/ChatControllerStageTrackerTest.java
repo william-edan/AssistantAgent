@@ -15,7 +15,9 @@
  */
 package com.alibaba.assistant.agent.api.controller;
 
-import com.alibaba.assistant.agent.api.protocol.V3ProtocolAdapter.AssistantEvent;
+import com.alibaba.assistant.agent.api.protocol.FrontendEvent;
+import com.alibaba.assistant.agent.api.protocol.FrontendEventType;
+import com.alibaba.assistant.agent.api.protocol.FrontendStage;
 import com.alibaba.cloud.ai.agent.studio.dto.messages.AssistantMessageDTO;
 import com.alibaba.cloud.ai.agent.studio.dto.messages.ToolRequestConfirmMessageDTO;
 import com.alibaba.cloud.ai.agent.studio.dto.messages.ToolRequestMessageDTO;
@@ -25,6 +27,7 @@ import org.junit.jupiter.api.Test;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 
@@ -34,12 +37,13 @@ class ChatControllerStageTrackerTest {
     void shouldEmitInitialUnderstandingStageOnlyOnce() {
         ChatController.StageTracker tracker = new ChatController.StageTracker();
 
-        AssistantEvent first = tracker.emitInitial("UNDERSTANDING", "run_sse");
-        AssistantEvent second = tracker.emitInitial("UNDERSTANDING", "run_sse");
+        FrontendEvent first = tracker.emitInitial("UNDERSTANDING", "run_sse");
+        FrontendEvent second = tracker.emitInitial("UNDERSTANDING", "run_sse");
 
         assertNotNull(first);
-        assertEquals("UNDERSTANDING", first.getStage());
-        assertEquals("run_sse", first.getPayload().get("source"));
+        assertEquals(FrontendEventType.STAGE, first.eventType());
+        assertEquals(FrontendStage.UNDERSTANDING, first.stage());
+        assertEquals("run_sse", first.payload().get("source"));
         assertNull(second);
     }
 
@@ -51,23 +55,24 @@ class ChatControllerStageTrackerTest {
         toolCall.setName("slot_collect");
         message.setToolCalls(List.of(toolCall));
 
-        AssistantEvent event = tracker.emitForMessage(message, "_AGENT_TOOL_");
+        FrontendEvent event = tracker.emitForMessage(message, "_AGENT_TOOL_", "T-1");
 
         assertNotNull(event);
-        assertEquals("COLLECTING", event.getStage());
-        assertEquals("tool-request", event.getPayload().get("messageType"));
-        assertEquals("slot_collect", event.getPayload().get("toolName"));
+        assertEquals(FrontendStage.COLLECTING, event.stage());
+        assertEquals("tool-request", event.payload().get("messageType"));
+        assertEquals("slot_collect", event.payload().get("toolName"));
+        assertEquals("T-1", event.threadId());
     }
 
     @Test
     void shouldResolveConfirmingStageFromToolConfirmMessage() {
         ChatController.StageTracker tracker = new ChatController.StageTracker();
 
-        AssistantEvent event = tracker.emitForMessage(new ToolRequestConfirmMessageDTO(), "_AGENT_INTERRUPT_");
+        FrontendEvent event = tracker.emitForMessage(new ToolRequestConfirmMessageDTO(), "_AGENT_INTERRUPT_", "T-1");
 
         assertNotNull(event);
-        assertEquals("CONFIRMING", event.getStage());
-        assertEquals("tool-confirm", event.getPayload().get("messageType"));
+        assertEquals(FrontendStage.CONFIRMING, event.stage());
+        assertEquals("tool-confirm", event.payload().get("messageType"));
     }
 
     @Test
@@ -78,12 +83,12 @@ class ChatControllerStageTrackerTest {
         response.setName("leave_application_execute");
         message.setResponses(List.of(response));
 
-        AssistantEvent event = tracker.emitForMessage(message, "_AGENT_TOOL_");
+        FrontendEvent event = tracker.emitForMessage(message, "_AGENT_TOOL_", "T-1");
 
         assertNotNull(event);
-        assertEquals("EXECUTING", event.getStage());
-        assertEquals("tool", event.getPayload().get("messageType"));
-        assertEquals("leave_application_execute", event.getPayload().get("toolName"));
+        assertEquals(FrontendStage.EXECUTING, event.stage());
+        assertEquals("tool", event.payload().get("messageType"));
+        assertEquals("leave_application_execute", event.payload().get("toolName"));
     }
 
     @Test
@@ -94,18 +99,47 @@ class ChatControllerStageTrackerTest {
         toolCall.setName("slot_collect");
         message.setToolCalls(List.of(toolCall));
 
-        assertNotNull(tracker.emitForMessage(message, "_AGENT_TOOL_"));
-        assertNull(tracker.emitForMessage(message, "_AGENT_TOOL_"));
+        assertNotNull(tracker.emitForMessage(message, "_AGENT_TOOL_", "T-1"));
+        assertNull(tracker.emitForMessage(message, "_AGENT_TOOL_", "T-1"));
     }
+
     @Test
     void shouldResolveDoneStageFromTerminalAssistantReply() {
         ChatController.StageTracker tracker = new ChatController.StageTracker();
         tracker.emitInitial("EXECUTING", "resume_sse");
 
-        AssistantEvent event = tracker.emitForMessage(new AssistantMessageDTO("请假申请已提交"), "_AGENT_MODEL_");
+        FrontendEvent event = tracker.emitForMessage(new AssistantMessageDTO("请假申请已提交"), "_AGENT_MODEL_", "T-1");
 
         assertNotNull(event);
-        assertEquals("DONE", event.getStage());
-        assertEquals("assistant", event.getPayload().get("messageType"));
+        assertEquals(FrontendStage.DONE, event.stage());
+        assertEquals("assistant", event.payload().get("messageType"));
+    }
+
+    @Test
+    void shouldResolveWaitingApprovalStageFromInitialState() {
+        ChatController.StageTracker tracker = new ChatController.StageTracker();
+
+        FrontendEvent event = tracker.emitInitial("WAITING_APPROVAL", "resume_sse");
+
+        assertNotNull(event);
+        assertEquals(FrontendStage.WAITING_APPROVAL, event.stage());
+        assertEquals("resume_sse", event.payload().get("source"));
+    }
+
+    @Test
+    void shouldNotLeakInternalNodeNameInStagePayload() {
+        ChatController.StageTracker tracker = new ChatController.StageTracker();
+        ToolRequestMessageDTO message = new ToolRequestMessageDTO();
+        ToolRequestMessageDTO.ToolCallDTO toolCall = new ToolRequestMessageDTO.ToolCallDTO();
+        toolCall.setName("slot_collect");
+        message.setToolCalls(List.of(toolCall));
+
+        FrontendEvent event = tracker.emitForMessage(message, "_AGENT_HOOK_Internal", "T-1");
+
+        assertNotNull(event);
+        assertFalse(event.payload().containsKey("node"));
     }
 }
+
+
+

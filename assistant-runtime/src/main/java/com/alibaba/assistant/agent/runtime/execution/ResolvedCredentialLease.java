@@ -20,20 +20,19 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 
 /**
- * Resolved short-lived credential lease used by a runtime execution step.
+ * 已解析完成、可供执行步骤直接使用的短期凭证租约。
  */
 public record ResolvedCredentialLease(
-		String leaseKey,
-		String authProfileCode,
-		Long principalBindingId,
-		Long connectorId,
-		String credentialType,
-		Map<String, String> headers,
-		Instant expiresAt,
-		String compatibilitySystemCode,
-		String baseUrl) {
+        String leaseKey,
+        String authProfileCode,
+        Long principalBindingId,
+        Long connectorId,
+        String credentialType,
+        Map<String, String> headers,
+        Instant expiresAt,
+        String baseUrl) {
 
-	public ResolvedCredentialLease {
-		headers = Map.copyOf(headers != null ? new LinkedHashMap<>(headers) : Map.of());
-	}
+    public ResolvedCredentialLease {
+        headers = Map.copyOf(headers != null ? new LinkedHashMap<>(headers) : Map.of());
+    }
 }

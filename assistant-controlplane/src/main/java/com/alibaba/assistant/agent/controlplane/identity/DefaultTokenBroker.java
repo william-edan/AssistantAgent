@@ -26,9 +26,9 @@ import java.util.Optional;
 import java.util.UUID;
 
 /**
- * Default TokenBroker implementation.
- * Looks up identity bindings and returns token leases based on stored credentials.
- * In the future, this will integrate with SystemAccessProfile for dynamic token acquisition.
+ * 默认的令牌代理实现。
+ *
+ * <p>当前会读取身份绑定表中的静态凭证并返回令牌租约，后续可以继续扩展为基于系统接入配置的动态换取模式。
  *
  * @author Assistant Agent Team
  * @since 1.0.0

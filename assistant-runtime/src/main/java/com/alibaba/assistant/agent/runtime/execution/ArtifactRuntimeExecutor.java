@@ -24,7 +24,10 @@ import com.alibaba.assistant.agent.execution.model.StepResult;
 import com.alibaba.assistant.agent.execution.model.StepStatus;
 import com.alibaba.assistant.agent.runtime.agent.AssistantStateKeys;
 import com.alibaba.assistant.agent.runtime.compiler.RuntimeArtifact;
+import com.alibaba.assistant.agent.runtime.context.RuntimeSpaceResolver;
+import com.alibaba.assistant.agent.runtime.planner.ToolExecutor;
 import com.alibaba.assistant.agent.runtime.registry.PublishedToolDescriptor;
+import com.alibaba.assistant.agent.runtime.task.AgentTaskProjector;
 import com.alibaba.cloud.ai.graph.OverAllState;
 import com.alibaba.cloud.ai.graph.agent.tools.ToolContextConstants;
 import com.fasterxml.jackson.core.type.TypeReference;
@@ -45,10 +48,14 @@ import java.util.Set;
 import java.util.UUID;
 
 /**
- * Executes published runtime artifacts through the new runtime flow definition.
+ * 运行时执行器。
+ *
+ * <p>负责执行已经发布的动作或工作流，并把执行过程中的事件同时写入事件流、任务投影和持久化记录。
+ * 这是企业业务真正落地到执行引擎的核心入口。</p>
  */
 @Component
 public class ArtifactRuntimeExecutor {
+
 
     private final DAGFlowExecutor dagFlowExecutor;
 
@@ -58,17 +65,21 @@ public class ArtifactRuntimeExecutor {
 
     private final ExecutionEventStreamRegistry executionEventStreamRegistry;
 
+    private final AgentTaskProjector agentTaskProjector;
+
+    private final RuntimeSpaceResolver runtimeSpaceResolver;
+
     private final ObjectMapper objectMapper;
 
     public ArtifactRuntimeExecutor(DAGFlowExecutor dagFlowExecutor) {
-        this(dagFlowExecutor, null, null, null, new ObjectMapper());
+        this(dagFlowExecutor, null, null, null, null, null, new ObjectMapper());
     }
 
     public ArtifactRuntimeExecutor(
             DAGFlowExecutor dagFlowExecutor,
             @Nullable CredentialBroker credentialBroker,
             ObjectMapper objectMapper) {
-        this(dagFlowExecutor, credentialBroker, null, null, objectMapper);
+        this(dagFlowExecutor, credentialBroker, null, null, null, null, objectMapper);
     }
 
     public ArtifactRuntimeExecutor(
@@ -76,7 +87,18 @@ public class ArtifactRuntimeExecutor {
             @Nullable CredentialBroker credentialBroker,
             @Nullable ExecutionRuntimePersistenceRecorder persistenceRecorder,
             ObjectMapper objectMapper) {
-        this(dagFlowExecutor, credentialBroker, persistenceRecorder, null, objectMapper);
+        this(dagFlowExecutor, credentialBroker, persistenceRecorder, null, null, null, objectMapper);
+    }
+
+    public ArtifactRuntimeExecutor(
+            DAGFlowExecutor dagFlowExecutor,
+            @Nullable CredentialBroker credentialBroker,
+            @Nullable ExecutionRuntimePersistenceRecorder persistenceRecorder,
+            @Nullable ExecutionEventStreamRegistry executionEventStreamRegistry,
+            @Nullable AgentTaskProjector agentTaskProjector,
+            ObjectMapper objectMapper) {
+        this(dagFlowExecutor, credentialBroker, persistenceRecorder, executionEventStreamRegistry,
+                agentTaskProjector, null, objectMapper);
     }
 
     @Autowired
@@ -85,16 +107,20 @@ public class ArtifactRuntimeExecutor {
             @Nullable CredentialBroker credentialBroker,
             @Nullable ExecutionRuntimePersistenceRecorder persistenceRecorder,
             @Nullable ExecutionEventStreamRegistry executionEventStreamRegistry,
+            @Nullable AgentTaskProjector agentTaskProjector,
+            @Nullable RuntimeSpaceResolver runtimeSpaceResolver,
             ObjectMapper objectMapper) {
         this.dagFlowExecutor = dagFlowExecutor;
         this.credentialBroker = credentialBroker;
         this.persistenceRecorder = persistenceRecorder;
         this.executionEventStreamRegistry = executionEventStreamRegistry;
+        this.agentTaskProjector = agentTaskProjector;
+        this.runtimeSpaceResolver = runtimeSpaceResolver;
         this.objectMapper = objectMapper;
     }
 
     /**
-     * Execute a published artifact with the current runtime context.
+     * 直接执行已发布的运行时工作流。
      */
     public Map<String, Object> execute(
             PublishedToolDescriptor descriptor,
@@ -109,7 +135,7 @@ public class ArtifactRuntimeExecutor {
     }
 
     /**
-     * Resume a paused published artifact with a pre-hydrated runtime context.
+     * 恢复一个已经暂停的运行时工作流。
      */
     public Map<String, Object> resume(PublishedToolDescriptor descriptor, FlowContext flowContext) {
         if (descriptor == null || descriptor.artifact() == null || flowContext == null) {
@@ -129,8 +155,10 @@ public class ArtifactRuntimeExecutor {
         RuntimeExecutionEventCollector executionEventCollector = new RuntimeExecutionEventCollector(
                 runId,
                 descriptor,
+                flowContext,
                 flowContext.getThreadId(),
-                executionEventStreamRegistry);
+                executionEventStreamRegistry,
+                agentTaskProjector);
         if (resumed) {
             executionEventCollector.recordRunResumed();
         }
@@ -148,12 +176,12 @@ public class ArtifactRuntimeExecutor {
         executionEventCollector.recordRunTerminal(flowResult);
         List<ExecutionEvent> executionEvents = executionEventCollector.hasStepEvents()
                 ? executionEventCollector.events()
-                : buildExecutionEvents(runId, descriptor, flowResult, resumed);
+                : buildExecutionEvents(runId, descriptor, flowResult, flowContext, resumed);
         if (persistenceRecorder != null) {
             persistenceRecorder.record(descriptor, flowContext, flowResult, executionEvents);
         }
 
-        Map<String, Object> payload = new LinkedHashMap<>();
+        Map<String, Object> payload = appendExecutionMeta(new LinkedHashMap<>(), descriptor, flowContext);
         payload.put("success", flowResult.isSuccess());
         payload.put("runId", runId);
         payload.put("artifactCode", descriptor.artifact().getArtifactCode());
@@ -176,6 +204,58 @@ public class ArtifactRuntimeExecutor {
             @Nullable ToolContext toolContext,
             String runId) {
         Map<String, Object> safeArguments = arguments != null ? new LinkedHashMap<>(arguments) : new LinkedHashMap<>();
+        if (isInternalDependencyCall(toolContext, safeArguments)) {
+            safeArguments.put(ToolExecutor.INTERNAL_DEPENDENCY_CALL_KEY, true);
+        }
+        Long resolvedSpaceId = firstNonNull(
+                descriptor != null && descriptor.artifact() != null ? descriptor.artifact().getSpaceId() : null,
+                asLong(readContextValue(toolContext, AssistantStateKeys.SPACE_ID, "space_id", "spaceId")),
+                asLong(safeArguments.get(AssistantStateKeys.SPACE_ID)),
+                asLong(safeArguments.get("space_id")),
+                asLong(safeArguments.get("spaceId")));
+        String resolvedSpaceCode = firstNonBlank(
+                readContextText(toolContext, AssistantStateKeys.SPACE_CODE),
+                readContextText(toolContext, "space_code"),
+                readContextText(toolContext, "spaceCode"),
+                asText(safeArguments.get(AssistantStateKeys.SPACE_CODE)),
+                asText(safeArguments.get("space_code")),
+                asText(safeArguments.get("spaceCode")));
+        String resolvedSpaceEnvironment = firstNonBlank(
+                readContextText(toolContext, AssistantStateKeys.SPACE_ENVIRONMENT),
+                readContextText(toolContext, "space_environment"),
+                readContextText(toolContext, "spaceEnvironment"),
+                readContextText(toolContext, "environment"),
+                asText(safeArguments.get(AssistantStateKeys.SPACE_ENVIRONMENT)),
+                asText(safeArguments.get("space_environment")),
+                asText(safeArguments.get("spaceEnvironment")),
+                asText(safeArguments.get("environment")));
+        if ((resolvedSpaceId == null || !StringUtils.hasText(resolvedSpaceCode)) && runtimeSpaceResolver != null) {
+            Map<String, Object> spaceContext = new LinkedHashMap<>();
+            if (toolContext != null && toolContext.getContext() != null) {
+                spaceContext.putAll(toolContext.getContext());
+            }
+            spaceContext.putAll(safeArguments);
+            RuntimeSpaceResolver.ResolvedSpace resolvedSpace = runtimeSpaceResolver.resolve(spaceContext);
+            resolvedSpaceId = firstNonNull(resolvedSpaceId, resolvedSpace.spaceId());
+            resolvedSpaceCode = firstNonBlank(resolvedSpaceCode, resolvedSpace.spaceCode());
+            resolvedSpaceEnvironment = firstNonBlank(resolvedSpaceEnvironment, resolvedSpace.environment());
+        }
+        if (resolvedSpaceId != null) {
+            safeArguments.putIfAbsent(AssistantStateKeys.SPACE_ID, resolvedSpaceId);
+            safeArguments.putIfAbsent("space_id", resolvedSpaceId);
+            safeArguments.putIfAbsent("spaceId", resolvedSpaceId);
+        }
+        if (StringUtils.hasText(resolvedSpaceCode)) {
+            safeArguments.putIfAbsent(AssistantStateKeys.SPACE_CODE, resolvedSpaceCode);
+            safeArguments.putIfAbsent("space_code", resolvedSpaceCode);
+            safeArguments.putIfAbsent("spaceCode", resolvedSpaceCode);
+        }
+        if (StringUtils.hasText(resolvedSpaceEnvironment)) {
+            safeArguments.putIfAbsent(AssistantStateKeys.SPACE_ENVIRONMENT, resolvedSpaceEnvironment);
+            safeArguments.putIfAbsent("space_environment", resolvedSpaceEnvironment);
+            safeArguments.putIfAbsent("spaceEnvironment", resolvedSpaceEnvironment);
+            safeArguments.putIfAbsent("environment", resolvedSpaceEnvironment);
+        }
         FlowContext flowContext = new FlowContext(safeArguments);
         flowContext.setRunId(runId);
         flowContext.setSystemCode(firstNonBlank(
@@ -195,6 +275,43 @@ public class ArtifactRuntimeExecutor {
                 asText(safeArguments.get(AssistantStateKeys.THREAD_ID)),
                 asText(safeArguments.get("thread_id"))));
         return flowContext;
+    }
+
+    private boolean isInternalDependencyCall(@Nullable ToolContext toolContext, Map<String, Object> arguments) {
+        if (arguments != null && asBoolean(arguments.get(ToolExecutor.INTERNAL_DEPENDENCY_CALL_KEY))) {
+            return true;
+        }
+        if (toolContext == null || toolContext.getContext() == null) {
+            return false;
+        }
+        return asBoolean(toolContext.getContext().get(ToolExecutor.INTERNAL_DEPENDENCY_CALL_KEY));
+    }
+
+    private boolean isInternalDependencyCall(@Nullable FlowContext flowContext) {
+        if (flowContext == null || flowContext.getInitialInputs().isEmpty()) {
+            return false;
+        }
+        return asBoolean(flowContext.getInitialInputs().get(ToolExecutor.INTERNAL_DEPENDENCY_CALL_KEY));
+    }
+
+    private Map<String, Object> appendExecutionMeta(
+            Map<String, Object> target,
+            PublishedToolDescriptor descriptor,
+            @Nullable FlowContext flowContext) {
+        Map<String, Object> payload = target != null ? target : new LinkedHashMap<>();
+        if (isInternalDependencyCall(flowContext)) {
+            payload.put("internal", true);
+        }
+        putIfHasText(payload, "toolType", descriptor != null ? descriptor.toolType() : null);
+        putIfHasText(payload, "visibility", descriptor != null ? descriptor.visibility() : null);
+        putIfHasText(payload, "invocationPolicy", descriptor != null ? descriptor.invocationPolicy() : null);
+        return payload;
+    }
+
+    private void putIfHasText(Map<String, Object> target, String key, @Nullable String value) {
+        if (target != null && StringUtils.hasText(key) && StringUtils.hasText(value)) {
+            target.put(key, value);
+        }
     }
 
     private void resolveStepCredentials(PublishedToolDescriptor descriptor, FlowContext flowContext) {
@@ -218,21 +335,17 @@ public class ArtifactRuntimeExecutor {
                 continue;
             }
             ResolvedCredentialLease lease = credentialBroker.resolve(new CredentialResolutionRequest(
-                    artifact.getSpaceId(),
+                    resolveSpaceId(artifact, flowContext),
                     connectorId,
                     resolveCandidateAuthProfileCodes(stepBinding),
                     flowContext.getAssistantUid(),
                     "local_user",
                     List.of(),
                     flowContext.getRunId(),
-                    stepId,
-                    descriptor.executionSystemCode()));
+                    stepId));
             flowContext.putStepRequestHeaders(stepId, lease.headers());
             if (StringUtils.hasText(lease.baseUrl())) {
                 flowContext.putStepBaseUrl(stepId, lease.baseUrl());
-            }
-            if (!StringUtils.hasText(flowContext.getSystemCode()) && StringUtils.hasText(lease.compatibilitySystemCode())) {
-                flowContext.setSystemCode(lease.compatibilitySystemCode());
             }
         }
     }
@@ -266,7 +379,7 @@ public class ArtifactRuntimeExecutor {
             }
         }
         catch (Exception ignored) {
-            // keep compatibility with legacy payloads that may omit structured auth lists
+            // 容忍脏配置，避免执行阶段因历史数据中断。
         }
     }
 
@@ -274,6 +387,7 @@ public class ArtifactRuntimeExecutor {
             String runId,
             PublishedToolDescriptor descriptor,
             FlowExecutionResult flowResult,
+            FlowContext flowContext,
             boolean resumed) {
         if (descriptor == null || descriptor.artifact() == null || flowResult == null) {
             return List.of();
@@ -289,7 +403,7 @@ public class ArtifactRuntimeExecutor {
                 resumed ? ExecutionEventType.RUN_RESUMED : ExecutionEventType.RUN_STARTED,
                 ExecutionLifecycleStatus.RUNNING,
                 Instant.now(),
-                Map.of("source", "artifact-runtime")));
+                appendExecutionMeta(new LinkedHashMap<>(Map.of("source", "artifact-runtime")), descriptor, flowContext)));
 
         Map<String, StepResult> stepResults = flowResult.getStepResults() != null
                 ? flowResult.getStepResults()
@@ -306,7 +420,7 @@ public class ArtifactRuntimeExecutor {
                 continue;
             }
             if (stepStatus == StepStatus.WAITING_APPROVAL) {
-                Map<String, Object> waitingPayload = new LinkedHashMap<>();
+                Map<String, Object> waitingPayload = appendExecutionMeta(new LinkedHashMap<>(), descriptor, flowContext);
                 if (StringUtils.hasText(stepName)) {
                     waitingPayload.put("stepName", stepName);
                 }
@@ -326,7 +440,7 @@ public class ArtifactRuntimeExecutor {
                 continue;
             }
 
-            Map<String, Object> startedPayload = new LinkedHashMap<>();
+            Map<String, Object> startedPayload = appendExecutionMeta(new LinkedHashMap<>(), descriptor, flowContext);
             if (StringUtils.hasText(stepName)) {
                 startedPayload.put("stepName", stepName);
             }
@@ -342,7 +456,7 @@ public class ArtifactRuntimeExecutor {
                     startedPayload));
 
             if (stepStatus == StepStatus.COMPLETED || stepStatus == StepStatus.SKIPPED) {
-                Map<String, Object> completedPayload = new LinkedHashMap<>();
+                Map<String, Object> completedPayload = appendExecutionMeta(new LinkedHashMap<>(), descriptor, flowContext);
                 if (StringUtils.hasText(stepName)) {
                     completedPayload.put("stepName", stepName);
                 }
@@ -361,7 +475,7 @@ public class ArtifactRuntimeExecutor {
                         completedPayload));
             }
             else {
-                Map<String, Object> failedPayload = new LinkedHashMap<>();
+                Map<String, Object> failedPayload = appendExecutionMeta(new LinkedHashMap<>(), descriptor, flowContext);
                 if (StringUtils.hasText(stepName)) {
                     failedPayload.put("stepName", stepName);
                 }
@@ -382,7 +496,7 @@ public class ArtifactRuntimeExecutor {
         }
 
         if (!"WAITING_APPROVAL".equalsIgnoreCase(flowResult.getLifecycleStatus())) {
-            Map<String, Object> terminalPayload = new LinkedHashMap<>();
+            Map<String, Object> terminalPayload = appendExecutionMeta(new LinkedHashMap<>(), descriptor, flowContext);
             if (flowResult.getFinalOutputs() != null && !flowResult.getFinalOutputs().isEmpty()) {
                 terminalPayload.put("finalOutputs", flowResult.getFinalOutputs());
             }
@@ -421,19 +535,67 @@ public class ArtifactRuntimeExecutor {
     }
 
     private String readContextText(@Nullable ToolContext toolContext, String key) {
-        if (toolContext == null || toolContext.getContext() == null || !StringUtils.hasText(key)) {
+        Object value = readContextValue(toolContext, key);
+        return asText(value);
+    }
+
+    private Object readContextValue(@Nullable ToolContext toolContext, String... keys) {
+        if (toolContext == null || toolContext.getContext() == null || keys == null || keys.length == 0) {
             return null;
         }
-        Object direct = toolContext.getContext().get(key);
-        if (direct != null) {
-            return asText(direct);
-        }
-        Object rawState = toolContext.getContext().get(ToolContextConstants.AGENT_STATE_CONTEXT_KEY);
-        if (rawState instanceof OverAllState state) {
-            Object value = state.value(key, Object.class).orElse(null);
-            return asText(value);
+        for (String key : keys) {
+            if (!StringUtils.hasText(key)) {
+                continue;
+            }
+            Object direct = toolContext.getContext().get(key);
+            if (direct != null) {
+                return direct;
+            }
+            Object rawState = toolContext.getContext().get(ToolContextConstants.AGENT_STATE_CONTEXT_KEY);
+            if (rawState instanceof OverAllState state) {
+                Object value = state.value(key, Object.class).orElse(null);
+                if (value != null) {
+                    return value;
+                }
+            }
         }
         return null;
+    }
+
+    private Long resolveSpaceId(@Nullable RuntimeArtifact artifact, @Nullable FlowContext flowContext) {
+        Long resolvedSpaceId = firstNonNull(
+                artifact != null ? artifact.getSpaceId() : null,
+                flowContext != null ? asLong(flowContext.getInitialInputs().get(AssistantStateKeys.SPACE_ID)) : null,
+                flowContext != null ? asLong(flowContext.getInitialInputs().get("space_id")) : null,
+                flowContext != null ? asLong(flowContext.getInitialInputs().get("spaceId")) : null);
+        if (resolvedSpaceId != null || runtimeSpaceResolver == null || flowContext == null) {
+            return resolvedSpaceId;
+        }
+        return runtimeSpaceResolver.resolve(flowContext.getInitialInputs()).spaceId();
+    }
+
+    private boolean asBoolean(Object value) {
+        if (value instanceof Boolean booleanValue) {
+            return booleanValue;
+        }
+        String text = asText(value);
+        return "true".equalsIgnoreCase(text);
+    }
+
+    private Long asLong(Object value) {
+        if (value instanceof Number number) {
+            return number.longValue();
+        }
+        String text = asText(value);
+        if (!StringUtils.hasText(text)) {
+            return null;
+        }
+        try {
+            return Long.parseLong(text);
+        }
+        catch (NumberFormatException ignored) {
+            return null;
+        }
     }
 
     private String asText(Object value) {
@@ -442,6 +604,18 @@ public class ArtifactRuntimeExecutor {
         }
         String text = String.valueOf(value).trim();
         return StringUtils.hasText(text) ? text : null;
+    }
+
+    private <T> T firstNonNull(T... values) {
+        if (values == null) {
+            return null;
+        }
+        for (T value : values) {
+            if (value != null) {
+                return value;
+            }
+        }
+        return null;
     }
 
     private String firstNonBlank(String... values) {
@@ -456,15 +630,19 @@ public class ArtifactRuntimeExecutor {
         return null;
     }
 
-    private static final class RuntimeExecutionEventCollector implements FlowExecutionListener {
+    private final class RuntimeExecutionEventCollector implements FlowExecutionListener {
 
         private final String runId;
 
         private final PublishedToolDescriptor descriptor;
 
+        private final FlowContext flowContext;
+
         private final String threadId;
 
         private final ExecutionEventStreamRegistry executionEventStreamRegistry;
+
+        private final AgentTaskProjector agentTaskProjector;
 
         private final List<ExecutionEvent> events = new ArrayList<>();
 
@@ -473,12 +651,16 @@ public class ArtifactRuntimeExecutor {
         private RuntimeExecutionEventCollector(
                 String runId,
                 PublishedToolDescriptor descriptor,
+                FlowContext flowContext,
                 String threadId,
-                @Nullable ExecutionEventStreamRegistry executionEventStreamRegistry) {
+                @Nullable ExecutionEventStreamRegistry executionEventStreamRegistry,
+                @Nullable AgentTaskProjector agentTaskProjector) {
             this.runId = runId;
             this.descriptor = descriptor;
+            this.flowContext = flowContext;
             this.threadId = threadId;
             this.executionEventStreamRegistry = executionEventStreamRegistry;
+            this.agentTaskProjector = agentTaskProjector;
         }
 
         void recordRunStarted() {
@@ -491,7 +673,7 @@ public class ArtifactRuntimeExecutor {
                     ExecutionEventType.RUN_STARTED,
                     ExecutionLifecycleStatus.RUNNING,
                     Instant.now(),
-                    Map.of("source", "artifact-runtime")));
+                    appendExecutionMeta(new LinkedHashMap<>(Map.of("source", "artifact-runtime")), descriptor, flowContext)));
         }
 
         void recordRunResumed() {
@@ -504,14 +686,14 @@ public class ArtifactRuntimeExecutor {
                     ExecutionEventType.RUN_RESUMED,
                     ExecutionLifecycleStatus.RUNNING,
                     Instant.now(),
-                    Map.of("source", "artifact-runtime")));
+                    appendExecutionMeta(new LinkedHashMap<>(Map.of("source", "artifact-runtime")), descriptor, flowContext)));
         }
 
         void recordRunTerminal(FlowExecutionResult flowResult) {
             if ("WAITING_APPROVAL".equalsIgnoreCase(flowResult.getLifecycleStatus())) {
                 return;
             }
-            Map<String, Object> terminalPayload = new LinkedHashMap<>();
+            Map<String, Object> terminalPayload = appendExecutionMeta(new LinkedHashMap<>(), descriptor, flowContext);
             if (flowResult.getFinalOutputs() != null && !flowResult.getFinalOutputs().isEmpty()) {
                 terminalPayload.put("finalOutputs", flowResult.getFinalOutputs());
             }
@@ -540,7 +722,7 @@ public class ArtifactRuntimeExecutor {
 
         @Override
         public void onStepStarted(StepDefinition step, FlowContext context) {
-            Map<String, Object> payload = new LinkedHashMap<>();
+            Map<String, Object> payload = appendExecutionMeta(new LinkedHashMap<>(), descriptor, flowContext);
             if (StringUtils.hasText(step.getName())) {
                 payload.put("stepName", step.getName());
             }
@@ -558,7 +740,7 @@ public class ArtifactRuntimeExecutor {
 
         @Override
         public void onStepCompleted(StepDefinition step, StepResult result, FlowContext context) {
-            Map<String, Object> payload = new LinkedHashMap<>();
+            Map<String, Object> payload = appendExecutionMeta(new LinkedHashMap<>(), descriptor, flowContext);
             if (StringUtils.hasText(step.getName())) {
                 payload.put("stepName", step.getName());
             }
@@ -579,7 +761,7 @@ public class ArtifactRuntimeExecutor {
 
         @Override
         public void onStepFailed(StepDefinition step, StepResult result, FlowContext context) {
-            Map<String, Object> payload = new LinkedHashMap<>();
+            Map<String, Object> payload = appendExecutionMeta(new LinkedHashMap<>(), descriptor, flowContext);
             if (StringUtils.hasText(step.getName())) {
                 payload.put("stepName", step.getName());
             }
@@ -600,7 +782,7 @@ public class ArtifactRuntimeExecutor {
 
         @Override
         public void onStepSkipped(StepDefinition step, StepResult result, FlowContext context) {
-            Map<String, Object> payload = new LinkedHashMap<>();
+            Map<String, Object> payload = appendExecutionMeta(new LinkedHashMap<>(), descriptor, flowContext);
             if (StringUtils.hasText(step.getName())) {
                 payload.put("stepName", step.getName());
             }
@@ -621,7 +803,7 @@ public class ArtifactRuntimeExecutor {
 
         @Override
         public void onStepWaitingApproval(StepDefinition step, FlowContext context) {
-            Map<String, Object> payload = new LinkedHashMap<>();
+            Map<String, Object> payload = appendExecutionMeta(new LinkedHashMap<>(), descriptor, flowContext);
             if (StringUtils.hasText(step.getName())) {
                 payload.put("stepName", step.getName());
             }
@@ -643,7 +825,9 @@ public class ArtifactRuntimeExecutor {
             if (executionEventStreamRegistry != null && StringUtils.hasText(threadId)) {
                 executionEventStreamRegistry.publish(threadId, event);
             }
+            if (agentTaskProjector != null) {
+                agentTaskProjector.recordExecutionEvent(descriptor, flowContext, event);
+            }
         }
     }
 }
-

@@ -28,7 +28,7 @@ import java.util.List;
 import java.util.Optional;
 
 /**
- * Typed control-plane service for managing scoped local-user admin access in migration mode.
+ * 迁移模式下本地用户控制面权限策略管理服务。
  */
 @Service
 public class LocalUserControlPlaneAccessPolicyService {
@@ -65,12 +65,12 @@ public class LocalUserControlPlaneAccessPolicyService {
     }
 
     /**
-     * Resolve local-user control-plane access policy for a target space.
+     * 查询指定空间下本地用户的控制面权限策略。
      *
-     * @param spaceCode space code
-     * @param environment environment, defaults to prod
-     * @param localUserId local migration user id
-     * @return resolved policy when space and user both exist
+     * @param spaceCode 空间编码
+     * @param environment 环境，默认 prod
+     * @param localUserId 本地迁移用户主键
+     * @return 当空间和用户都存在时返回解析后的策略视图
      */
     public Optional<ResolvedLocalUserControlPlaneAccessPolicy> getPolicy(
             String spaceCode,
@@ -95,13 +95,13 @@ public class LocalUserControlPlaneAccessPolicyService {
     }
 
     /**
-     * Replace local-user control-plane access policy for a target space.
+     * 替换指定空间下本地用户的控制面权限策略。
      *
-     * @param spaceCode space code
-     * @param environment environment, defaults to prod
-     * @param localUserId local migration user id
-     * @param policy replacement typed policy
-     * @return resolved view when target exists and replacement succeeds
+     * @param spaceCode 空间编码
+     * @param environment 环境，默认 prod
+     * @param localUserId 本地迁移用户主键
+     * @param policy 新的权限策略
+     * @return 当目标存在且替换成功时返回最新策略视图
      */
     public Optional<ResolvedLocalUserControlPlaneAccessPolicy> replacePolicy(
             String spaceCode,

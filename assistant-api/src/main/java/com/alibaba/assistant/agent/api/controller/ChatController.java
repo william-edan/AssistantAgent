@@ -15,14 +15,24 @@
  */
 package com.alibaba.assistant.agent.api.controller;
 
-import com.alibaba.assistant.agent.api.protocol.V3ProtocolAdapter.AssistantEvent;
+import com.alibaba.assistant.agent.api.protocol.FrontendEvent;
+import com.alibaba.assistant.agent.api.protocol.FrontendEventType;
+import com.alibaba.assistant.agent.api.protocol.FrontendMessageVisibilitySupport;
+import com.alibaba.assistant.agent.api.protocol.FrontendStage;
+import com.alibaba.assistant.agent.api.protocol.V3ProtocolAdapter;
+import com.alibaba.assistant.agent.api.controller.dto.ChatThreadStateData;
 import com.alibaba.assistant.agent.api.security.AuthenticatedUserContext;
+import com.alibaba.assistant.agent.api.service.ChatThreadStateService;
+import com.alibaba.assistant.agent.api.service.ChatTranscriptPersistenceService;
+import com.alibaba.assistant.agent.api.service.ChatFrontendEventPublisher;
 import com.alibaba.assistant.agent.runtime.agent.AssistantStateKeys;
 import com.alibaba.assistant.agent.runtime.execution.ExecutionEvent;
+import com.alibaba.assistant.agent.runtime.execution.ExecutionEventType;
+import com.alibaba.assistant.agent.runtime.execution.ExecutionLifecycleStatus;
 import com.alibaba.assistant.agent.runtime.execution.ExecutionEventStreamRegistry;
+import com.alibaba.assistant.agent.runtime.context.RuntimeSpaceResolver;
 import com.alibaba.cloud.ai.agent.studio.dto.AgentResumeRequest;
 import com.alibaba.cloud.ai.agent.studio.dto.AgentRunRequest;
-import com.alibaba.cloud.ai.agent.studio.dto.messages.AgentRunResponse;
 import com.alibaba.cloud.ai.agent.studio.dto.messages.MessageDTO;
 import com.alibaba.cloud.ai.agent.studio.dto.messages.ToolRequestMessageDTO;
 import com.alibaba.cloud.ai.agent.studio.dto.messages.ToolResponseMessageDTO;
@@ -65,13 +75,15 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicReference;
+import java.time.Instant;
+import java.util.UUID;
 
 /**
- * Enterprise assistant chat endpoint.
- * Directly manages agent execution with streaming deduplication fix.
+ * 聊天主入口控制器。
  *
- * @author Assistant Agent Team
- * @since 1.0.0
+ * <p>负责对外提供 {@code run_sse} 和 {@code resume_sse} 两条写接口，
+ * 把用户输入送入 Agent 运行时，再把内部事件转换成前端可消费的结构化 SSE 协议。
+ * 这一层同时负责线程级事件发布、流式去重和聊天记录持久化主流程编排。</p>
  */
 @RestController
 @CrossOrigin(
@@ -98,11 +110,21 @@ public class ChatController {
 
 	private final ExecutionEventStreamRegistry executionEventStreamRegistry;
 
+	private final V3ProtocolAdapter protocolAdapter;
+
+	private final ChatTranscriptPersistenceService transcriptPersistenceService;
+
+	private final ChatThreadStateService chatThreadStateService;
+
+	private final ChatFrontendEventPublisher chatFrontendEventPublisher;
+
+	private final RuntimeSpaceResolver runtimeSpaceResolver;
+
 	public ChatController(AgentLoader agentLoader,
 			@Value("${assistant.chat.default-app-name:grayscale_agent}") String defaultAppName,
-			@Value("${assistant.chat.default-system-code:${assistant.auth.current-system.default-system-code:}}")
+			@Value("${assistant.chat.default-system-code:}")
 			String defaultSystemCode) {
-		this(agentLoader, defaultAppName, defaultSystemCode, "", "prod", null);
+		this(agentLoader, defaultAppName, defaultSystemCode, "", "prod", null, null, null, null, null, null);
 	}
 
 	public ChatController(
@@ -111,7 +133,7 @@ public class ChatController {
 			String defaultSystemCode,
 			String defaultSpaceCode,
 			String defaultSpaceEnvironment) {
-		this(agentLoader, defaultAppName, defaultSystemCode, defaultSpaceCode, defaultSpaceEnvironment, null);
+		this(agentLoader, defaultAppName, defaultSystemCode, defaultSpaceCode, defaultSpaceEnvironment, null, null, null, null, null, null);
 	}
 
 	public ChatController(
@@ -119,43 +141,40 @@ public class ChatController {
 			String defaultAppName,
 			String defaultSystemCode,
 			@Nullable ExecutionEventStreamRegistry executionEventStreamRegistry) {
-		this(agentLoader, defaultAppName, defaultSystemCode, "", "prod", executionEventStreamRegistry);
+		this(agentLoader, defaultAppName, defaultSystemCode, "", "prod", executionEventStreamRegistry, null, null, null, null, null);
 	}
 
 	@Autowired
 	public ChatController(AgentLoader agentLoader,
 			@Value("${assistant.chat.default-app-name:grayscale_agent}") String defaultAppName,
-			@Value("${assistant.chat.default-system-code:${assistant.auth.current-system.default-system-code:}}")
+			@Value("${assistant.chat.default-system-code:}")
 			String defaultSystemCode,
 			@Value("${assistant.chat.default-space-code:}") String defaultSpaceCode,
 			@Value("${assistant.chat.default-space-environment:prod}") String defaultSpaceEnvironment,
-			@Nullable ExecutionEventStreamRegistry executionEventStreamRegistry) {
+			@Nullable ExecutionEventStreamRegistry executionEventStreamRegistry,
+			@Nullable V3ProtocolAdapter protocolAdapter,
+			@Nullable ChatTranscriptPersistenceService transcriptPersistenceService,
+			@Nullable ChatThreadStateService chatThreadStateService,
+			@Nullable ChatFrontendEventPublisher chatFrontendEventPublisher,
+			@Nullable RuntimeSpaceResolver runtimeSpaceResolver) {
 		this.agentLoader = agentLoader;
 		this.defaultAppName = defaultAppName;
 		this.defaultSystemCode = defaultSystemCode;
 		this.defaultSpaceCode = defaultSpaceCode;
 		this.defaultSpaceEnvironment = defaultSpaceEnvironment;
 		this.executionEventStreamRegistry = executionEventStreamRegistry;
-	}
-	@PostMapping(value = "/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
-	public Flux<ServerSentEvent<String>> stream(@RequestBody ChatRequest request) {
-		if (request == null) {
-			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "request body cannot be null");
-		}
-		AuthenticatedUserContext authenticatedUser = requireAuthenticatedUser();
-		String effectiveSystemCode = resolveSystemCode(authenticatedUser);
-		String effectiveAssistantUid = authenticatedUser.userId();
-
-		return doRunSse(
-				defaultAppName,
-				authenticatedUser.userId(),
-				request.getThreadId(),
-				new UserMessageDTO(request.getMessage()),
-				mergeStateDelta(null, effectiveAssistantUid, effectiveSystemCode, defaultAppName));
+		this.protocolAdapter = protocolAdapter != null ? protocolAdapter : new V3ProtocolAdapter(new ObjectMapper());
+		this.transcriptPersistenceService = transcriptPersistenceService;
+		this.chatThreadStateService = chatThreadStateService;
+		this.chatFrontendEventPublisher = chatFrontendEventPublisher;
+		this.runtimeSpaceResolver = runtimeSpaceResolver;
 	}
 
 	/**
-	 * Run endpoint aligned with studio AgentRunRequest.
+	 * 发起一轮新的聊天执行。
+	 *
+	 * <p>前端每发送一条用户消息，都会通过该接口进入运行时主链，
+	 * 返回值是结构化的 SSE 事件流。
 	 */
 	@PostMapping(path = "/run_sse", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
 	public Flux<ServerSentEvent<String>> runSse(
@@ -174,7 +193,9 @@ public class ChatController {
 	}
 
 	/**
-	 * Resume endpoint aligned with studio AgentResumeRequest.
+	 * 恢复被中断或等待外部反馈的聊天线程。
+	 *
+	 * <p>典型场景包括页面刷新后恢复待确认表单、审批回调后继续推进流程等。
 	 */
 	@PostMapping(path = "/resume_sse", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
 	public Flux<ServerSentEvent<String>> resumeSse(
@@ -187,7 +208,7 @@ public class ChatController {
 		return doResumeSse(request);
 	}
 
-	// ── Core execution ──────────────────────────────────────────────────
+	// ── 核心执行链 ──────────────────────────────────────────────────
 
 	private Flux<ServerSentEvent<String>> doRunSse(
 			String appName,
@@ -206,13 +227,33 @@ public class ChatController {
 		}
 		try {
 			Agent agent = agentLoader.loadAgent(appName);
+			UserMessage userMessage = newMessage.toUserMessage();
+			Map<String, Object> agentInput = buildAgentInput(userMessage, stateDelta);
+			String turnId = UUID.randomUUID().toString();
 			RunnableConfig.Builder configBuilder = RunnableConfig.builder()
 					.threadId(threadId)
 					.addMetadata("user_id", userId);
-			if (stateDelta != null && !stateDelta.isEmpty()) {
-				configBuilder.addStateUpdate(stateDelta);
+			String effectiveSystemCode = resolveTranscriptSystemCode(stateDelta);
+			if (transcriptPersistenceService != null) {
+				transcriptPersistenceService.recordUserMessage(
+						threadId,
+						userId,
+						appName,
+						effectiveSystemCode,
+						turnId,
+						userMessage.getText());
 			}
-			return executeAgent(newMessage.toUserMessage(), agent, configBuilder.build(), threadId, "UNDERSTANDING");
+			return executeAgent(
+					agentInput,
+					"run_sse",
+					agent,
+					configBuilder.build(),
+					threadId,
+					"UNDERSTANDING",
+					userId,
+					appName,
+					effectiveSystemCode,
+					turnId);
 		}
 		catch (Exception e) {
 			logger.error("ChatController#doRunSse - reason=agent执行失败, threadId={}", threadId, e);
@@ -228,7 +269,16 @@ public class ChatController {
 			return Flux.error(new ResponseStatusException(HttpStatus.BAD_REQUEST, "threadId cannot be null or empty"));
 		}
 		try {
+			List<FrontendEvent> replayEvents = resolveResumeReplayEvents(
+					request.threadId,
+					request.userId,
+					request.toolFeedbacks != null && !request.toolFeedbacks.isEmpty());
+			if (!replayEvents.isEmpty()) {
+				return Flux.fromIterable(replayEvents).map(this::toSse);
+			}
+
 			Agent agent = agentLoader.loadAgent(request.appName);
+			String turnId = UUID.randomUUID().toString();
 
 			InterruptionMetadata.Builder metadataBuilder = InterruptionMetadata.builder();
 			if (request.toolFeedbacks != null && !request.toolFeedbacks.isEmpty()) {
@@ -247,14 +297,32 @@ public class ChatController {
 				}
 			}
 
+			Map<String, Object> agentInput = buildAgentInput(null, request.stateDelta);
 			RunnableConfig.Builder configBuilder = RunnableConfig.builder()
 					.threadId(request.threadId)
 					.addMetadata("user_id", request.userId)
 					.addHumanFeedback(metadataBuilder.build());
-			if (request.stateDelta != null && !request.stateDelta.isEmpty()) {
-				configBuilder.addStateUpdate(request.stateDelta);
+			String effectiveSystemCode = resolveTranscriptSystemCode(request.stateDelta);
+			if (transcriptPersistenceService != null) {
+				transcriptPersistenceService.recordResumeAction(
+						request.threadId,
+						request.userId,
+						request.appName,
+						effectiveSystemCode,
+						turnId,
+						resolveResumeActionText(request));
 			}
-			return executeAgent(null, agent, configBuilder.build(), request.threadId, "EXECUTING");
+			return executeAgent(
+					agentInput,
+					"resume_sse",
+					agent,
+					configBuilder.build(),
+					request.threadId,
+					resolveResumeInitialStage(request.threadId, request.userId),
+					request.userId,
+					request.appName,
+					effectiveSystemCode,
+					turnId);
 		}
 		catch (Exception e) {
 			logger.error("ChatController#doResumeSse - reason=agent恢复失败, threadId={}", request.threadId, e);
@@ -263,66 +331,132 @@ public class ChatController {
 	}
 
 	/**
-	 * Streams agent execution as SSE events.
-	 * Fixes the upstream duplication bug: when the model finishes streaming,
-	 * the graph emits an AGENT_MODEL_FINISHED event whose chunk contains the
-	 * full accumulated text (already sent incrementally). Sending it again
-	 * causes the frontend to display the message twice.
+	 * 以 SSE 形式持续输出 Agent 执行事件。
+	 *
+	 * <p>这里会把内部运行事件统一转换为前端协议，并规避上游流式模型收尾阶段的重复输出问题，
+	 * 防止同一段文本在前端出现两次。
 	 */
 	private Flux<ServerSentEvent<String>> executeAgent(
-			UserMessage userMessage,
+			Map<String, Object> agentInput,
+			String executionSource,
+			Agent agent,
+			RunnableConfig runnableConfig,
+			String threadId,
+			String initialStage,
+			String assistantUid,
+			String appName,
+			String systemCode,
+			String turnId)
+			throws GraphRunnerException {
+		Flux<FrontendEvent> eventFlux = executeAgentEvents(
+				agentInput,
+				executionSource,
+				agent,
+				runnableConfig,
+				threadId,
+				initialStage);
+		if (chatFrontendEventPublisher != null
+				&& StringUtils.hasText(threadId)
+				&& StringUtils.hasText(assistantUid)) {
+			eventFlux = eventFlux
+					.doOnNext(event -> chatFrontendEventPublisher.publish(
+							threadId,
+							assistantUid,
+							appName,
+							systemCode,
+							turnId,
+							event))
+					.doFinally(signalType -> chatFrontendEventPublisher.finishTurn(
+							threadId,
+							assistantUid,
+							appName,
+							systemCode,
+							turnId));
+		}
+		else if (transcriptPersistenceService != null
+				&& StringUtils.hasText(threadId)
+				&& StringUtils.hasText(assistantUid)) {
+			eventFlux = eventFlux
+					.doOnNext(event -> transcriptPersistenceService.recordFrontendEvent(
+							threadId,
+							assistantUid,
+							appName,
+							systemCode,
+							turnId,
+							event))
+					.doFinally(signalType -> transcriptPersistenceService.finishTurn(
+							threadId,
+							assistantUid,
+							appName,
+							systemCode,
+							turnId));
+		}
+		return eventFlux.map(this::toSse);
+	}
+
+	private Flux<FrontendEvent> executeAgentEvents(
+			Map<String, Object> agentInput,
+			String executionSource,
 			Agent agent,
 			RunnableConfig runnableConfig,
 			String threadId,
 			String initialStage)
 			throws GraphRunnerException {
-		Flux<NodeOutput> agentStream = userMessage != null
-				? agent.stream(userMessage, runnableConfig)
-				: agent.stream("", runnableConfig);
+		Flux<NodeOutput> agentStream = agent.stream(agentInput != null ? agentInput : Map.of(), runnableConfig);
 		ChunkDeduplicator deduplicator = new ChunkDeduplicator();
+		AssistantTextBuffer assistantTextBuffer = new AssistantTextBuffer();
 		StageTracker stageTracker = new StageTracker();
 		ExecutionEventDeduplicator executionEventDeduplicator = new ExecutionEventDeduplicator();
-		AssistantEvent initialEvent = stageTracker.emitInitial(
+		FrontendEvent initialEvent = stageTracker.emitInitial(
 				initialStage,
-				userMessage != null ? "run_sse" : "resume_sse");
+				executionSource);
 
-		Flux<ServerSentEvent<String>> initialFlux = initialEvent != null
-				? Flux.just(toSse(initialEvent))
+		Flux<FrontendEvent> initialFlux = initialEvent != null
+				? Flux.just(initialEvent)
 				: Flux.empty();
 
-		Flux<ServerSentEvent<String>> liveExecutionFlux = liveExecutionProgressFlux(threadId, executionEventDeduplicator)
-				.map(this::toSse);
+		Flux<FrontendEvent> liveExecutionFlux = liveExecutionProgressFlux(threadId, executionEventDeduplicator);
 
-		Flux<ServerSentEvent<String>> streamFlux = agentStream.concatMap(nodeOutput ->
-				Flux.fromIterable(buildSsePayloads(nodeOutput, deduplicator, stageTracker, executionEventDeduplicator))
-						.map(this::toSse));
+		Flux<FrontendEvent> streamFlux = agentStream.concatMap(nodeOutput ->
+				Flux.fromIterable(buildSsePayloads(
+						nodeOutput,
+						threadId,
+						deduplicator,
+						assistantTextBuffer,
+						stageTracker,
+						executionEventDeduplicator)));
 
-		return initialFlux.concatWith(Flux.merge(liveExecutionFlux, streamFlux))
+		Flux<FrontendEvent> finalizedAssistantTextFlux = Flux.defer(() ->
+				Flux.fromIterable(assistantTextBuffer.flush(threadId, protocolAdapter, stageTracker)));
+
+		Flux<FrontendEvent> mergedFlux = Flux.merge(liveExecutionFlux, streamFlux.concatWith(finalizedAssistantTextFlux))
+				.takeUntil(this::isConversationBoundaryEvent);
+
+		return initialFlux.concatWith(mergedFlux)
 				.onErrorResume(error -> {
 					logger.error("ChatController#executeAgent - reason=agent流执行出错", error);
-					String errorMessage = error.getMessage() != null
-							? error.getMessage() : "Unknown error occurred";
-					String errorType = error.getClass().getSimpleName();
-					String errorJson = String.format(
-							"{\"error\":true,\"errorType\":\"%s\",\"errorMessage\":\"%s\"}",
-							errorType.replace("\"", "\\\""),
-							errorMessage.replace("\"", "\\\"").replace("\n", "\\n"));
-					return Flux.just(ServerSentEvent.<String>builder()
-							.event("error").data(errorJson).build());
+					Map<String, Object> errorPayload = new LinkedHashMap<>();
+					errorPayload.put("errorType", error.getClass().getSimpleName());
+					errorPayload.put("errorMessage", error.getMessage() != null
+							? error.getMessage() : "Unknown error occurred");
+					return Flux.just(protocolAdapter.errorEvent(threadId, "agent_stream_error", errorPayload));
 				});
 	}
 
-	private List<Object> buildSsePayloads(
+	private List<FrontendEvent> buildSsePayloads(
 			NodeOutput nodeOutput,
+			String threadId,
 			ChunkDeduplicator deduplicator,
+			AssistantTextBuffer assistantTextBuffer,
 			StageTracker stageTracker,
 			ExecutionEventDeduplicator executionEventDeduplicator) {
-		List<Object> payloads = new ArrayList<>();
+		List<FrontendEvent> payloads = new ArrayList<>();
 		String node = nodeOutput.node();
 		String agentName = nodeOutput.agent();
 		Usage tokenUsage = nodeOutput.tokenUsage();
 
-		AgentRunResponse agentResponse = null;
+		MessageDTO messageDto = null;
+		String chunk = "";
 		if (nodeOutput instanceof StreamingOutput<?> streamingOutput) {
 			Message message = streamingOutput.message();
 			if (message == null) {
@@ -330,48 +464,114 @@ public class ChatController {
 			}
 			if (message instanceof AssistantMessage assistantMessage) {
 				if (assistantMessage.hasToolCalls()) {
-					agentResponse = new AgentRunResponse(node, agentName, assistantMessage, tokenUsage, "");
+					messageDto = new com.alibaba.cloud.ai.agent.studio.dto.messages.AgentRunResponse(
+							node,
+							agentName,
+							assistantMessage,
+							tokenUsage,
+							"").getMessage();
 				}
 				else {
-					String chunk = deduplicator.nextChunk(
+					chunk = deduplicator.nextChunk(
 							streamingOutput.getOutputType(), assistantMessage.getText());
-					agentResponse = new AgentRunResponse(node, agentName, assistantMessage, tokenUsage, chunk);
+					messageDto = new com.alibaba.cloud.ai.agent.studio.dto.messages.AgentRunResponse(
+							node,
+							agentName,
+							assistantMessage,
+							tokenUsage,
+							chunk).getMessage();
 				}
 			}
-			else {
-				agentResponse = new AgentRunResponse(node, agentName, message, tokenUsage, "");
+			else if (!(message instanceof UserMessage)) {
+				messageDto = new com.alibaba.cloud.ai.agent.studio.dto.messages.AgentRunResponse(
+						node,
+						agentName,
+						message,
+						tokenUsage,
+						"").getMessage();
 			}
 		}
 		else if (nodeOutput instanceof InterruptionMetadata interruptionMetadata) {
-			ToolRequestConfirmMessageDTO toolRequestMessage =
-					MessageDTO.MessageDTOFactory.fromInterruptionMetadata(interruptionMetadata);
-			agentResponse = new AgentRunResponse(node, agentName, toolRequestMessage, tokenUsage, "");
+			messageDto = MessageDTO.MessageDTOFactory.fromInterruptionMetadata(interruptionMetadata);
 		}
 
-		if (agentResponse != null && agentResponse.getMessage() != null) {
-			AssistantEvent stageEvent = stageTracker.emitForMessage(agentResponse.getMessage(), node);
+		if (messageDto != null) {
+			if (isBufferedAssistantTextMessage(messageDto)) {
+				assistantTextBuffer.capture(resolveAssistantAccumulatedText(nodeOutput, messageDto, chunk));
+				return payloads;
+			}
+			if (messageDto instanceof ToolRequestMessageDTO
+					|| messageDto instanceof ToolResponseMessageDTO
+					|| messageDto instanceof ToolRequestConfirmMessageDTO) {
+				assistantTextBuffer.markToolInteraction();
+			}
+			else {
+				assistantTextBuffer.discard();
+			}
+			boolean suppressInternalNarration = shouldSuppressAssistantNarration(messageDto, chunk)
+					|| (isFreeTextMessage(messageDto) && stageTracker.isToolStageActive());
+			FrontendEvent stageEvent = suppressInternalNarration
+					? null
+					: stageTracker.emitForMessage(messageDto, node, threadId);
 			if (stageEvent != null) {
 				payloads.add(stageEvent);
 			}
-			if (agentResponse.getMessage() instanceof ToolResponseMessageDTO toolResponseMessage) {
-				payloads.addAll(extractArtifactExecutionEvents(toolResponseMessage, executionEventDeduplicator));
+			if (messageDto instanceof ToolResponseMessageDTO toolResponseMessage) {
+				payloads.addAll(adaptToolResponseEvents(
+						threadId,
+						toolResponseMessage));
+				payloads.addAll(extractArtifactExecutionEvents(
+						threadId,
+						toolResponseMessage,
+						executionEventDeduplicator));
 			}
-			payloads.add(agentResponse);
+			else if (!suppressInternalNarration && shouldEmitMessage(messageDto, chunk)) {
+				payloads.add(protocolAdapter.messageEvent(threadId, resolveVisibleMessageText(messageDto, chunk)));
+			}
 		}
 
 		return payloads;
 	}
-	List<AssistantEvent> extractArtifactExecutionEvents(ToolResponseMessageDTO message) {
-		return extractArtifactExecutionEvents(message, null);
+	List<FrontendEvent> adaptToolResponseEvents(String threadId, ToolResponseMessageDTO message) {
+		if (message == null || message.getResponses() == null || message.getResponses().isEmpty()) {
+			return List.of();
+		}
+		List<FrontendEvent> events = new ArrayList<>();
+		for (ToolResponseMessageDTO.ToolResponseDTO response : message.getResponses()) {
+			if (response == null || !StringUtils.hasText(response.getResponseData())) {
+				continue;
+			}
+			for (FrontendEvent event : protocolAdapter.adapt(threadId, response.getName(), response.getResponseData(), null)) {
+				if (shouldExposeFrontendEvent(event)) {
+					events.add(event);
+				}
+			}
+		}
+		return events;
 	}
 
-	List<AssistantEvent> extractArtifactExecutionEvents(
+	private boolean shouldExposeFrontendEvent(FrontendEvent event) {
+		if (event == null || event.eventType() == null) {
+			return false;
+		}
+		if (event.eventType() != FrontendEventType.MESSAGE) {
+			return true;
+		}
+		Map<String, Object> payload = event.payload();
+		return FrontendMessageVisibilitySupport.isVisibleAssistantText(asText(payload != null ? payload.get("text") : null));
+	}
+	List<FrontendEvent> extractArtifactExecutionEvents(String threadId, ToolResponseMessageDTO message) {
+		return extractArtifactExecutionEvents(threadId, message, null);
+	}
+
+	List<FrontendEvent> extractArtifactExecutionEvents(
+			String threadId,
 			ToolResponseMessageDTO message,
 			@Nullable ExecutionEventDeduplicator executionEventDeduplicator) {
 		if (message == null || message.getResponses() == null || message.getResponses().isEmpty()) {
 			return List.of();
 		}
-		List<AssistantEvent> events = new ArrayList<>();
+		List<FrontendEvent> events = new ArrayList<>();
 		for (ToolResponseMessageDTO.ToolResponseDTO response : message.getResponses()) {
 			if (response == null || !StringUtils.hasText(response.getResponseData())) {
 				continue;
@@ -388,12 +588,20 @@ public class ChatController {
 					Map<String, Object> eventPayload = mapper.convertValue(
 							rawEvent, new TypeReference<LinkedHashMap<String, Object>>() {
 							});
-					if (!StringUtils.hasText((String) eventPayload.get("toolName"))
+					if (!StringUtils.hasText(asText(eventPayload.get("toolName")))
 							&& StringUtils.hasText(response.getName())) {
 						eventPayload.put("toolName", response.getName());
 					}
+					copyExecutionContractMeta(eventPayload, asMap(eventPayload.get("payload")));
+					if (isInternalExecutionPayload(eventPayload)) {
+						continue;
+					}
 					if (executionEventDeduplicator == null || executionEventDeduplicator.shouldEmit(eventPayload)) {
-						events.add(AssistantEvent.executionProgress(eventPayload));
+						events.add(protocolAdapter.executionProgressEvent(threadId, eventPayload));
+						Map<String, Object> taskPayload = protocolAdapter.executionTaskPayload(eventPayload);
+						if (!taskPayload.isEmpty()) {
+							events.add(protocolAdapter.taskStateEvent(threadId, taskPayload));
+						}
 					}
 				}
 			}
@@ -404,7 +612,7 @@ public class ChatController {
 		return events;
 	}
 
-	Flux<AssistantEvent> liveExecutionProgressFlux(
+	Flux<FrontendEvent> liveExecutionProgressFlux(
 			String threadId,
 			ExecutionEventDeduplicator executionEventDeduplicator) {
 		if (executionEventStreamRegistry == null || !StringUtils.hasText(threadId)) {
@@ -412,12 +620,28 @@ public class ChatController {
 		}
 		ExecutionEventStreamRegistry.ExecutionEventSubscription subscription = executionEventStreamRegistry.open(threadId);
 		return subscription.flux()
+				.filter(event -> !isInternalExecutionEvent(event))
 				.filter(executionEventDeduplicator::shouldEmit)
-				.map(this::toExecutionProgressEvent)
+				.takeUntil(this::isTerminalExecutionEvent)
+				.flatMapIterable(event -> toExecutionFrontendEvents(threadId, event))
 				.doFinally(signalType -> subscription.close());
 	}
 
-	AssistantEvent toExecutionProgressEvent(ExecutionEvent event) {
+	private boolean isTerminalExecutionEvent(ExecutionEvent event) {
+		if (event == null || isInternalExecutionEvent(event)) {
+			return false;
+		}
+		if (event.lifecycleStatus() == ExecutionLifecycleStatus.WAITING_APPROVAL) {
+			return true;
+		}
+		return event.eventType() == ExecutionEventType.RUN_COMPLETED
+				|| event.eventType() == ExecutionEventType.RUN_FAILED;
+	}
+
+	List<FrontendEvent> toExecutionFrontendEvents(String threadId, ExecutionEvent event) {
+		if (event == null || isInternalExecutionEvent(event)) {
+			return List.of();
+		}
 		Map<String, Object> payload = new LinkedHashMap<>();
 		payload.put("runId", event.runId());
 		payload.put("artifactCode", event.artifactCode());
@@ -427,9 +651,106 @@ public class ChatController {
 		payload.put("eventType", event.eventType() != null ? event.eventType().name() : null);
 		payload.put("lifecycleStatus", event.lifecycleStatus() != null ? event.lifecycleStatus().name() : null);
 		payload.put("occurredAt", event.occurredAt() != null ? event.occurredAt().toString() : null);
+		copyExecutionContractMeta(payload, event.payload());
 		payload.put("payload", event.payload());
-		return AssistantEvent.executionProgress(payload);
+		List<FrontendEvent> events = new ArrayList<>();
+		events.add(protocolAdapter.executionProgressEvent(threadId, payload));
+		Map<String, Object> taskPayload = protocolAdapter.executionTaskPayload(payload);
+		if (!taskPayload.isEmpty()) {
+			events.add(protocolAdapter.taskStateEvent(threadId, taskPayload));
+		}
+		return events;
 	}
+
+	FrontendEvent toExecutionProgressEvent(String threadId, ExecutionEvent event) {
+		Map<String, Object> payload = new LinkedHashMap<>();
+		payload.put("runId", event.runId());
+		payload.put("artifactCode", event.artifactCode());
+		payload.put("artifactType", event.artifactType());
+		payload.put("stepId", event.stepId());
+		payload.put("sequence", event.sequence());
+		payload.put("eventType", event.eventType() != null ? event.eventType().name() : null);
+		payload.put("lifecycleStatus", event.lifecycleStatus() != null ? event.lifecycleStatus().name() : null);
+		payload.put("occurredAt", event.occurredAt() != null ? event.occurredAt().toString() : null);
+		copyExecutionContractMeta(payload, event.payload());
+		payload.put("payload", event.payload());
+		return protocolAdapter.executionProgressEvent(threadId, payload);
+	}
+
+	boolean isConversationBoundaryEvent(FrontendEvent event) {
+		if (event == null || event.eventType() == null) {
+			return false;
+		}
+		return switch (event.eventType()) {
+			case FORM_STATE, RESULT, ERROR -> true;
+			case TASK_STATE -> isTaskBoundaryEvent(event.payload());
+			default -> false;
+		};
+	}
+
+	private boolean isTaskBoundaryEvent(Map<String, Object> payload) {
+		if (payload == null || payload.isEmpty()) {
+			return false;
+		}
+		String status = asText(payload.get("status"));
+		if ("WAITING_APPROVAL".equalsIgnoreCase(status)) {
+			return true;
+		}
+		if (Boolean.TRUE.equals(payload.get("background"))) {
+			return true;
+		}
+		return Boolean.TRUE.equals(payload.get("detached"));
+	}
+
+	private boolean isInternalExecutionEvent(ExecutionEvent event) {
+		return event != null && isInternalExecutionPayload(event.payload());
+	}
+
+	private boolean isInternalExecutionPayload(Map<String, Object> payload) {
+		if (payload == null || payload.isEmpty()) {
+			return false;
+		}
+		if (Boolean.TRUE.equals(payload.get("internal"))) {
+			return true;
+		}
+		Map<String, Object> nestedPayload = asMap(payload.get("payload"));
+		return Boolean.TRUE.equals(nestedPayload.get("internal"));
+	}
+
+	private void copyExecutionContractMeta(Map<String, Object> target, Map<String, Object> sourcePayload) {
+		if (target == null || sourcePayload == null || sourcePayload.isEmpty()) {
+			return;
+		}
+		if (sourcePayload.containsKey("internal")) {
+			target.put("internal", Boolean.TRUE.equals(sourcePayload.get("internal")));
+		}
+		putIfHasText(target, "toolType", asText(sourcePayload.get("toolType")));
+		putIfHasText(target, "visibility", asText(sourcePayload.get("visibility")));
+		putIfHasText(target, "invocationPolicy", asText(sourcePayload.get("invocationPolicy")));
+	}
+
+	private void putIfHasText(Map<String, Object> target, String key, String value) {
+		if (target != null && StringUtils.hasText(key) && StringUtils.hasText(value)) {
+			target.put(key, value);
+		}
+	}
+
+	private Map<String, Object> asMap(Object value) {
+		if (value instanceof Map<?, ?> mapValue) {
+			return mapper.convertValue(mapValue, new TypeReference<LinkedHashMap<String, Object>>() {
+			});
+		}
+		return Map.of();
+	}
+
+	private String asText(Object value) {
+		if (value == null) {
+			return null;
+		}
+		String text = String.valueOf(value).trim();
+		return StringUtils.hasText(text) ? text : null;
+	}
+
 	private ServerSentEvent<String> toSse(Object payload) {
 		try {
 			return ServerSentEvent.<String>builder()
@@ -442,22 +763,82 @@ public class ChatController {
 		}
 	}
 
+	private boolean shouldEmitMessage(MessageDTO message, String chunk) {
+		if (message == null) {
+			return false;
+		}
+		if (message instanceof ToolRequestMessageDTO
+				|| message instanceof ToolResponseMessageDTO
+				|| message instanceof ToolRequestConfirmMessageDTO) {
+			return false;
+		}
+		String messageType = message.getMessageType();
+		if ("user".equalsIgnoreCase(messageType) || "tool".equalsIgnoreCase(messageType)) {
+			return false;
+		}
+		if ("assistant".equalsIgnoreCase(messageType)) {
+			return FrontendMessageVisibilitySupport.isVisibleAssistantText(chunk);
+		}
+		return FrontendMessageVisibilitySupport.isVisibleAssistantText(message.getContent());
+	}
+
+	private String resolveVisibleMessageText(MessageDTO message, String chunk) {
+		if (message == null) {
+			return "";
+		}
+		if ("assistant".equalsIgnoreCase(message.getMessageType()) && StringUtils.hasText(chunk)) {
+			return chunk;
+		}
+		return message.getContent() != null ? message.getContent() : "";
+	}
+
+	private boolean shouldSuppressAssistantNarration(MessageDTO message, String chunk) {
+		if (message == null || !"assistant".equalsIgnoreCase(message.getMessageType())) {
+			return false;
+		}
+		// 内部规划说明不应进入前端 SSE，也不应驱动 DONE 阶段闪烁。
+		return FrontendMessageVisibilitySupport.isInternalPlanningNarration(resolveVisibleMessageText(message, chunk));
+	}
+
+	private boolean isBufferedAssistantTextMessage(MessageDTO message) {
+		return message != null
+				&& "assistant".equalsIgnoreCase(message.getMessageType())
+				&& !(message instanceof ToolRequestMessageDTO)
+				&& !(message instanceof ToolResponseMessageDTO)
+				&& !(message instanceof ToolRequestConfirmMessageDTO);
+	}
+
+	private boolean isFreeTextMessage(MessageDTO message) {
+		return message != null
+				&& !(message instanceof ToolRequestMessageDTO)
+				&& !(message instanceof ToolResponseMessageDTO)
+				&& !(message instanceof ToolRequestConfirmMessageDTO);
+	}
+
+	private String resolveAssistantAccumulatedText(NodeOutput nodeOutput, MessageDTO message, String chunk) {
+		if (nodeOutput instanceof StreamingOutput<?> streamingOutput
+				&& streamingOutput.message() instanceof AssistantMessage assistantMessage
+				&& StringUtils.hasText(assistantMessage.getText())) {
+			return assistantMessage.getText();
+		}
+		return resolveVisibleMessageText(message, chunk);
+	}
+
 	static final class StageTracker {
 
 		private final AtomicReference<String> lastStage = new AtomicReference<>("");
 
-		AssistantEvent emitInitial(String stage, String source) {
+		FrontendEvent emitInitial(String stage, String source) {
 			Map<String, Object> payload = new LinkedHashMap<>();
 			payload.put("source", source);
-			return emit(stage, payload);
+			return emit(stage, payload, null);
 		}
 
-		AssistantEvent emitForMessage(MessageDTO message, String node) {
+		FrontendEvent emitForMessage(MessageDTO message, String node, String threadId) {
 			if (message == null) {
 				return null;
 			}
 			Map<String, Object> payload = new LinkedHashMap<>();
-			payload.put("node", node);
 			payload.put("messageType", message.getMessageType());
 			String toolName = resolveToolName(message);
 			if (StringUtils.hasText(toolName)) {
@@ -465,15 +846,15 @@ public class ChatController {
 			}
 			String stage = resolveStage(message);
 			if (StringUtils.hasText(stage)) {
-				return emit(stage, payload);
+				return emit(stage, payload, threadId);
 			}
 			if (isTerminalAssistantReply(message)) {
-				return emit("DONE", payload);
+				return emit("DONE", payload, threadId);
 			}
 			return null;
 		}
 
-		private AssistantEvent emit(String stage, Map<String, Object> payload) {
+		private FrontendEvent emit(String stage, Map<String, Object> payload, String threadId) {
 			if (!StringUtils.hasText(stage)) {
 				return null;
 			}
@@ -482,7 +863,40 @@ public class ChatController {
 				return null;
 			}
 			lastStage.set(stage);
-			return AssistantEvent.stage(stage, payload != null ? payload : Map.of());
+			return new FrontendEvent(
+					V3ProtocolAdapter.PROTOCOL_VERSION,
+					UUID.randomUUID().toString(),
+					threadId,
+					Instant.now().toString(),
+					FrontendEventType.STAGE,
+					toFrontendStage(stage),
+					payload != null ? payload : Map.of());
+		}
+
+		private FrontendStage toFrontendStage(String stage) {
+			if (!StringUtils.hasText(stage)) {
+				return FrontendStage.UNDERSTANDING;
+			}
+			return switch (stage.trim().toUpperCase()) {
+				case "COLLECTING" -> FrontendStage.COLLECTING;
+				case "CONFIRMING", "READY_TO_CONFIRM" -> FrontendStage.CONFIRMING;
+				case "EXECUTING" -> FrontendStage.EXECUTING;
+				case "WAITING_APPROVAL" -> FrontendStage.WAITING_APPROVAL;
+				case "DONE" -> FrontendStage.DONE;
+				case "ERROR" -> FrontendStage.ERROR;
+				default -> FrontendStage.UNDERSTANDING;
+			};
+		}
+
+		boolean isToolStageActive() {
+			String current = lastStage.get();
+			if (!StringUtils.hasText(current)) {
+				return false;
+			}
+			return switch (current.trim().toUpperCase()) {
+				case "COLLECTING", "CONFIRMING", "READY_TO_CONFIRM", "EXECUTING", "WAITING_APPROVAL" -> true;
+				default -> false;
+			};
 		}
 
 		private String resolveStage(MessageDTO message) {
@@ -575,6 +989,52 @@ public class ChatController {
 		}
 	}
 
+	static final class AssistantTextBuffer {
+
+		private String accumulatedText;
+
+		private boolean toolInteractionObserved;
+
+		void capture(String text) {
+			if (toolInteractionObserved || !StringUtils.hasText(text)) {
+				return;
+			}
+			accumulatedText = text;
+		}
+
+		void discard() {
+			accumulatedText = null;
+		}
+
+		void markToolInteraction() {
+			toolInteractionObserved = true;
+			accumulatedText = null;
+		}
+
+		List<FrontendEvent> flush(String threadId, V3ProtocolAdapter protocolAdapter, StageTracker stageTracker) {
+			if (toolInteractionObserved) {
+				toolInteractionObserved = false;
+				accumulatedText = null;
+				return List.of();
+			}
+			if (!StringUtils.hasText(accumulatedText)) {
+				return List.of();
+			}
+			String finalText = accumulatedText.trim();
+			accumulatedText = null;
+			if (!FrontendMessageVisibilitySupport.isVisibleAssistantText(finalText)) {
+				return List.of();
+			}
+			List<FrontendEvent> events = new ArrayList<>();
+			FrontendEvent stageEvent = stageTracker.emit("DONE", Map.of("messageType", "assistant"), threadId);
+			if (stageEvent != null) {
+				events.add(stageEvent);
+			}
+			events.add(protocolAdapter.messageEvent(threadId, finalText));
+			return events;
+		}
+	}
+
 	static final class ExecutionEventDeduplicator {
 
 		private final Set<String> seenEventKeys = ConcurrentHashMap.newKeySet();
@@ -640,9 +1100,64 @@ public class ChatController {
 		request.streaming = true;
 		request.stateDelta = mergeStateDelta(
 				request.stateDelta,
+				request.threadId,
 				userId,
 				resolveSystemCode(authenticatedUser),
 				request.appName);
+	}
+
+	List<FrontendEvent> resolveResumeReplayEvents(String threadId, String assistantUid, boolean hasToolFeedback) {
+		if (hasToolFeedback || chatThreadStateService == null
+				|| !StringUtils.hasText(threadId) || !StringUtils.hasText(assistantUid)) {
+			return List.of();
+		}
+		try {
+			return buildResumeReplayEvents(chatThreadStateService.getThreadState(threadId, assistantUid));
+		}
+		catch (Exception ex) {
+			logger.debug("ChatController#resolveResumeReplayEvents - reason=thread快照不可用, threadId={}", threadId, ex);
+			return List.of();
+		}
+	}
+
+	private List<FrontendEvent> buildResumeReplayEvents(@Nullable ChatThreadStateData threadState) {
+		if (threadState == null || !StringUtils.hasText(threadState.threadId())) {
+			return List.of();
+		}
+		FrontendStage replayStage = resolveResumeReplayStage(threadState.phase(), threadState.status());
+		FrontendEvent stageEvent = protocolAdapter.stageEvent(
+				threadState.threadId(),
+				replayStage,
+				Map.of("source", "resume_sse"));
+		if ("FORM_CARD".equalsIgnoreCase(threadState.pendingCardType()) && !threadState.pendingForm().isEmpty()) {
+			return List.of(stageEvent, protocolAdapter.formStateEvent(threadState.threadId(), threadState.pendingForm()));
+		}
+		if ("RESULT_CARD".equalsIgnoreCase(threadState.pendingCardType()) && !threadState.lastResult().isEmpty()) {
+			return List.of(stageEvent, protocolAdapter.resultEvent(threadState.threadId(), threadState.lastResult()));
+		}
+		if (!"TASK_CARD".equalsIgnoreCase(threadState.pendingCardType()) || threadState.tasks().isEmpty()) {
+			return List.of();
+		}
+		List<FrontendEvent> replayEvents = new ArrayList<>();
+		replayEvents.add(stageEvent);
+		for (var task : threadState.tasks()) {
+			replayEvents.add(protocolAdapter.taskStateEvent(
+					threadState.threadId(),
+					new LinkedHashMap<>(mapper.convertValue(task, new TypeReference<Map<String, Object>>() {
+					}))));
+		}
+		return replayEvents;
+	}
+
+	// 恢复未完成线程时优先回放持久化卡片，避免重新走模型总结造成抖动和长连接悬挂。
+	private FrontendStage resolveResumeReplayStage(@Nullable String phase, @Nullable String status) {
+		String stageName = normalizeResumeInitialStage(phase, status);
+		try {
+			return FrontendStage.valueOf(stageName);
+		}
+		catch (IllegalArgumentException ex) {
+			return FrontendStage.EXECUTING;
+		}
 	}
 
 	private void normalizeResumeRequest(
@@ -658,6 +1173,7 @@ public class ChatController {
 		request.streaming = true;
 		request.stateDelta = mergeStateDelta(
 				request.stateDelta,
+				request.threadId,
 				request.userId,
 				resolveSystemCode(authenticatedUser),
 				request.appName);
@@ -676,10 +1192,18 @@ public class ChatController {
 	}
 
 	private Map<String, Object> mergeStateDelta(
-			Map<String, Object> baseStateDelta, String assistantUid, String systemCode, String agentAppCode) {
+			Map<String, Object> baseStateDelta, String threadId, String assistantUid, String systemCode, String agentAppCode) {
 		Map<String, Object> merged = new LinkedHashMap<>();
-		if (baseStateDelta != null) {
+		if (baseStateDelta != null && !baseStateDelta.isEmpty()) {
 			merged.putAll(baseStateDelta);
+			Map<String, Object> currentTurnSlotInputs = new LinkedHashMap<>(baseStateDelta);
+			currentTurnSlotInputs.remove(AssistantStateKeys.CURRENT_TURN_SLOT_INPUTS);
+			if (!currentTurnSlotInputs.isEmpty()) {
+				merged.put(AssistantStateKeys.CURRENT_TURN_SLOT_INPUTS, currentTurnSlotInputs);
+			}
+		}
+		if (StringUtils.hasText(threadId)) {
+			merged.put(AssistantStateKeys.THREAD_ID, threadId);
 		}
 		if (StringUtils.hasText(assistantUid)) {
 			merged.put(AssistantStateKeys.ASSISTANT_UID, assistantUid);
@@ -694,11 +1218,41 @@ public class ChatController {
 				&& !StringUtils.hasText(asString(merged.get(AssistantStateKeys.SPACE_CODE)))) {
 			merged.put(AssistantStateKeys.SPACE_CODE, defaultSpaceCode);
 		}
-		if (StringUtils.hasText(defaultSpaceCode)
-				&& !StringUtils.hasText(asString(merged.get(AssistantStateKeys.SPACE_ENVIRONMENT)))) {
+		if (!StringUtils.hasText(asString(merged.get(AssistantStateKeys.SPACE_ENVIRONMENT)))) {
 			merged.put(AssistantStateKeys.SPACE_ENVIRONMENT, resolveDefaultSpaceEnvironment());
 		}
+		if (runtimeSpaceResolver != null) {
+			RuntimeSpaceResolver.ResolvedSpace resolvedSpace = runtimeSpaceResolver.resolve(merged);
+			if (resolvedSpace.spaceId() != null && merged.get(AssistantStateKeys.SPACE_ID) == null) {
+				merged.put(AssistantStateKeys.SPACE_ID, resolvedSpace.spaceId());
+			}
+			if (StringUtils.hasText(resolvedSpace.spaceCode())
+					&& !StringUtils.hasText(asString(merged.get(AssistantStateKeys.SPACE_CODE)))) {
+				merged.put(AssistantStateKeys.SPACE_CODE, resolvedSpace.spaceCode());
+			}
+			if (StringUtils.hasText(resolvedSpace.environment())
+					&& !StringUtils.hasText(asString(merged.get(AssistantStateKeys.SPACE_ENVIRONMENT)))) {
+				merged.put(AssistantStateKeys.SPACE_ENVIRONMENT, resolvedSpace.environment());
+			}
+		}
 		return merged.isEmpty() ? null : merged;
+	}
+
+	// 结构化表单值必须直接进入图输入状态，不能只挂在 RunnableConfig metadata 上。
+	private Map<String, Object> buildAgentInput(
+			@Nullable UserMessage userMessage,
+			@Nullable Map<String, Object> stateDelta) {
+		Map<String, Object> agentInput = new LinkedHashMap<>();
+		if (stateDelta != null && !stateDelta.isEmpty()) {
+			agentInput.putAll(stateDelta);
+		}
+		if (userMessage != null) {
+			agentInput.put("messages", List.of(userMessage));
+			if (StringUtils.hasText(userMessage.getText())) {
+				agentInput.put("input", userMessage.getText());
+			}
+		}
+		return agentInput;
 	}
 
 	private String resolveDefaultSpaceEnvironment() {
@@ -707,6 +1261,66 @@ public class ChatController {
 
 	private String asString(Object value) {
 		return value instanceof String text ? text : null;
+	}
+
+	private String resolveTranscriptSystemCode(Map<String, Object> stateDelta) {
+		String stateSystemCode = stateDelta != null ? asString(stateDelta.get(AssistantStateKeys.SYSTEM_CODE)) : null;
+		return StringUtils.hasText(stateSystemCode) ? stateSystemCode : defaultSystemCode;
+	}
+
+	// 恢复会话时优先复用已持久化阶段，避免前端先收到错误的 EXECUTING 闪烁。
+	String resolveResumeInitialStage(String threadId, String assistantUid) {
+		if (chatThreadStateService == null || !StringUtils.hasText(threadId) || !StringUtils.hasText(assistantUid)) {
+			return "EXECUTING";
+		}
+		try {
+			var threadState = chatThreadStateService.getThreadState(threadId, assistantUid);
+			return normalizeResumeInitialStage(threadState.phase(), threadState.status());
+		}
+		catch (Exception ex) {
+			logger.debug("ChatController#resolveResumeInitialStage - reason=thread阶段不可用, threadId={}", threadId, ex);
+			return "EXECUTING";
+		}
+	}
+
+	private String normalizeResumeInitialStage(@Nullable String phase, @Nullable String status) {
+		String normalizedPhase = StringUtils.hasText(phase) ? phase.trim().toUpperCase() : null;
+		if (!StringUtils.hasText(normalizedPhase) && StringUtils.hasText(status)) {
+			normalizedPhase = switch (status.trim().toUpperCase()) {
+				case "WAITING_CONFIRMATION" -> "CONFIRMING";
+				case "WAITING_INPUT" -> "COLLECTING";
+				case "WAITING_APPROVAL" -> "WAITING_APPROVAL";
+				case "COMPLETED" -> "DONE";
+				case "FAILED" -> "ERROR";
+				default -> status.trim().toUpperCase();
+			};
+		}
+		if (!StringUtils.hasText(normalizedPhase)) {
+			return "EXECUTING";
+		}
+		return switch (normalizedPhase) {
+			case "WAITING_CONFIRMATION", "CONFIRMING", "READY_TO_CONFIRM" -> "CONFIRMING";
+			case "WAITING_INPUT", "COLLECTING" -> "COLLECTING";
+			case "WAITING_APPROVAL" -> "WAITING_APPROVAL";
+			case "DONE", "COMPLETED" -> "DONE";
+			case "ERROR", "FAILED" -> "ERROR";
+			case "UNDERSTANDING" -> "UNDERSTANDING";
+			default -> "EXECUTING";
+		};
+	}
+
+	private String resolveResumeActionText(AgentResumeRequest request) {
+		if (request == null || request.toolFeedbacks == null || request.toolFeedbacks.isEmpty()) {
+			return "继续处理";
+		}
+		boolean hasRejected = request.toolFeedbacks.stream()
+				.anyMatch(toolFeedback -> toolFeedback != null
+						&& toolFeedback.getResult() != null
+						&& "REJECTED".equalsIgnoreCase(toolFeedback.getResult().name()));
+		if (hasRejected) {
+			return "拒绝执行";
+		}
+		return "确认执行";
 	}
 
 	private AuthenticatedUserContext requireAuthenticatedUser() {
@@ -747,6 +1361,20 @@ public class ChatController {
 	}
 
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 

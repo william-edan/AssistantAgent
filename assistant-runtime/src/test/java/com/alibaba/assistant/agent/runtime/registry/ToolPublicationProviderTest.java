@@ -44,7 +44,7 @@ class ToolPublicationProviderTest {
 				Map.of(),
 				Map.of());
 		PublishedToolDescriptor descriptor = new PublishedToolDescriptor(
-				"artifact-catalog",
+				"tool-meta-catalog",
 				"workflow:oa.leave.apply",
 				"请假申请",
 				"oa_tools",
@@ -66,9 +66,10 @@ class ToolPublicationProviderTest {
 						"default", 1L, "prod", "hr-assistant"));
 
 		assertEquals(1, published.size());
-		assertEquals("artifact-catalog", published.get(0).sourceType());
+		assertEquals("tool-meta-catalog", published.get(0).sourceType());
 		assertEquals("gougu_oa", published.get(0).executionSystemCode());
 		assertSame(artifact, published.get(0).artifact());
 	}
 
 }
+

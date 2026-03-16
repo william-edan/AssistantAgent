@@ -15,7 +15,7 @@
  */
 package com.alibaba.assistant.agent.runtime.guard;
 
-import com.alibaba.assistant.agent.runtime.config.RuntimeConfigCompatibilityAdapter;
+import com.alibaba.assistant.agent.runtime.config.RuntimeConfigView;
 import com.alibaba.cloud.ai.graph.OverAllState;
 import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Component;
@@ -37,10 +37,10 @@ public class BudgetTracker {
 
 	static final String KEY_BUDGET_TOOL_CALLS = "_budget_tool_calls";
 
-	private final RuntimeConfigCompatibilityAdapter compatibilityAdapter;
+	private final RuntimeConfigView runtimeConfigView;
 
-	public BudgetTracker(RuntimeConfigCompatibilityAdapter compatibilityAdapter) {
-		this.compatibilityAdapter = compatibilityAdapter;
+	public BudgetTracker(RuntimeConfigView runtimeConfigView) {
+		this.runtimeConfigView = runtimeConfigView;
 	}
 
 	/**
@@ -100,11 +100,13 @@ public class BudgetTracker {
 	}
 
 	public int maxToolCalls() {
-		return Math.max(1, compatibilityAdapter.budgetMaxToolCalls());
+		return Math.max(1, runtimeConfigView.budgetMaxToolCalls());
 	}
 
 	public long maxLatencyMs() {
-		return Math.max(1L, compatibilityAdapter.budgetMaxLatencyMs());
+		return Math.max(1L, runtimeConfigView.budgetMaxLatencyMs());
 	}
 
 }
+
+

@@ -16,15 +16,18 @@
 package com.alibaba.assistant.agent.runtime.execution;
 
 /**
- * Resolves a runtime credential lease for a single execution step.
+ * 执行层凭证代理接口。
+ *
+ * <p>运行时在真正调用企业接口前，会通过该接口解析当前步骤所需的短期凭证租约，
+ * 并产出已经标准化好的请求头、过期时间和租约标识。
  */
 public interface CredentialBroker {
 
 	/**
-	 * Resolve a short-lived credential lease for the given execution request.
+	 * 为当前执行请求解析短期凭证租约。
 	 *
-	 * @param request execution credential request
-	 * @return resolved credential lease
+	 * @param request 执行步骤对应的凭证解析请求
+	 * @return 解析完成后的凭证租约
 	 */
 	ResolvedCredentialLease resolve(CredentialResolutionRequest request);
 }

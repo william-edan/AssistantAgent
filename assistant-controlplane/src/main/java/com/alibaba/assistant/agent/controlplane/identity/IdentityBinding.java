@@ -22,8 +22,9 @@ import com.baomidou.mybatisplus.annotation.TableName;
 import java.time.LocalDateTime;
 
 /**
- * Identity binding entity mapped to the identity_binding table.
- * Maps an assistant user to a downstream system user.
+ * 身份绑定实体，对应 {@code identity_binding} 表。
+ *
+ * <p>用于把平台侧用户映射到下游企业系统用户。
  *
  * @author Assistant Agent Team
  * @since 1.0.0

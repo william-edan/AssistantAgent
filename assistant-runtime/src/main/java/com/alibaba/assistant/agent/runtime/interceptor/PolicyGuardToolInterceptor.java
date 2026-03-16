@@ -17,17 +17,13 @@ package com.alibaba.assistant.agent.runtime.interceptor;
 
 import com.alibaba.assistant.agent.common.constant.CodeactStateKeys;
 import com.alibaba.assistant.agent.controlplane.toolregistry.ToolMeta;
-import com.alibaba.assistant.agent.controlplane.toolregistry.ToolMetaService;
 import com.alibaba.assistant.agent.runtime.agent.AssistantStateKeys;
 import com.alibaba.assistant.agent.runtime.compiler.RuntimeArtifact;
-import com.alibaba.assistant.agent.runtime.config.RuntimeConfigCompatibilityAdapter;
+import com.alibaba.assistant.agent.runtime.config.RuntimeConfigView;
 import com.alibaba.assistant.agent.runtime.guard.BudgetTracker;
 import com.alibaba.assistant.agent.runtime.planner.ToolExecutor;
 import com.alibaba.assistant.agent.runtime.registry.ArtifactPublicationLookupService;
-import com.alibaba.assistant.agent.runtime.registry.LegacyCompatibilityLogHelper;
-import com.alibaba.assistant.agent.runtime.registry.PublicationScopeResolver;
 import com.alibaba.assistant.agent.runtime.registry.PublishedToolDescriptor;
-import com.alibaba.assistant.agent.runtime.registry.ToolPublicationProvider;
 import com.alibaba.cloud.ai.graph.OverAllState;
 import com.alibaba.cloud.ai.graph.agent.interceptor.ToolCallHandler;
 import com.alibaba.cloud.ai.graph.agent.interceptor.ToolCallRequest;
@@ -72,43 +68,33 @@ public class PolicyGuardToolInterceptor extends ToolInterceptor {
 
 	private final ObjectMapper objectMapper;
 
-	private final ToolMetaService toolMetaService;
-
 	private final BudgetTracker budgetTracker;
 
-	private final RuntimeConfigCompatibilityAdapter compatibilityAdapter;
+	private final RuntimeConfigView runtimeConfigView;
 
 	@Nullable
 	private final ArtifactPublicationLookupService artifactPublicationLookupService;
 
-	@Nullable
-	private final PublicationScopeResolver publicationScopeResolver;
-
 	public PolicyGuardToolInterceptor(ObjectMapper objectMapper,
-			@Nullable ToolMetaService toolMetaService,
 			BudgetTracker budgetTracker,
-			RuntimeConfigCompatibilityAdapter compatibilityAdapter) {
-		this(objectMapper, toolMetaService, budgetTracker, compatibilityAdapter, null, null);
+			RuntimeConfigView runtimeConfigView) {
+		this(objectMapper, budgetTracker, runtimeConfigView, null);
 	}
 
 	@Autowired
 	public PolicyGuardToolInterceptor(ObjectMapper objectMapper,
-			@Nullable ToolMetaService toolMetaService,
 			BudgetTracker budgetTracker,
-			RuntimeConfigCompatibilityAdapter compatibilityAdapter,
-			@Nullable ArtifactPublicationLookupService artifactPublicationLookupService,
-			@Nullable PublicationScopeResolver publicationScopeResolver) {
+			RuntimeConfigView runtimeConfigView,
+			@Nullable ArtifactPublicationLookupService artifactPublicationLookupService) {
 		this.objectMapper = objectMapper;
-		this.toolMetaService = toolMetaService;
 		this.budgetTracker = budgetTracker;
-		this.compatibilityAdapter = compatibilityAdapter;
+		this.runtimeConfigView = runtimeConfigView;
 		this.artifactPublicationLookupService = artifactPublicationLookupService;
-		this.publicationScopeResolver = publicationScopeResolver;
 	}
 
 	@Override
 	public ToolCallResponse interceptToolCall(ToolCallRequest request, ToolCallHandler handler) {
-		if (!compatibilityAdapter.policyGuardEnabled()) {
+		if (!runtimeConfigView.policyGuardEnabled()) {
 			return handler.call(request);
 		}
 
@@ -193,12 +179,8 @@ public class PolicyGuardToolInterceptor extends ToolInterceptor {
 	}
 
 	private boolean isExecuteToolName(String toolName) {
-		if (!StringUtils.hasText(toolName)) {
-			return false;
-		}
-		String normalized = toolName.trim().toLowerCase(Locale.ROOT);
-		return normalized.endsWith("_execute")
-				|| normalized.matches(".*_execute_[0-9]+$");
+		return StringUtils.hasText(toolName)
+				&& "artifact_execute".equalsIgnoreCase(toolName.trim());
 	}
 
 	private GovernanceRule resolveGovernanceRule(
@@ -209,24 +191,9 @@ public class PolicyGuardToolInterceptor extends ToolInterceptor {
 		if (stateRule != null) {
 			return stateRule;
 		}
-		ToolPublicationProvider.PublicationScope scope = resolvePublicationScope(toolContext, state);
-		GovernanceRule publishedRule = resolvePublishedGovernanceRule(toolName, toolContext, scope);
+		GovernanceRule publishedRule = resolvePublishedGovernanceRule(toolName, toolContext, resolveTenantId(state));
 		if (publishedRule != null) {
 			return publishedRule;
-		}
-		if (!allowsLegacyToolMetaFallback(scope)) {
-			return new GovernanceRule(false, null, null);
-		}
-		ToolMeta queriedMeta = findToolMetaByCode(state, toolName);
-		if (queriedMeta != null) {
-			LegacyCompatibilityLogHelper.logFallback(
-					logger,
-					"PolicyGuardToolInterceptor#resolveGovernanceRule",
-					"legacy ToolMeta",
-					scope,
-					resolveTenantId(state),
-					queriedMeta.getToolCode());
-			return toRule(queriedMeta);
 		}
 		return new GovernanceRule(false, null, null);
 	}
@@ -280,7 +247,7 @@ public class PolicyGuardToolInterceptor extends ToolInterceptor {
 	private GovernanceRule resolvePublishedGovernanceRule(
 			String toolName,
 			@Nullable ToolContext toolContext,
-			@Nullable ToolPublicationProvider.PublicationScope scope) {
+			@Nullable String tenantId) {
 		if (artifactPublicationLookupService == null || !StringUtils.hasText(toolName)) {
 			return null;
 		}
@@ -290,24 +257,7 @@ public class PolicyGuardToolInterceptor extends ToolInterceptor {
 		}
 		RuntimeArtifact artifact = descriptor.get().artifact();
 		String publishedRiskLevel = resolvePublishedRiskLevel(artifact);
-		String tenantId = scope != null ? scope.tenantId() : null;
 		return new GovernanceRule(requiresPublishedConfirmation(artifact, publishedRiskLevel), publishedRiskLevel, tenantId);
-	}
-
-	private ToolMeta findToolMetaByCode(OverAllState state, String toolName) {
-		if (toolMetaService == null || !StringUtils.hasText(toolName)) {
-			return null;
-		}
-		String tenantId = resolveTenantId(state);
-		Optional<ToolMeta> exact = toolMetaService.findLatestEnabledByToolCode(tenantId, toolName);
-		if (exact.isPresent()) {
-			return exact.get();
-		}
-		String normalized = normalizeExecuteToolCode(toolName);
-		if (StringUtils.hasText(normalized) && !normalized.equalsIgnoreCase(toolName)) {
-			return toolMetaService.findLatestEnabledByToolCode(tenantId, normalized).orElse(null);
-		}
-		return null;
 	}
 
 	private boolean matchesTool(ToolMeta meta, String toolName) {
@@ -320,12 +270,8 @@ public class PolicyGuardToolInterceptor extends ToolInterceptor {
 		}
 		String normalizedToolName = normalizeIdentifier(toolName);
 		String normalizedMetaCode = normalizeIdentifier(metaCode);
-		String normalizedExecuteName = normalizedMetaCode + "_execute";
 		return toolName.equalsIgnoreCase(metaCode)
-				|| toolName.equalsIgnoreCase(metaCode + "_execute")
-				|| normalizedToolName.equalsIgnoreCase(normalizedMetaCode)
-				|| normalizedToolName.equalsIgnoreCase(normalizedExecuteName)
-				|| normalizedToolName.startsWith(normalizedExecuteName + "_");
+				|| normalizedToolName.equalsIgnoreCase(normalizedMetaCode);
 	}
 
 	private GovernanceRule toRule(ToolMeta meta) {
@@ -397,47 +343,6 @@ public class PolicyGuardToolInterceptor extends ToolInterceptor {
 		}
 		String normalized = riskLevel.trim().toUpperCase(Locale.ROOT);
 		return "MEDIUM".equals(normalized) || "HIGH".equals(normalized) || "CRITICAL".equals(normalized);
-	}
-
-	@Nullable
-	private ToolPublicationProvider.PublicationScope resolvePublicationScope(
-			@Nullable ToolContext toolContext,
-			@Nullable OverAllState state) {
-		if (publicationScopeResolver == null) {
-			return null;
-		}
-		if (toolContext != null) {
-			return publicationScopeResolver.resolve(toolContext);
-		}
-		if (state == null) {
-			return null;
-		}
-		return publicationScopeResolver.resolve(Map.of(ToolContextConstants.AGENT_STATE_CONTEXT_KEY, state));
-	}
-
-	private boolean allowsLegacyToolMetaFallback(@Nullable ToolPublicationProvider.PublicationScope scope) {
-		if (scope == null) {
-			return true;
-		}
-		if (containsIgnoreCase(scope.requestedSourceIds(), "legacy-bridge")) {
-			return true;
-		}
-		if (containsIgnoreCase(scope.blockedSourceIds(), "legacy-bridge")) {
-			return false;
-		}
-		return scope.sourceSelectionMode() != ToolPublicationProvider.SourceSelectionMode.EXCLUSIVE;
-	}
-
-	private boolean containsIgnoreCase(List<String> source, String target) {
-		if (source == null || source.isEmpty() || !StringUtils.hasText(target)) {
-			return false;
-		}
-		for (String item : source) {
-			if (item != null && target.equalsIgnoreCase(item.trim())) {
-				return true;
-			}
-		}
-		return false;
 	}
 
 	private String resolveTenantId(OverAllState state) {
@@ -609,13 +514,8 @@ public class PolicyGuardToolInterceptor extends ToolInterceptor {
 			if (StringUtils.hasText(allowlistHit)) {
 				return allowlistHit;
 			}
-			String normalizedCandidate = normalizeExecuteToolName(toolName);
-			String normalizedHit = findAllowlistMatch(allowlist, normalizedCandidate);
-			if (StringUtils.hasText(normalizedHit)) {
-				return normalizedHit;
-			}
 		}
-		return normalizeExecuteToolName(toolName);
+		return toolName;
 	}
 
 	private String findAllowlistMatch(List<?> allowlist, String toolName) {
@@ -649,38 +549,6 @@ public class PolicyGuardToolInterceptor extends ToolInterceptor {
 		return new ToolContext(context);
 	}
 
-	private String normalizeExecuteToolName(String toolName) {
-		if (!StringUtils.hasText(toolName)) {
-			return null;
-		}
-		String trimmed = toolName.trim();
-		if (!containsUnsupportedChars(trimmed)) {
-			return trimmed;
-		}
-		String normalized = normalizeIdentifier(trimmed);
-		if (!looksLikeExecuteTool(normalized)) {
-			return trimmed;
-		}
-		return normalized;
-	}
-
-	private boolean containsUnsupportedChars(String value) {
-		for (int idx = 0; idx < value.length(); idx++) {
-			char ch = value.charAt(idx);
-			if (ch == '_' || Character.isLetterOrDigit(ch)) {
-				continue;
-			}
-			return true;
-		}
-		return false;
-	}
-
-	private boolean looksLikeExecuteTool(String toolName) {
-		String normalized = toolName.toLowerCase(Locale.ROOT);
-		return normalized.endsWith("_execute")
-				|| normalized.matches(".*_execute_[0-9]+$");
-	}
-
 	private String normalizeIdentifier(String raw) {
 		if (!StringUtils.hasText(raw)) {
 			return "capability";
@@ -699,18 +567,10 @@ public class PolicyGuardToolInterceptor extends ToolInterceptor {
 		return normalized;
 	}
 
-	private String normalizeExecuteToolCode(String toolName) {
-		if (!StringUtils.hasText(toolName)) {
-			return null;
-		}
-		if (toolName.endsWith("_execute")) {
-			return toolName.substring(0, toolName.length() - "_execute".length());
-		}
-		return toolName;
-	}
-
 	private record GovernanceRule(boolean requiresConfirm, String riskLevel, String tenantId) {
 
 	}
 
 }
+
+

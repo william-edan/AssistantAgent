@@ -33,148 +33,145 @@ import reactor.core.publisher.Flux;
 
 import java.util.Collections;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyMap;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class ChatControllerAuthenticationTest {
 
-	private final AgentLoader agentLoader = mock(AgentLoader.class);
+    private final AgentLoader agentLoader = mock(AgentLoader.class);
 
-	private final Agent agent = mock(Agent.class);
+    private final Agent agent = mock(Agent.class);
 
-	private final ChatController controller = new ChatController(agentLoader, "grayscale_agent", "");
+    private final ChatController controller = new ChatController(agentLoader, "grayscale_agent", "");
 
-	@AfterEach
-	void tearDown() {
-		SecurityContextHolder.clearContext();
-	}
+    @AfterEach
+    void tearDown() {
+        SecurityContextHolder.clearContext();
+    }
 
-	@Test
-	void shouldRejectRunSseWhenAuthenticationMissing() {
-		AgentRunRequest request = buildValidRunRequest("spoof-user");
+    @Test
+    void shouldRejectRunSseWhenAuthenticationMissing() {
+        AgentRunRequest request = buildValidRunRequest("spoof-user");
 
-		ResponseStatusException error = assertThrows(ResponseStatusException.class,
-				() -> controller.runSse(request, null, "spoof-assistant", "spoof-system"));
+        ResponseStatusException error = assertThrows(ResponseStatusException.class,
+                () -> controller.runSse(request, null, "spoof-assistant", "spoof-system"));
 
-		assertEquals(HttpStatus.UNAUTHORIZED, error.getStatusCode());
-	}
+        assertEquals(HttpStatus.UNAUTHORIZED, error.getStatusCode());
+    }
 
-	@Test
-	@SuppressWarnings("unchecked")
-	void shouldInjectConfiguredDefaultSpaceScopeIntoState() throws Exception {
-		ChatController scopedController = new ChatController(agentLoader, "grayscale_agent", "", "finance-space", "test");
-		SecurityContextHolder.getContext().setAuthentication(new UsernamePasswordAuthenticationToken(
-				new AuthenticatedUserContext("1001", 1L, "gougu_oa", "assistant-ui", "token-x"),
-				"token-x",
-				Collections.emptyList()));
+    @Test
+    void shouldInjectConfiguredDefaultSpaceScopeIntoState() throws Exception {
+        ChatController scopedController = new ChatController(agentLoader, "grayscale_agent", "", "finance-space", "test");
+        SecurityContextHolder.getContext().setAuthentication(new UsernamePasswordAuthenticationToken(
+                new AuthenticatedUserContext("1001", 1L, "gougu_oa", "assistant-ui", "token-x"),
+                "token-x",
+                Collections.emptyList()));
 
-		when(agentLoader.loadAgent("grayscale_agent")).thenReturn(agent);
-		when(agent.stream(any(org.springframework.ai.chat.messages.UserMessage.class), any(RunnableConfig.class)))
-				.thenReturn(Flux.empty());
+        when(agentLoader.loadAgent("grayscale_agent")).thenReturn(agent);
+        when(agent.stream(anyMap(), any(RunnableConfig.class))).thenReturn(Flux.empty());
 
-		AgentRunRequest request = buildValidRunRequest("spoof-user");
+        AgentRunRequest request = buildValidRunRequest("spoof-user");
 
-		scopedController.runSse(request, null, "spoof-assistant", "spoof-system").blockLast();
+        scopedController.runSse(request, null, "spoof-assistant", "spoof-system").blockLast();
 
-		assertEquals("finance-space", request.stateDelta.get(AssistantStateKeys.SPACE_CODE));
-		assertEquals("test", request.stateDelta.get(AssistantStateKeys.SPACE_ENVIRONMENT));
+        assertEquals("finance-space", request.stateDelta.get(AssistantStateKeys.SPACE_CODE));
+        assertEquals("test", request.stateDelta.get(AssistantStateKeys.SPACE_ENVIRONMENT));
 
-		ArgumentCaptor<RunnableConfig> runnableConfigCaptor = ArgumentCaptor.forClass(RunnableConfig.class);
-		verify(agent).stream(any(org.springframework.ai.chat.messages.UserMessage.class), runnableConfigCaptor.capture());
-		Map<String, Object> stateUpdate = (Map<String, Object>) runnableConfigCaptor.getValue()
-				.metadata(RunnableConfig.STATE_UPDATE_METADATA_KEY)
-				.orElse(Map.of());
-		assertEquals("finance-space", stateUpdate.get(AssistantStateKeys.SPACE_CODE));
-		assertEquals("test", stateUpdate.get(AssistantStateKeys.SPACE_ENVIRONMENT));
-	}
+        ArgumentCaptor<Map<String, Object>> inputCaptor = ArgumentCaptor.forClass(Map.class);
+        ArgumentCaptor<RunnableConfig> runnableConfigCaptor = ArgumentCaptor.forClass(RunnableConfig.class);
+        verify(agent).stream(inputCaptor.capture(), runnableConfigCaptor.capture());
+        Map<String, Object> agentInput = inputCaptor.getValue();
+        assertEquals("finance-space", agentInput.get(AssistantStateKeys.SPACE_CODE));
+        assertEquals("test", agentInput.get(AssistantStateKeys.SPACE_ENVIRONMENT));
+        assertEquals("hello", agentInput.get("input"));
+        assertInstanceOf(List.class, agentInput.get("messages"));
+    }
 
-	@Test
-	@SuppressWarnings("unchecked")
-	void shouldKeepExplicitSpaceScopeWhenDefaultScopeConfigured() throws Exception {
-		ChatController scopedController = new ChatController(agentLoader, "grayscale_agent", "", "finance-space", "test");
-		SecurityContextHolder.getContext().setAuthentication(new UsernamePasswordAuthenticationToken(
-				new AuthenticatedUserContext("1001", 1L, "gougu_oa", "assistant-ui", "token-x"),
-				"token-x",
-				Collections.emptyList()));
+    @Test
+    void shouldKeepExplicitSpaceScopeWhenDefaultScopeConfigured() throws Exception {
+        ChatController scopedController = new ChatController(agentLoader, "grayscale_agent", "", "finance-space", "test");
+        SecurityContextHolder.getContext().setAuthentication(new UsernamePasswordAuthenticationToken(
+                new AuthenticatedUserContext("1001", 1L, "gougu_oa", "assistant-ui", "token-x"),
+                "token-x",
+                Collections.emptyList()));
 
-		when(agentLoader.loadAgent("grayscale_agent")).thenReturn(agent);
-		when(agent.stream(any(org.springframework.ai.chat.messages.UserMessage.class), any(RunnableConfig.class)))
-				.thenReturn(Flux.empty());
+        when(agentLoader.loadAgent("grayscale_agent")).thenReturn(agent);
+        when(agent.stream(anyMap(), any(RunnableConfig.class))).thenReturn(Flux.empty());
 
-		AgentRunRequest request = buildValidRunRequest("spoof-user");
-		request.stateDelta = new LinkedHashMap<>();
-		request.stateDelta.put(AssistantStateKeys.SPACE_CODE, "explicit-space");
-		request.stateDelta.put(AssistantStateKeys.SPACE_ENVIRONMENT, "prod");
+        AgentRunRequest request = buildValidRunRequest("spoof-user");
+        request.stateDelta = new LinkedHashMap<>();
+        request.stateDelta.put(AssistantStateKeys.SPACE_CODE, "explicit-space");
+        request.stateDelta.put(AssistantStateKeys.SPACE_ENVIRONMENT, "prod");
 
-		scopedController.runSse(request, null, "spoof-assistant", "spoof-system").blockLast();
+        scopedController.runSse(request, null, "spoof-assistant", "spoof-system").blockLast();
 
-		assertEquals("explicit-space", request.stateDelta.get(AssistantStateKeys.SPACE_CODE));
-		assertEquals("prod", request.stateDelta.get(AssistantStateKeys.SPACE_ENVIRONMENT));
+        assertEquals("explicit-space", request.stateDelta.get(AssistantStateKeys.SPACE_CODE));
+        assertEquals("prod", request.stateDelta.get(AssistantStateKeys.SPACE_ENVIRONMENT));
 
-		ArgumentCaptor<RunnableConfig> runnableConfigCaptor = ArgumentCaptor.forClass(RunnableConfig.class);
-		verify(agent).stream(any(org.springframework.ai.chat.messages.UserMessage.class), runnableConfigCaptor.capture());
-		Map<String, Object> stateUpdate = (Map<String, Object>) runnableConfigCaptor.getValue()
-				.metadata(RunnableConfig.STATE_UPDATE_METADATA_KEY)
-				.orElse(Map.of());
-		assertEquals("explicit-space", stateUpdate.get(AssistantStateKeys.SPACE_CODE));
-		assertEquals("prod", stateUpdate.get(AssistantStateKeys.SPACE_ENVIRONMENT));
-	}
-	@Test
-	@SuppressWarnings("unchecked")
-	void shouldUseAuthenticatedIdentityAndInjectAgentAppScopeIntoState() throws Exception {
-		SecurityContextHolder.getContext().setAuthentication(new UsernamePasswordAuthenticationToken(
-				new AuthenticatedUserContext("1001", 1L, "gougu_oa", "assistant-ui", "token-x"),
-				"token-x",
-				Collections.emptyList()));
+        ArgumentCaptor<Map<String, Object>> inputCaptor = ArgumentCaptor.forClass(Map.class);
+        verify(agent).stream(inputCaptor.capture(), any(RunnableConfig.class));
+        Map<String, Object> agentInput = inputCaptor.getValue();
+        assertEquals("explicit-space", agentInput.get(AssistantStateKeys.SPACE_CODE));
+        assertEquals("prod", agentInput.get(AssistantStateKeys.SPACE_ENVIRONMENT));
+    }
 
-		when(agentLoader.loadAgent("grayscale_agent")).thenReturn(agent);
-		when(agent.stream(any(org.springframework.ai.chat.messages.UserMessage.class), any(RunnableConfig.class)))
-				.thenReturn(Flux.empty());
+    @Test
+    void shouldUseAuthenticatedIdentityAndInjectAgentAppScopeIntoState() throws Exception {
+        SecurityContextHolder.getContext().setAuthentication(new UsernamePasswordAuthenticationToken(
+                new AuthenticatedUserContext("1001", 1L, "gougu_oa", "assistant-ui", "token-x"),
+                "token-x",
+                Collections.emptyList()));
 
-		AgentRunRequest request = buildValidRunRequest("spoof-user");
-		request.stateDelta = new LinkedHashMap<>();
-		request.stateDelta.put(AssistantStateKeys.ASSISTANT_UID, "spoof-assistant");
-		request.stateDelta.put(AssistantStateKeys.SYSTEM_CODE, "spoof-system");
-		request.stateDelta.put(AssistantStateKeys.SPACE_CODE, "enterprise_default");
+        when(agentLoader.loadAgent("grayscale_agent")).thenReturn(agent);
+        when(agent.stream(anyMap(), any(RunnableConfig.class))).thenReturn(Flux.empty());
 
-		controller.runSse(request, null, "spoof-assistant", "spoof-system").blockLast();
+        AgentRunRequest request = buildValidRunRequest("spoof-user");
+        request.stateDelta = new LinkedHashMap<>();
+        request.stateDelta.put(AssistantStateKeys.ASSISTANT_UID, "spoof-assistant");
+        request.stateDelta.put(AssistantStateKeys.SYSTEM_CODE, "spoof-system");
+        request.stateDelta.put(AssistantStateKeys.SPACE_CODE, "enterprise_default");
 
-		assertEquals("1001", request.userId);
-		assertEquals("1001", request.stateDelta.get(AssistantStateKeys.ASSISTANT_UID));
-		assertEquals("gougu_oa", request.stateDelta.get(AssistantStateKeys.SYSTEM_CODE));
-		assertEquals("grayscale_agent", request.stateDelta.get(AssistantStateKeys.AGENT_APP_CODE));
-		assertEquals("enterprise_default", request.stateDelta.get(AssistantStateKeys.SPACE_CODE));
+        controller.runSse(request, null, "spoof-assistant", "spoof-system").blockLast();
 
-		ArgumentCaptor<RunnableConfig> runnableConfigCaptor = ArgumentCaptor.forClass(RunnableConfig.class);
-		verify(agent).stream(any(org.springframework.ai.chat.messages.UserMessage.class), runnableConfigCaptor.capture());
-		RunnableConfig runnableConfig = runnableConfigCaptor.getValue();
-		assertEquals("1001", runnableConfig.metadata("user_id").orElse(null));
+        assertEquals("1001", request.userId);
+        assertEquals("1001", request.stateDelta.get(AssistantStateKeys.ASSISTANT_UID));
+        assertEquals("gougu_oa", request.stateDelta.get(AssistantStateKeys.SYSTEM_CODE));
+        assertEquals("grayscale_agent", request.stateDelta.get(AssistantStateKeys.AGENT_APP_CODE));
+        assertEquals("enterprise_default", request.stateDelta.get(AssistantStateKeys.SPACE_CODE));
 
-		Map<String, Object> stateUpdate = (Map<String, Object>) runnableConfig
-				.metadata(RunnableConfig.STATE_UPDATE_METADATA_KEY)
-				.orElse(Map.of());
-		assertTrue(stateUpdate.containsKey(AssistantStateKeys.ASSISTANT_UID));
-		assertTrue(stateUpdate.containsKey(AssistantStateKeys.SYSTEM_CODE));
-		assertTrue(stateUpdate.containsKey(AssistantStateKeys.AGENT_APP_CODE));
-		assertEquals("1001", stateUpdate.get(AssistantStateKeys.ASSISTANT_UID));
-		assertEquals("gougu_oa", stateUpdate.get(AssistantStateKeys.SYSTEM_CODE));
-		assertEquals("grayscale_agent", stateUpdate.get(AssistantStateKeys.AGENT_APP_CODE));
-		assertEquals("enterprise_default", stateUpdate.get(AssistantStateKeys.SPACE_CODE));
-	}
+        ArgumentCaptor<Map<String, Object>> inputCaptor = ArgumentCaptor.forClass(Map.class);
+        ArgumentCaptor<RunnableConfig> runnableConfigCaptor = ArgumentCaptor.forClass(RunnableConfig.class);
+        verify(agent).stream(inputCaptor.capture(), runnableConfigCaptor.capture());
+        RunnableConfig runnableConfig = runnableConfigCaptor.getValue();
+        assertEquals("1001", runnableConfig.metadata("user_id").orElse(null));
 
-	private static AgentRunRequest buildValidRunRequest(String userId) {
-		AgentRunRequest request = new AgentRunRequest();
-		request.threadId = "thread-auth-1";
-		request.userId = userId;
-		request.newMessage = new UserMessageDTO("hello");
-		return request;
-	}
+        Map<String, Object> agentInput = inputCaptor.getValue();
+        assertTrue(agentInput.containsKey(AssistantStateKeys.ASSISTANT_UID));
+        assertTrue(agentInput.containsKey(AssistantStateKeys.SYSTEM_CODE));
+        assertTrue(agentInput.containsKey(AssistantStateKeys.AGENT_APP_CODE));
+        assertEquals("1001", agentInput.get(AssistantStateKeys.ASSISTANT_UID));
+        assertEquals("gougu_oa", agentInput.get(AssistantStateKeys.SYSTEM_CODE));
+        assertEquals("grayscale_agent", agentInput.get(AssistantStateKeys.AGENT_APP_CODE));
+        assertEquals("enterprise_default", agentInput.get(AssistantStateKeys.SPACE_CODE));
+        assertEquals("hello", agentInput.get("input"));
+    }
+
+    private static AgentRunRequest buildValidRunRequest(String userId) {
+        AgentRunRequest request = new AgentRunRequest();
+        request.threadId = "thread-auth-1";
+        request.userId = userId;
+        request.newMessage = new UserMessageDTO("hello");
+        return request;
+    }
 
 }

@@ -142,7 +142,7 @@ class ArtifactRuntimeResumeServiceTest {
                 Map.of(),
                 Map.of());
         return PublishedToolDescriptor.forArtifact(
-                "artifact-catalog",
+                "tool-meta-catalog",
                 "workflow:oa.leave.apply",
                 "请假申请",
                 null,
@@ -152,3 +152,4 @@ class ArtifactRuntimeResumeServiceTest {
                 artifact);
     }
 }
+

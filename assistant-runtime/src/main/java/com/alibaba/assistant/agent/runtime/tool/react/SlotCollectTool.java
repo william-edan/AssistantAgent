@@ -19,10 +19,7 @@ import com.alibaba.assistant.agent.controlplane.toolregistry.ToolMeta;
 import com.alibaba.assistant.agent.controlplane.toolregistry.ToolMetaService;
 import com.alibaba.assistant.agent.runtime.agent.AssistantStateKeys;
 import com.alibaba.assistant.agent.runtime.registry.ArtifactPublicationLookupService;
-import com.alibaba.assistant.agent.runtime.registry.LegacyCompatibilityLogHelper;
-import com.alibaba.assistant.agent.runtime.registry.PublicationScopeResolver;
 import com.alibaba.assistant.agent.runtime.registry.PublishedToolDescriptor;
-import com.alibaba.assistant.agent.runtime.registry.ToolPublicationProvider;
 import com.alibaba.assistant.agent.runtime.planner.DependencyResolver;
 import com.alibaba.assistant.agent.runtime.planner.FieldMappingProcessor;
 import com.alibaba.assistant.agent.runtime.planner.ToolExecutor;
@@ -42,7 +39,6 @@ import com.alibaba.assistant.agent.slot.model.SlotValue;
 import com.alibaba.assistant.agent.slot.model.ToolMetaSnapshot;
 import com.alibaba.cloud.ai.graph.OverAllState;
 import com.alibaba.cloud.ai.graph.agent.tools.ToolContextConstants;
-import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.annotation.JsonPropertyDescription;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -61,8 +57,10 @@ import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 
 import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.LocalTime;
+import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
-import java.time.temporal.TemporalAdjusters;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
@@ -71,29 +69,45 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.function.BiFunction;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 /**
- * React phase slot collection tool.
- * Implements the 6-step workflow: parse, merge, enrich, auto-fill, compute, and status check.
+ * 槽位收集工具。
  *
- * @author Assistant Agent Team
- * @since 1.0.0
+ * <p>负责在多轮对话中完成参数收集主链路：解析用户输入、合并历史值、加载候选项、自动补全默认值、
+ * 计算派生字段并判断当前是否可以进入确认阶段。绝大多数“我要请假”“我要写周报”之类的业务请求，
+ * 都会先经过这里生成采集卡或确认卡。</p>
  */
 @Component
 @Profile("migration")
 public class SlotCollectTool implements BiFunction<SlotCollectTool.Request, ToolContext, SlotCollectTool.Response> {
 
     private static final Logger logger = LoggerFactory.getLogger(SlotCollectTool.class);
+    private static final String RAW_TOOL_OPTION_PAYLOAD_KEY = "_toolOptionPayload";
 
     private static final Pattern RELATIVE_DATE_RANGE_PATTERN =
             Pattern.compile("(大后天|后天|明天|今天|今日)\\s*(?:到|至|\\-|~|～)\\s*(大后天|后天|明天|今天|今日)");
 
     private static final Pattern ABSOLUTE_DATE_PATTERN =
             Pattern.compile("(20\\d{2})[-/.年](\\d{1,2})[-/.月](\\d{1,2})日?");
+
+    private static final Pattern EXPLICIT_TITLE_PATTERN =
+            Pattern.compile("(?:会议主题|主题|标题)(?:是|为|：|:)?\\s*([^，。；,;\n]{1,40})");
+
+    private static final Pattern HEADCOUNT_PATTERN =
+            Pattern.compile("([零一二两三四五六七八九十\\d]{1,3})\\s*(?:个?人|位)");
+
+    private static final Pattern RELATIVE_TIME_RANGE_PATTERN =
+            Pattern.compile("(?:(今天|今日|明天|后天|大后天|20\\d{2}[-/.年]\\d{1,2}[-/.月]\\d{1,2}日?)\\s*)?"
+                    + "(上午|中午|下午|晚上)?\\s*([零一二两三四五六七八九十\\d]{1,2})(?:点|时)(半|一刻|三刻|[0-5]?\\d分?)?"
+                    + "\\s*(?:到|至|\\-|~|～)\\s*"
+                    + "(上午|中午|下午|晚上)?\\s*([零一二两三四五六七八九十\\d]{1,2})(?:点|时)(半|一刻|三刻|[0-5]?\\d分?)?");
+
+    private static final DateTimeFormatter DATETIME_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
 
     private static final Pattern EXPLICIT_REASON_PATTERN =
             Pattern.compile("(?:请假原因(?:是|为)?|原因(?:是|为)?|因为|由于)\\s*([^，。；,;\\n]{1,40})");
@@ -106,20 +120,19 @@ public class SlotCollectTool implements BiFunction<SlotCollectTool.Request, Tool
     private final ComputedFieldProcessor computedFieldProcessor;
     private final SlotSchemaParser slotSchemaParser;
     private final ObjectMapper objectMapper;
-    private final ToolMetaService toolMetaService;
     private final DependencyResolver dependencyResolver;
     private final FieldMappingProcessor fieldMappingProcessor;
     private final ToolExecutor toolExecutor;
     private final ArtifactPublicationLookupService artifactPublicationLookupService;
-    private final PublicationScopeResolver publicationScopeResolver;
+    private final ToolMetaService toolMetaService;
 
-        public SlotCollectTool(SlotCollectorService slotCollectorService,
+    public SlotCollectTool(SlotCollectorService slotCollectorService,
                            SlotEnricherService slotEnricherService,
                            ComputedFieldProcessor computedFieldProcessor,
                            SlotSchemaParser slotSchemaParser,
                            ObjectMapper objectMapper) {
         this(slotCollectorService, slotEnricherService, computedFieldProcessor, slotSchemaParser, objectMapper,
-                null, null, null, null, null, null);
+                null, null, null, null, null);
     }
 
     public SlotCollectTool(SlotCollectorService slotCollectorService,
@@ -127,22 +140,24 @@ public class SlotCollectTool implements BiFunction<SlotCollectTool.Request, Tool
                            ComputedFieldProcessor computedFieldProcessor,
                            SlotSchemaParser slotSchemaParser,
                            ObjectMapper objectMapper,
-                           ToolMetaService toolMetaService) {
-        this(slotCollectorService, slotEnricherService, computedFieldProcessor, slotSchemaParser, objectMapper,
-                toolMetaService, null, null, null, null, null);
-    }
-
-    public SlotCollectTool(SlotCollectorService slotCollectorService,
-                           SlotEnricherService slotEnricherService,
-                           ComputedFieldProcessor computedFieldProcessor,
-                           SlotSchemaParser slotSchemaParser,
-                           ObjectMapper objectMapper,
-                           ToolMetaService toolMetaService,
                            DependencyResolver dependencyResolver,
                            FieldMappingProcessor fieldMappingProcessor,
                            ToolExecutor toolExecutor) {
         this(slotCollectorService, slotEnricherService, computedFieldProcessor, slotSchemaParser, objectMapper,
-                toolMetaService, dependencyResolver, fieldMappingProcessor, toolExecutor, null, null);
+                dependencyResolver, fieldMappingProcessor, toolExecutor, null, null);
+    }
+
+    public SlotCollectTool(SlotCollectorService slotCollectorService,
+                           SlotEnricherService slotEnricherService,
+                           ComputedFieldProcessor computedFieldProcessor,
+                           SlotSchemaParser slotSchemaParser,
+                           ObjectMapper objectMapper,
+                           DependencyResolver dependencyResolver,
+                           FieldMappingProcessor fieldMappingProcessor,
+                           ToolExecutor toolExecutor,
+                           ArtifactPublicationLookupService artifactPublicationLookupService) {
+        this(slotCollectorService, slotEnricherService, computedFieldProcessor, slotSchemaParser, objectMapper,
+                dependencyResolver, fieldMappingProcessor, toolExecutor, artifactPublicationLookupService, null);
     }
 
     @Autowired
@@ -151,25 +166,22 @@ public class SlotCollectTool implements BiFunction<SlotCollectTool.Request, Tool
                            ComputedFieldProcessor computedFieldProcessor,
                            SlotSchemaParser slotSchemaParser,
                            ObjectMapper objectMapper,
-                           @Nullable ToolMetaService toolMetaService,
                            @Nullable DependencyResolver dependencyResolver,
                            @Nullable FieldMappingProcessor fieldMappingProcessor,
                            @Nullable ToolExecutor toolExecutor,
                            @Nullable ArtifactPublicationLookupService artifactPublicationLookupService,
-                           @Nullable PublicationScopeResolver publicationScopeResolver) {
+                           @Nullable ToolMetaService toolMetaService) {
         this.slotCollectorService = slotCollectorService;
         this.slotEnricherService = slotEnricherService;
         this.computedFieldProcessor = computedFieldProcessor;
         this.slotSchemaParser = slotSchemaParser;
         this.objectMapper = objectMapper;
-        this.toolMetaService = toolMetaService;
         this.dependencyResolver = dependencyResolver;
         this.fieldMappingProcessor = fieldMappingProcessor != null ? fieldMappingProcessor : new FieldMappingProcessor();
         this.toolExecutor = toolExecutor;
         this.artifactPublicationLookupService = artifactPublicationLookupService;
-        this.publicationScopeResolver = publicationScopeResolver;
+        this.toolMetaService = toolMetaService;
     }
-
     public static ToolCallback createToolCallback(SlotCollectTool tool) {
         return FunctionToolCallback.builder("slot_collect", tool)
                 .description("Collect and enrich workflow slots, then return COLLECTING/COMPLETE result.")
@@ -204,6 +216,8 @@ public class SlotCollectTool implements BiFunction<SlotCollectTool.Request, Tool
             String tenantId = resolveTenantId(state, effectiveRequest);
 
             Map<String, SlotValue> collectedSlots = readCollectedSlots(state);
+            Map<String, Object> currentTurnSlotInputs = readCurrentTurnSlotInputs(state, slotDefinitions);
+            List<EnrichedSlot> previousEnrichedSlots = readEnrichedSlots(state);
             Map<String, Map<String, Object>> dependencyResults = readDependencyResults(state);
             DependencyExecution dependencyExecution = resolveAndExecuteDependencies(
                     snapshot,
@@ -228,9 +242,22 @@ public class SlotCollectTool implements BiFunction<SlotCollectTool.Request, Tool
                 logger.info("SlotCollectTool#apply - suppressing model-only extraction in same user turn");
             }
             if (suppressModelExtraction) {
-                List<EnrichedSlot> enrichedSlots = enrichSlotsSafely(slotDefinitions, systemCode, assistantUid);
+                SlotEnrichmentResult enrichmentResult = enrichSlotsSafely(
+                        slotDefinitions,
+                        systemCode,
+                        assistantUid,
+                        tenantId,
+                        collectedSlots,
+                        dependencyResults,
+                        state,
+                        toolContext);
+                List<EnrichedSlot> enrichedSlots = enrichmentResult.enrichedSlots();
+                dependencyResults = enrichmentResult.dependencyResults();
                 applyAutoSelect(slotDefinitions, enrichedSlots, collectedSlots);
-                computedFieldProcessor.processComputedFields(slotDefinitions, collectedSlots);
+                computedFieldProcessor.processComputedFields(
+                        slotDefinitions,
+                        collectedSlots,
+                        buildComputationMetadata(state));
 
                 SlotCollectStatus status = slotCollectorService.checkCollectionStatus(slotDefinitions, collectedSlots);
                 int currentRound = Math.max(1, readIntState(state, AssistantStateKeys.COLLECT_ROUND));
@@ -242,12 +269,14 @@ public class SlotCollectTool implements BiFunction<SlotCollectTool.Request, Tool
 
                 if (status == SlotCollectStatus.COMPLETE) {
                     return Response.complete(
+                            snapshot.getToolCode(),
                             slotCollectorService.buildFinalParams(slotDefinitions, collectedSlots),
                             mapCollected(collectedSlots),
                             currentRound,
                             enrichedSlots);
                 }
                 Response waiting = Response.collecting(
+                        snapshot.getToolCode(),
                         mapCollected(collectedSlots),
                         buildMissingSlots(nextSlots, enrichedSlots),
                         currentRound,
@@ -259,19 +288,34 @@ public class SlotCollectTool implements BiFunction<SlotCollectTool.Request, Tool
 
             Map<String, Object> extracted = mergeAndInferExtractedSlots(
                     effectiveRequest.extractedSlots,
+                    currentTurnSlotInputs,
                     slotDefinitions,
                     state,
                     userInput,
-                    suppressModelExtraction);
-            applyWorkReportDateFallback(extracted, slotDefinitions, collectedSlots, snapshot, resolveAnchorDate(state));
+                    suppressModelExtraction,
+                    collectedSlots,
+                    previousEnrichedSlots);
             if (!extracted.isEmpty()) {
                 collectedSlots = slotCollectorService.collectFromAgent(extracted, slotDefinitions, collectedSlots);
             }
 
-            List<EnrichedSlot> enrichedSlots = enrichSlotsSafely(slotDefinitions, systemCode, assistantUid);
+            SlotEnrichmentResult enrichmentResult = enrichSlotsSafely(
+                    slotDefinitions,
+                    systemCode,
+                    assistantUid,
+                    tenantId,
+                    collectedSlots,
+                    dependencyResults,
+                    state,
+                    toolContext);
+            List<EnrichedSlot> enrichedSlots = enrichmentResult.enrichedSlots();
+            dependencyResults = enrichmentResult.dependencyResults();
             applyAutoSelect(slotDefinitions, enrichedSlots, collectedSlots);
 
-            computedFieldProcessor.processComputedFields(slotDefinitions, collectedSlots);
+            computedFieldProcessor.processComputedFields(
+                    slotDefinitions,
+                    collectedSlots,
+                    buildComputationMetadata(state));
 
             SlotCollectStatus status = slotCollectorService.checkCollectionStatus(slotDefinitions, collectedSlots);
             int nextRound = readIntState(state, AssistantStateKeys.COLLECT_ROUND) + 1;
@@ -281,16 +325,18 @@ public class SlotCollectTool implements BiFunction<SlotCollectTool.Request, Tool
                     : slotCollectorService.getNextSlotsToCollect(slotDefinitions, collectedSlots, behavior, nextRound);
 
             persistState(state, snapshot, slotDefinitions, collectedSlots, enrichedSlots, status, nextRound,
-                    dependencyResults, userInput);
+                    dependencyResults, userInput, currentTurnSlotInputs);
 
             if (status == SlotCollectStatus.COMPLETE) {
                 return Response.complete(
+                        snapshot.getToolCode(),
                         slotCollectorService.buildFinalParams(slotDefinitions, collectedSlots),
                         mapCollected(collectedSlots),
                         nextRound,
                         enrichedSlots);
             }
             return Response.collecting(
+                    snapshot.getToolCode(),
                     mapCollected(collectedSlots),
                     buildMissingSlots(nextSlots, enrichedSlots),
                     nextRound,
@@ -312,13 +358,24 @@ public class SlotCollectTool implements BiFunction<SlotCollectTool.Request, Tool
     }
 
     private Map<String, Object> mergeAndInferExtractedSlots(Map<String, Object> extractedSlots,
+                                                            Map<String, Object> currentTurnSlotInputs,
                                                             List<SlotDefinition> slotDefinitions,
                                                             OverAllState state,
                                                             String userInput,
-                                                            boolean suppressModelExtraction) {
+                                                            boolean suppressModelExtraction,
+                                                            Map<String, SlotValue> collectedSlots,
+                                                            List<EnrichedSlot> previousEnrichedSlots) {
         Map<String, Object> merged = new LinkedHashMap<>();
+        Set<String> explicitStructuredSlotNames = currentTurnSlotInputs != null
+                ? currentTurnSlotInputs.keySet().stream()
+                .filter(StringUtils::hasText)
+                .collect(Collectors.toSet())
+                : Collections.emptySet();
         if (!suppressModelExtraction && extractedSlots != null && !extractedSlots.isEmpty()) {
             merged.putAll(extractedSlots);
+        }
+        if (currentTurnSlotInputs != null && !currentTurnSlotInputs.isEmpty()) {
+            merged.putAll(filterSupportedSlotInputs(currentTurnSlotInputs, slotDefinitions));
         }
 
         if (!StringUtils.hasText(userInput)) {
@@ -326,10 +383,38 @@ public class SlotCollectTool implements BiFunction<SlotCollectTool.Request, Tool
         }
 
         LocalDate anchorDate = resolveAnchorDate(state);
-        applyDateFallback(merged, slotDefinitions, userInput, anchorDate);
-        applyLeaveTypeFallback(merged, slotDefinitions, userInput);
+        applyDateFallback(merged, slotDefinitions, userInput, anchorDate, collectedSlots);
+        applyEnumOptionFallbacks(merged, slotDefinitions, userInput, collectedSlots);
+        applyLeaveTypeFallback(merged, slotDefinitions, userInput, collectedSlots);
         applyReasonFallback(merged, slotDefinitions, userInput);
+        applyStructuredTextFallbacks(merged, slotDefinitions, userInput, collectedSlots);
+        applyNumericFallbacks(merged, slotDefinitions, userInput);
+        applySelectableOptionFallbacks(
+                merged,
+                slotDefinitions,
+                previousEnrichedSlots,
+                userInput,
+                collectedSlots,
+                explicitStructuredSlotNames);
         return merged;
+    }
+
+    private Map<String, Object> filterSupportedSlotInputs(Map<String, Object> currentTurnSlotInputs,
+                                                           List<SlotDefinition> slotDefinitions) {
+        if (currentTurnSlotInputs == null || currentTurnSlotInputs.isEmpty()
+                || slotDefinitions == null || slotDefinitions.isEmpty()) {
+            return Collections.emptyMap();
+        }
+        Map<String, Object> filtered = new LinkedHashMap<>();
+        for (SlotDefinition slotDefinition : slotDefinitions) {
+            if (slotDefinition == null || !StringUtils.hasText(slotDefinition.getName())) {
+                continue;
+            }
+            if (currentTurnSlotInputs.containsKey(slotDefinition.getName())) {
+                filtered.put(slotDefinition.getName(), currentTurnSlotInputs.get(slotDefinition.getName()));
+            }
+        }
+        return filtered;
     }
 
     private boolean shouldSuppressModelExtraction(OverAllState state, String userInput) {
@@ -362,13 +447,17 @@ public class SlotCollectTool implements BiFunction<SlotCollectTool.Request, Tool
 
     private void applyLeaveTypeFallback(Map<String, Object> extracted,
                                         List<SlotDefinition> slotDefinitions,
-                                        String userInput) {
+                                        String userInput,
+                                        Map<String, SlotValue> collectedSlots) {
         String leaveTypeSlotName = resolveSlotName(slotDefinitions, "leave_type", "types", "leaveType", "type");
         if (!StringUtils.hasText(leaveTypeSlotName) || hasTextValue(extracted.get(leaveTypeSlotName))) {
             return;
         }
 
-        String inferredLeaveTypeLabel = inferLeaveTypeLabel(userInput);
+        boolean hasCollectedLeaveType = hasTextValue(readCollectedValue(collectedSlots, leaveTypeSlotName));
+        String inferredLeaveTypeLabel = hasCollectedLeaveType
+                ? inferExplicitLeaveTypeLabel(userInput)
+                : inferLeaveTypeLabel(userInput);
         if (!StringUtils.hasText(inferredLeaveTypeLabel)) {
             return;
         }
@@ -381,17 +470,38 @@ public class SlotCollectTool implements BiFunction<SlotCollectTool.Request, Tool
     private void applyDateFallback(Map<String, Object> extracted,
                                    List<SlotDefinition> slotDefinitions,
                                    String userInput,
-                                   LocalDate anchorDate) {
+                                   LocalDate anchorDate,
+                                   Map<String, SlotValue> collectedSlots) {
         String startSlotName = resolveSlotName(slotDefinitions, "start_date", "startDate");
         String endSlotName = resolveSlotName(slotDefinitions, "end_date", "endDate");
         if (!StringUtils.hasText(startSlotName) || !StringUtils.hasText(endSlotName)) {
             return;
         }
 
+        SlotDefinition startSlot = findSlotDefinition(slotDefinitions, startSlotName);
+        SlotDefinition endSlot = findSlotDefinition(slotDefinitions, endSlotName);
         boolean hasStart = hasTextValue(extracted.get(startSlotName));
         boolean hasEnd = hasTextValue(extracted.get(endSlotName));
         if (hasStart && hasEnd) {
             return;
+        }
+
+        if (isDateTimeSlot(startSlot) || isDateTimeSlot(endSlot)) {
+            DateTimeRange dateTimeRange = extractDateTimeRange(userInput, anchorDate, collectedSlots,
+                    startSlotName, endSlotName);
+            if (dateTimeRange != null) {
+                if (!hasStart) {
+                    extracted.put(startSlotName, dateTimeRange.start());
+                    hasStart = true;
+                }
+                if (!hasEnd) {
+                    extracted.put(endSlotName, dateTimeRange.end());
+                    hasEnd = true;
+                }
+                if (hasStart && hasEnd) {
+                    return;
+                }
+            }
         }
 
         Matcher rangeMatcher = RELATIVE_DATE_RANGE_PATTERN.matcher(userInput);
@@ -416,8 +526,197 @@ public class SlotCollectTool implements BiFunction<SlotCollectTool.Request, Tool
             }
         }
 
-        if (!hasEnd && hasStart && isOneDayLeave(userInput)) {
+        if (!hasEnd && hasStart && shouldMirrorSingleDateEdit(
+                userInput,
+                collectedSlots,
+                startSlotName,
+                endSlotName,
+                extracted.get(startSlotName),
+                extracted.get(endSlotName))) {
             extracted.put(endSlotName, String.valueOf(extracted.get(startSlotName)));
+            hasEnd = true;
+        }
+
+        if (!hasStart && hasEnd && shouldMirrorSingleDateEdit(
+                userInput,
+                collectedSlots,
+                startSlotName,
+                endSlotName,
+                extracted.get(startSlotName),
+                extracted.get(endSlotName))) {
+            extracted.put(startSlotName, String.valueOf(extracted.get(endSlotName)));
+        }
+    }
+
+    private boolean isDateTimeSlot(SlotDefinition definition) {
+        if (definition == null) {
+            return false;
+        }
+        return "datetime".equalsIgnoreCase(definition.getType())
+                || "datetime".equalsIgnoreCase(definition.getUiComponent());
+    }
+
+    private DateTimeRange extractDateTimeRange(String userInput,
+                                               LocalDate anchorDate,
+                                               Map<String, SlotValue> collectedSlots,
+                                               String startSlotName,
+                                               String endSlotName) {
+        if (!StringUtils.hasText(userInput)) {
+            return null;
+        }
+
+        Matcher matcher = RELATIVE_TIME_RANGE_PATTERN.matcher(userInput);
+        if (!matcher.find()) {
+            return null;
+        }
+
+        LocalDate baseDate = resolveDateToken(matcher.group(1), anchorDate);
+        if (baseDate == null) {
+            baseDate = (LocalDate) firstNonNull(
+                    resolveDateFromCollectedSlot(collectedSlots, startSlotName),
+                    resolveDateFromCollectedSlot(collectedSlots, endSlotName),
+                    anchorDate);
+        }
+
+        String startPeriod = matcher.group(2);
+        LocalTime startTime = parseTimeValue(startPeriod, matcher.group(3), matcher.group(4));
+        String endPeriod = StringUtils.hasText(matcher.group(5)) ? matcher.group(5) : startPeriod;
+        LocalTime endTime = parseTimeValue(endPeriod, matcher.group(6), matcher.group(7));
+        if (startTime == null || endTime == null || baseDate == null) {
+            return null;
+        }
+
+        return new DateTimeRange(
+                baseDate.atTime(startTime).format(DATETIME_FORMATTER),
+                baseDate.atTime(endTime).format(DATETIME_FORMATTER));
+    }
+
+    private LocalDate resolveDateToken(String rawToken, LocalDate anchorDate) {
+        if (!StringUtils.hasText(rawToken)) {
+            return null;
+        }
+        LocalDate relativeDate = parseRelativeDateToken(rawToken, anchorDate);
+        return relativeDate != null ? relativeDate : parseDateText(rawToken);
+    }
+
+    private LocalDate resolveDateFromCollectedSlot(Map<String, SlotValue> collectedSlots, String slotName) {
+        Object rawValue = readCollectedValue(collectedSlots, slotName);
+        if (!hasTextValue(rawValue)) {
+            return null;
+        }
+        return parseDateText(String.valueOf(rawValue));
+    }
+
+    private LocalTime parseTimeValue(String periodText, String hourText, String minuteText) {
+        Integer hour = parseLocalizedInteger(hourText);
+        if (hour == null) {
+            return null;
+        }
+        int minute = parseMinuteValue(minuteText);
+        if (StringUtils.hasText(periodText)) {
+            if (("下午".equals(periodText) || "晚上".equals(periodText)) && hour < 12) {
+                hour += 12;
+            }
+            else if ("中午".equals(periodText) && hour < 11) {
+                hour += 12;
+            }
+            else if ("上午".equals(periodText) && hour == 12) {
+                hour = 0;
+            }
+        }
+        if (hour < 0 || hour > 23 || minute < 0 || minute > 59) {
+            return null;
+        }
+        return LocalTime.of(hour, minute);
+    }
+
+    private int parseMinuteValue(String rawMinute) {
+        if (!StringUtils.hasText(rawMinute)) {
+            return 0;
+        }
+        String normalized = rawMinute.trim();
+        if ("半".equals(normalized)) {
+            return 30;
+        }
+        if ("一刻".equals(normalized)) {
+            return 15;
+        }
+        if ("三刻".equals(normalized)) {
+            return 45;
+        }
+        normalized = normalized.replace("分", "");
+        Integer minute = parseLocalizedInteger(normalized);
+        return minute != null ? minute : 0;
+    }
+
+    private Integer parseLocalizedInteger(String rawNumber) {
+        if (!StringUtils.hasText(rawNumber)) {
+            return null;
+        }
+        String normalized = rawNumber.trim();
+        if (normalized.matches("\\d+")) {
+            return Integer.parseInt(normalized);
+        }
+        Map<Character, Integer> digits = new HashMap<>();
+        digits.put('零', 0);
+        digits.put('一', 1);
+        digits.put('二', 2);
+        digits.put('两', 2);
+        digits.put('三', 3);
+        digits.put('四', 4);
+        digits.put('五', 5);
+        digits.put('六', 6);
+        digits.put('七', 7);
+        digits.put('八', 8);
+        digits.put('九', 9);
+        int result = 0;
+        int current = 0;
+        for (char ch : normalized.toCharArray()) {
+            if (ch == '十') {
+                result += (current == 0 ? 1 : current) * 10;
+                current = 0;
+                continue;
+            }
+            Integer digit = digits.get(ch);
+            if (digit == null) {
+                return null;
+            }
+            current = digit;
+        }
+        return result + current;
+    }
+
+    private record DateTimeRange(String start, String end) {
+    }
+
+    private void applyEnumOptionFallbacks(Map<String, Object> extracted,
+                                              List<SlotDefinition> slotDefinitions,
+                                              String userInput,
+                                              Map<String, SlotValue> collectedSlots) {
+        if (!StringUtils.hasText(userInput) || slotDefinitions == null || slotDefinitions.isEmpty()) {
+            return;
+        }
+        String normalizedInput = normalizeOptionText(userInput);
+        for (SlotDefinition slotDefinition : slotDefinitions) {
+            if (slotDefinition == null || !StringUtils.hasText(slotDefinition.getName()) || slotDefinition.getOptions() == null) {
+                continue;
+            }
+            if (slotDefinition.getOptions().getSource() != SlotOptions.SourceType.ENUM
+                    || slotDefinition.getOptions().getEnumMapping() == null
+                    || slotDefinition.getOptions().getEnumMapping().isEmpty()) {
+                continue;
+            }
+            if (hasTextValue(extracted.get(slotDefinition.getName()))
+                    || hasTextValue(readCollectedValue(collectedSlots, slotDefinition.getName()))) {
+                continue;
+            }
+            for (Map.Entry<String, Object> entry : slotDefinition.getOptions().getEnumMapping().entrySet()) {
+                String normalizedLabel = normalizeOptionText(entry.getKey());
+                if (StringUtils.hasText(normalizedLabel) && normalizedInput.contains(normalizedLabel)) {
+                    extracted.put(slotDefinition.getName(), entry.getValue());
+                    break;
+                }
+            }
         }
     }
 
@@ -434,104 +733,797 @@ public class SlotCollectTool implements BiFunction<SlotCollectTool.Request, Tool
         }
     }
 
-    private void applyWorkReportDateFallback(Map<String, Object> extracted,
-                                             List<SlotDefinition> slotDefinitions,
-                                             Map<String, SlotValue> collectedSlots,
-                                             ToolMetaSnapshot snapshot,
-                                             LocalDate anchorDate) {
-        if (!isWorkReportTool(snapshot) || slotDefinitions == null || slotDefinitions.isEmpty()) {
+    private void applyStructuredTextFallbacks(Map<String, Object> extracted,
+                                              List<SlotDefinition> slotDefinitions,
+                                              String userInput,
+                                              Map<String, SlotValue> collectedSlots) {
+        String titleSlotName = resolveSlotName(slotDefinitions, "title", "subject", "topic");
+        if (StringUtils.hasText(titleSlotName) && !hasTextValue(extracted.get(titleSlotName))) {
+            String title = inferStructuredTitle(userInput);
+            if (StringUtils.hasText(title)) {
+                extracted.put(titleSlotName, title);
+            }
+        }
+        applyFreeTextSlotFallback(extracted, slotDefinitions, userInput, collectedSlots);
+    }
+
+    private String inferStructuredTitle(String userInput) {
+        if (!StringUtils.hasText(userInput)) {
+            return null;
+        }
+        Matcher titleMatcher = EXPLICIT_TITLE_PATTERN.matcher(userInput);
+        if (!titleMatcher.find()) {
+            return null;
+        }
+        String title = titleMatcher.group(1);
+        if (!StringUtils.hasText(title)) {
+            return null;
+        }
+        return title.replaceAll("[。；;]$", "").trim();
+    }
+
+    // 多轮续聊里，如果当前只有一个主文本槽位待补充，则直接把用户自然语言吸收到该槽位。
+    // 这样工作汇报、说明类表单不再依赖模型先把自由文本翻译成结构化字段。
+    private void applyFreeTextSlotFallback(Map<String, Object> extracted,
+                                           List<SlotDefinition> slotDefinitions,
+                                           String userInput,
+                                           Map<String, SlotValue> collectedSlots) {
+        if (!StringUtils.hasText(userInput) || slotDefinitions == null || slotDefinitions.isEmpty()) {
             return;
         }
 
-        String startSlotName = resolveSlotName(slotDefinitions, "start_date", "startDate");
-        String endSlotName = resolveSlotName(slotDefinitions, "end_date", "endDate");
-        if (!StringUtils.hasText(startSlotName) || !StringUtils.hasText(endSlotName)) {
+        String normalizedInput = normalizeOptionText(userInput);
+        if (!StringUtils.hasText(normalizedInput)) {
             return;
         }
 
-        Object startCandidate = firstNonNull(extracted.get(startSlotName), readCollectedValue(collectedSlots, startSlotName));
-        Object endCandidate = firstNonNull(extracted.get(endSlotName), readCollectedValue(collectedSlots, endSlotName));
-        if (hasTextValue(startCandidate) && hasTextValue(endCandidate)) {
+        Map<String, SlotValue> safeCollectedSlots = collectedSlots != null ? collectedSlots : Collections.emptyMap();
+        List<SlotDefinition> pendingTextSlots = resolvePendingFreeTextSlots(slotDefinitions, safeCollectedSlots, extracted);
+        if (pendingTextSlots.isEmpty()) {
             return;
         }
 
-        Integer reportType = resolveWorkReportType(extracted, collectedSlots, slotDefinitions);
-        if (reportType == null) {
+        SlotDefinition targetSlot = resolvePreferredFreeTextTarget(pendingTextSlots, normalizedInput);
+        if (targetSlot == null || hasTextValue(extracted.get(targetSlot.getName()))) {
             return;
         }
 
-        LocalDate safeAnchorDate = anchorDate != null ? anchorDate : LocalDate.now();
-        LocalDate inferredStart;
-        LocalDate inferredEnd;
-        switch (reportType) {
-            case 1:
-                inferredStart = safeAnchorDate;
-                inferredEnd = safeAnchorDate;
-                break;
-            case 2:
-                inferredStart = safeAnchorDate.with(TemporalAdjusters.previousOrSame(java.time.DayOfWeek.MONDAY));
-                inferredEnd = inferredStart.plusDays(6);
-                break;
-            case 3:
-                inferredStart = safeAnchorDate.withDayOfMonth(1);
-                inferredEnd = safeAnchorDate.with(TemporalAdjusters.lastDayOfMonth());
-                break;
-            default:
-                return;
+        boolean hasFieldCue = hasFieldCue(targetSlot, normalizedInput);
+        if (!isLikelyFreeTextAnswer(userInput, normalizedInput, hasFieldCue)) {
+            return;
         }
 
-        if (!hasTextValue(startCandidate)) {
-            extracted.put(startSlotName, inferredStart.toString());
-        }
-        if (!hasTextValue(endCandidate)) {
-            extracted.put(endSlotName, inferredEnd.toString());
+        String freeTextValue = sanitizeFreeTextAnswer(userInput, targetSlot);
+        if (StringUtils.hasText(freeTextValue)) {
+            extracted.put(targetSlot.getName(), freeTextValue);
         }
     }
 
-    private Integer resolveWorkReportType(Map<String, Object> extracted,
-                                          Map<String, SlotValue> collectedSlots,
-                                          List<SlotDefinition> slotDefinitions) {
-        String typeSlotName = resolveSlotName(slotDefinitions, "types", "type");
-        if (!StringUtils.hasText(typeSlotName)) {
+    private List<SlotDefinition> resolvePendingFreeTextSlots(List<SlotDefinition> slotDefinitions,
+                                                             Map<String, SlotValue> collectedSlots,
+                                                             Map<String, Object> currentExtracted) {
+        List<SlotDefinition> orderedCandidates = slotCollectorService.getNextSlotsToCollect(
+                slotDefinitions,
+                collectedSlots,
+                CollectBehavior.defaults(),
+                1);
+        if (orderedCandidates == null || orderedCandidates.isEmpty()) {
+            orderedCandidates = slotDefinitions;
+        }
+        return orderedCandidates.stream()
+                .filter(this::isFreeTextSlotCandidate)
+                .filter(definition -> !hasTextValue(readCollectedValue(collectedSlots, definition.getName())))
+                .filter(definition -> currentExtracted == null || !hasTextValue(currentExtracted.get(definition.getName())))
+                .collect(Collectors.toList());
+    }
+
+    private SlotDefinition resolvePreferredFreeTextTarget(List<SlotDefinition> pendingTextSlots,
+                                                          String normalizedInput) {
+        if (pendingTextSlots == null || pendingTextSlots.isEmpty()) {
             return null;
         }
 
-        Object typeValue = firstNonNull(extracted.get(typeSlotName), readCollectedValue(collectedSlots, typeSlotName));
-        if (typeValue == null) {
-            SlotDefinition typeDefinition = findSlotDefinition(slotDefinitions, typeSlotName);
-            if (typeDefinition != null) {
-                typeValue = typeDefinition.getDefaultValue();
+        List<SlotDefinition> cueTargets = pendingTextSlots.stream()
+                .filter(definition -> hasFieldCue(definition, normalizedInput))
+                .collect(Collectors.toList());
+        if (cueTargets.size() == 1) {
+            return cueTargets.get(0);
+        }
+
+        List<SlotDefinition> primaryTargets = pendingTextSlots.stream()
+                .filter(this::isPrimaryFreeTextSlot)
+                .collect(Collectors.toList());
+        if (primaryTargets.size() == 1) {
+            return primaryTargets.get(0);
+        }
+
+        return pendingTextSlots.size() == 1 ? pendingTextSlots.get(0) : null;
+    }
+
+    private boolean isFreeTextSlotCandidate(SlotDefinition definition) {
+        if (definition == null || !StringUtils.hasText(definition.getName())) {
+            return false;
+        }
+        if (!"string".equalsIgnoreCase(definition.getType())) {
+            return false;
+        }
+        if (definition.hasOptions() || definition.isComputed()) {
+            return false;
+        }
+        String uiComponent = firstNonEmpty(definition.getUiComponent(), "text");
+        return !"hidden".equalsIgnoreCase(uiComponent)
+                && !"date".equalsIgnoreCase(uiComponent)
+                && !"datetime".equalsIgnoreCase(uiComponent)
+                && !"select".equalsIgnoreCase(uiComponent)
+                && !"radio".equalsIgnoreCase(uiComponent)
+                && !"checkbox".equalsIgnoreCase(uiComponent)
+                && !"number".equalsIgnoreCase(uiComponent);
+    }
+
+    private boolean isPrimaryFreeTextSlot(SlotDefinition definition) {
+        if (definition == null) {
+            return false;
+        }
+        return definition.isRequired()
+                || definition.getPriority() == com.alibaba.assistant.agent.slot.model.SlotPriority.CORE
+                || definition.getAskMode() == SlotAskMode.BATCH;
+    }
+
+    private boolean isLikelyFreeTextAnswer(String userInput,
+                                           String normalizedInput,
+                                           boolean hasFieldCue) {
+        if (hasFieldCue) {
+            return true;
+        }
+        if (!StringUtils.hasText(normalizedInput)) {
+            return false;
+        }
+        if (isControlReply(normalizedInput)) {
+            return false;
+        }
+        if (isShortSelectionLikeInput(normalizedInput)) {
+            return false;
+        }
+        if (looksLikeDateOrTimeInput(userInput, normalizedInput)) {
+            return false;
+        }
+        return !looksLikeIntentDirective(normalizedInput);
+    }
+
+    private boolean isControlReply(String normalizedInput) {
+        return "确认".equals(normalizedInput)
+                || "确定".equals(normalizedInput)
+                || "可以".equals(normalizedInput)
+                || "好的".equals(normalizedInput)
+                || "继续".equals(normalizedInput)
+                || "提交".equals(normalizedInput)
+                || "取消".equals(normalizedInput)
+                || "不用".equals(normalizedInput)
+                || "ok".equalsIgnoreCase(normalizedInput)
+                || "yes".equalsIgnoreCase(normalizedInput)
+                || "no".equalsIgnoreCase(normalizedInput);
+    }
+
+    private boolean isShortSelectionLikeInput(String normalizedInput) {
+        if (!StringUtils.hasText(normalizedInput)) {
+            return false;
+        }
+        return normalizedInput.length() <= 3;
+    }
+
+    private boolean looksLikeDateOrTimeInput(String userInput, String normalizedInput) {
+        if (!StringUtils.hasText(userInput) && !StringUtils.hasText(normalizedInput)) {
+            return false;
+        }
+        return RELATIVE_DATE_RANGE_PATTERN.matcher(firstNonEmpty(userInput, "")).find()
+                || RELATIVE_TIME_RANGE_PATTERN.matcher(firstNonEmpty(userInput, "")).find()
+                || ABSOLUTE_DATE_PATTERN.matcher(firstNonEmpty(userInput, "")).find()
+                || "今天".equals(normalizedInput)
+                || "明天".equals(normalizedInput)
+                || "后天".equals(normalizedInput)
+                || "大后天".equals(normalizedInput)
+                || "本周".equals(normalizedInput)
+                || "本月".equals(normalizedInput)
+                || "下周".equals(normalizedInput)
+                || "下月".equals(normalizedInput);
+    }
+
+    private boolean looksLikeIntentDirective(String normalizedInput) {
+        if (!StringUtils.hasText(normalizedInput)) {
+            return false;
+        }
+        return normalizedInput.startsWith("我要")
+                || normalizedInput.startsWith("我想")
+                || normalizedInput.startsWith("请帮我")
+                || normalizedInput.startsWith("帮我")
+                || normalizedInput.startsWith("请")
+                || normalizedInput.startsWith("发起")
+                || normalizedInput.startsWith("提交")
+                || normalizedInput.startsWith("创建")
+                || normalizedInput.startsWith("新增")
+                || normalizedInput.startsWith("申请")
+                || normalizedInput.startsWith("查询")
+                || normalizedInput.startsWith("查看")
+                || normalizedInput.startsWith("写汇报")
+                || normalizedInput.startsWith("写周报")
+                || normalizedInput.startsWith("写日报")
+                || normalizedInput.startsWith("写月报");
+    }
+
+    private String sanitizeFreeTextAnswer(String userInput, SlotDefinition definition) {
+        if (!StringUtils.hasText(userInput)) {
+            return null;
+        }
+        String sanitized = stripLeadingFieldCue(userInput.trim(), definition)
+                .replaceFirst("^(?:就写|写成|改成|填成|改为|更新为|补充)\s*", "")
+                .replaceAll("^[：:，,；;\s]+", "")
+                .replaceAll("[。；;\s]+$", "")
+                .trim();
+        return StringUtils.hasText(sanitized) ? sanitized : null;
+    }
+
+    private String stripLeadingFieldCue(String userInput, SlotDefinition definition) {
+        if (!StringUtils.hasText(userInput) || definition == null) {
+            return userInput;
+        }
+        String stripped = userInput;
+        List<String> aliases = new ArrayList<>();
+        if (StringUtils.hasText(definition.getTitle())) {
+            aliases.add(definition.getTitle());
+        }
+        if (StringUtils.hasText(definition.getName())) {
+            aliases.add(definition.getName());
+        }
+        for (String alias : aliases) {
+            stripped = stripped.replaceFirst(
+                    "^(?:请)?\s*" + Pattern.quote(alias.trim()) + "\s*(?:是|为|改成|改为|填写|填成|写成|写|：|:)?\s*",
+                    "");
+        }
+        return stripped;
+    }
+
+    private void applyNumericFallbacks(Map<String, Object> extracted,
+                                       List<SlotDefinition> slotDefinitions,
+                                       String userInput) {
+        Integer headCount = inferHeadCount(userInput);
+        if (headCount == null || slotDefinitions == null || slotDefinitions.isEmpty()) {
+            return;
+        }
+        for (SlotDefinition definition : slotDefinitions) {
+            if (definition == null || !StringUtils.hasText(definition.getName())) {
+                continue;
+            }
+            if (hasTextValue(extracted.get(definition.getName())) || !isHeadCountSlot(definition)) {
+                continue;
+            }
+            extracted.put(definition.getName(), headCount);
+            return;
+        }
+    }
+
+    private Integer inferHeadCount(String userInput) {
+        if (!StringUtils.hasText(userInput)) {
+            return null;
+        }
+        Matcher matcher = HEADCOUNT_PATTERN.matcher(userInput);
+        if (!matcher.find()) {
+            return null;
+        }
+        return parseLocalizedInteger(matcher.group(1));
+    }
+
+    private boolean isHeadCountSlot(SlotDefinition definition) {
+        if (definition == null) {
+            return false;
+        }
+        String normalizedName = normalizeOptionText(definition.getName());
+        String normalizedTitle = normalizeOptionText(definition.getTitle());
+        return (StringUtils.hasText(normalizedName)
+                && (normalizedName.contains("num") || normalizedName.contains("count") || normalizedName.contains("people")))
+                || (StringUtils.hasText(normalizedTitle)
+                && (normalizedTitle.contains("人数") || normalizedTitle.contains("参会人")));
+    }
+
+    // 选项槽位优先按值命中，再结合字段提示和歧义约束判断，避免用户必须重复说字段名。
+    private void applySelectableOptionFallbacks(Map<String, Object> extracted,
+                                                List<SlotDefinition> slotDefinitions,
+                                                List<EnrichedSlot> previousEnrichedSlots,
+                                                String userInput,
+                                                Map<String, SlotValue> collectedSlots,
+                                                Set<String> explicitStructuredSlotNames) {
+        if (slotDefinitions == null || slotDefinitions.isEmpty() || previousEnrichedSlots == null
+                || previousEnrichedSlots.isEmpty()) {
+            return;
+        }
+
+        String normalizedInput = normalizeOptionText(userInput);
+        if (!StringUtils.hasText(normalizedInput)) {
+            return;
+        }
+
+        Map<String, EnrichedSlot> enrichedByName = new LinkedHashMap<>();
+        for (EnrichedSlot enrichedSlot : previousEnrichedSlots) {
+            if (enrichedSlot == null || enrichedSlot.getDefinition() == null
+                    || !StringUtils.hasText(enrichedSlot.getDefinition().getName())) {
+                continue;
+            }
+            enrichedByName.putIfAbsent(enrichedSlot.getDefinition().getName(), enrichedSlot);
+        }
+
+        Map<String, OptionMatchResult> matchesBySlot = new LinkedHashMap<>();
+        Map<String, Boolean> fieldCueBySlot = new LinkedHashMap<>();
+        for (SlotDefinition definition : slotDefinitions) {
+            if (definition == null || !StringUtils.hasText(definition.getName())) {
+                continue;
+            }
+            EnrichedSlot enrichedSlot = enrichedByName.get(definition.getName());
+            if (enrichedSlot == null || enrichedSlot.getOptions() == null || enrichedSlot.getOptions().isEmpty()) {
+                continue;
+            }
+
+            OptionMatchResult optionMatch = matchOptionsFromInput(
+                    normalizedInput,
+                    enrichedSlot.getOptions(),
+                    isMultiValueSlot(definition));
+            if (optionMatch.hasMatches()) {
+                matchesBySlot.put(definition.getName(), optionMatch);
+            }
+            fieldCueBySlot.put(definition.getName(), hasFieldCue(definition, normalizedInput));
+        }
+
+        for (SlotDefinition definition : slotDefinitions) {
+            if (definition == null || !StringUtils.hasText(definition.getName())) {
+                continue;
+            }
+            EnrichedSlot enrichedSlot = enrichedByName.get(definition.getName());
+            if (enrichedSlot == null || enrichedSlot.getOptions() == null || enrichedSlot.getOptions().isEmpty()) {
+                continue;
+            }
+
+            OptionMatchResult optionMatch = matchesBySlot.get(definition.getName());
+            boolean hasFieldCue = Boolean.TRUE.equals(fieldCueBySlot.get(definition.getName()));
+            Object existingValue = readCollectedValue(collectedSlots, definition.getName());
+            Object currentValue = extracted.get(definition.getName());
+            Object normalizedValue = normalizeOptionValue(currentValue, enrichedSlot.getOptions());
+            boolean explicitStructuredInput = explicitStructuredSlotNames != null
+                    && explicitStructuredSlotNames.contains(definition.getName());
+            if (currentValue != null) {
+                if (!shouldAcceptCurrentOptionValue(
+                        definition,
+                        normalizedValue,
+                        existingValue,
+                        optionMatch,
+                        hasFieldCue,
+                        explicitStructuredInput,
+                        matchesBySlot,
+                        enrichedSlot.getOptions())) {
+                    extracted.remove(definition.getName());
+                    continue;
+                }
+                if (!java.util.Objects.equals(currentValue, normalizedValue)) {
+                    extracted.put(definition.getName(), normalizedValue);
+                }
+                continue;
+            }
+
+            if (!isTargetedOptionSlot(definition, optionMatch, hasFieldCue, matchesBySlot)) {
+                continue;
+            }
+            Object resolvedValue = resolveMatchedOptionValue(
+                    definition,
+                    optionMatch,
+                    existingValue,
+                    userInput,
+                    enrichedSlot.getOptions());
+            if (resolvedValue != null) {
+                extracted.put(definition.getName(), resolvedValue);
             }
         }
-        if (typeValue == null) {
+    }
+
+    private boolean shouldAcceptCurrentOptionValue(SlotDefinition definition,
+                                                   Object normalizedValue,
+                                                   Object existingValue,
+                                                   OptionMatchResult optionMatch,
+                                                   boolean hasFieldCue,
+                                                   boolean explicitStructuredInput,
+                                                   Map<String, OptionMatchResult> matchesBySlot,
+                                                   List<SlotOption> options) {
+        if (definition == null || normalizedValue == null) {
+            return false;
+        }
+        // 前端结构化表单已经显式给出字段值时，运行时应直接采信，不再要求文案里再次出现字段提示。
+        if (explicitStructuredInput) {
+            return true;
+        }
+        if (optionValuesEquivalent(existingValue, normalizedValue, options, isMultiValueSlot(definition))) {
+            return true;
+        }
+        return isTargetedOptionSlot(definition, optionMatch, hasFieldCue, matchesBySlot);
+    }
+
+    private boolean isTargetedOptionSlot(SlotDefinition definition,
+                                         OptionMatchResult optionMatch,
+                                         boolean hasFieldCue,
+                                         Map<String, OptionMatchResult> matchesBySlot) {
+        if (definition == null) {
+            return false;
+        }
+        if (hasFieldCue) {
+            return true;
+        }
+        return optionMatch != null
+                && optionMatch.hasMatches()
+                && isUnambiguousOptionMatch(definition.getName(), optionMatch, matchesBySlot);
+    }
+
+    private boolean optionValuesEquivalent(Object left,
+                                           Object right,
+                                           List<SlotOption> options,
+                                           boolean multiValueSlot) {
+        if (left == null || right == null || options == null || options.isEmpty()) {
+            return false;
+        }
+        if (!multiValueSlot) {
+            Object normalizedLeft = normalizeOptionValue(left, options);
+            Object normalizedRight = normalizeOptionValue(right, options);
+            return normalizedLeft != null
+                    && normalizedRight != null
+                    && String.valueOf(normalizedLeft).equals(String.valueOf(normalizedRight));
+        }
+        java.util.LinkedHashSet<String> normalizedLeft = new java.util.LinkedHashSet<>(
+                normalizeExistingOptionValues(left, options).stream()
+                        .map(String::valueOf)
+                        .collect(Collectors.toList()));
+        java.util.LinkedHashSet<String> normalizedRight = new java.util.LinkedHashSet<>(
+                normalizeExistingOptionValues(right, options).stream()
+                        .map(String::valueOf)
+                        .collect(Collectors.toList()));
+        return !normalizedLeft.isEmpty() && normalizedLeft.equals(normalizedRight);
+    }
+
+    private Object normalizeOptionValue(Object rawValue, List<SlotOption> options) {
+        if (rawValue == null || options == null || options.isEmpty()) {
             return null;
         }
-
-        if (typeValue instanceof Number number) {
-            return number.intValue();
+        if (rawValue instanceof List<?> values) {
+            List<Object> normalizedValues = new ArrayList<>();
+            for (Object value : values) {
+                collectNormalizedOptionValues(normalizedValues, value, options);
+            }
+            return normalizedValues.isEmpty() ? null : normalizedValues;
         }
+        return normalizeSingleOptionValue(rawValue, options);
+    }
 
-        String raw = String.valueOf(typeValue).trim();
-        if (!StringUtils.hasText(raw)) {
+    private void collectNormalizedOptionValues(List<Object> target, Object rawValue, List<SlotOption> options) {
+        if (target == null || rawValue == null || options == null || options.isEmpty()) {
+            return;
+        }
+        if (rawValue instanceof List<?> values) {
+            for (Object value : values) {
+                collectNormalizedOptionValues(target, value, options);
+            }
+            return;
+        }
+        String rawText = asText(rawValue);
+        if (!StringUtils.hasText(rawText)) {
+            return;
+        }
+        String[] segments = rawText.split("[,，、]");
+        if (segments.length > 1) {
+            for (String segment : segments) {
+                collectNormalizedOptionValues(target, segment.trim(), options);
+            }
+            return;
+        }
+        addDistinctValue(target, normalizeSingleOptionValue(rawText, options));
+    }
+
+    private Object normalizeSingleOptionValue(Object rawValue, List<SlotOption> options) {
+        if (rawValue == null || options == null || options.isEmpty()) {
             return null;
         }
-
-        if ("日报".equals(raw)) {
-            return 1;
-        }
-        if ("周报".equals(raw)) {
-            return 2;
-        }
-        if ("月报".equals(raw)) {
-            return 3;
-        }
-
-        try {
-            return Integer.parseInt(raw);
-        }
-        catch (NumberFormatException e) {
+        String rawText = asText(rawValue);
+        if (!StringUtils.hasText(rawText)) {
             return null;
         }
+        String normalizedRawText = normalizeOptionText(rawText);
+        for (SlotOption option : options) {
+            if (option == null) {
+                continue;
+            }
+            String optionValue = option.getValue() != null ? String.valueOf(option.getValue()) : null;
+            if (StringUtils.hasText(optionValue) && optionValue.equals(rawText)) {
+                return option.getValue();
+            }
+            for (String alias : buildOptionAliases(option)) {
+                if (alias.equals(normalizedRawText)) {
+                    return option.getValue();
+                }
+            }
+        }
+        return null;
+    }
+
+    private boolean hasFieldCue(SlotDefinition definition, String normalizedInput) {
+        if (!StringUtils.hasText(normalizedInput) || definition == null) {
+            return false;
+        }
+        for (String alias : buildFieldAliases(definition)) {
+            if (StringUtils.hasText(alias) && normalizedInput.contains(alias)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private List<String> buildFieldAliases(SlotDefinition definition) {
+        if (definition == null) {
+            return List.of();
+        }
+        java.util.LinkedHashSet<String> aliases = new java.util.LinkedHashSet<>();
+        addFieldAlias(aliases, definition.getTitle());
+        addFieldAlias(aliases, definition.getName());
+        String normalizedTitle = normalizeOptionText(definition.getTitle());
+        if (StringUtils.hasText(normalizedTitle)) {
+            if (normalizedTitle.endsWith("人员")) {
+                aliases.add(normalizedTitle.substring(0, normalizedTitle.length() - 1));
+            }
+            if (normalizedTitle.startsWith("会议") && normalizedTitle.length() > 2) {
+                aliases.add(normalizedTitle.substring(2));
+            }
+        }
+        return new ArrayList<>(aliases);
+    }
+
+    private void addFieldAlias(java.util.LinkedHashSet<String> aliases, String rawAlias) {
+        String normalized = normalizeOptionText(rawAlias);
+        if (StringUtils.hasText(normalized)) {
+            aliases.add(normalized);
+        }
+    }
+
+    private OptionMatchResult matchOptionsFromInput(String normalizedInput,
+                                                    List<SlotOption> options,
+                                                    boolean multiValueSlot) {
+        if (!StringUtils.hasText(normalizedInput) || options == null || options.isEmpty()) {
+            return OptionMatchResult.empty();
+        }
+        List<MatchedOption> matches = new ArrayList<>();
+        for (SlotOption option : options) {
+            if (option == null) {
+                continue;
+            }
+            String bestAlias = null;
+            for (String alias : buildOptionAliases(option)) {
+                if (!StringUtils.hasText(alias) || alias.length() < 2) {
+                    continue;
+                }
+                if (normalizedInput.contains(alias) && (bestAlias == null || alias.length() > bestAlias.length())) {
+                    bestAlias = alias;
+                }
+            }
+            if (bestAlias != null) {
+                matches.add(new MatchedOption(option, bestAlias));
+            }
+        }
+        if (matches.isEmpty()) {
+            return OptionMatchResult.empty();
+        }
+        if (!multiValueSlot) {
+            MatchedOption bestMatch = matches.stream()
+                    .max((left, right) -> Integer.compare(left.alias().length(), right.alias().length()))
+                    .orElse(null);
+            if (bestMatch == null) {
+                return OptionMatchResult.empty();
+            }
+            return OptionMatchResult.single(bestMatch.option(), bestMatch.alias());
+        }
+        return OptionMatchResult.multi(matches);
+    }
+
+    private boolean isUnambiguousOptionMatch(String slotName,
+                                             OptionMatchResult currentMatch,
+                                             Map<String, OptionMatchResult> matchesBySlot) {
+        if (currentMatch == null || !currentMatch.hasMatches() || matchesBySlot == null || matchesBySlot.isEmpty()) {
+            return false;
+        }
+        for (Map.Entry<String, OptionMatchResult> entry : matchesBySlot.entrySet()) {
+            if (!StringUtils.hasText(entry.getKey()) || entry.getKey().equals(slotName)) {
+                continue;
+            }
+            OptionMatchResult otherMatch = entry.getValue();
+            if (otherMatch == null || !otherMatch.hasMatches()) {
+                continue;
+            }
+            for (String alias : currentMatch.aliases()) {
+                if (otherMatch.aliases().contains(alias)) {
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+
+    private Object resolveMatchedOptionValue(SlotDefinition definition,
+                                             OptionMatchResult optionMatch,
+                                             Object existingValue,
+                                             String userInput,
+                                             List<SlotOption> options) {
+        if (definition == null || optionMatch == null || !optionMatch.hasMatches()) {
+            return null;
+        }
+        if (!isMultiValueSlot(definition)) {
+            return optionMatch.options().get(0).getValue();
+        }
+
+        List<Object> mergedValues = new ArrayList<>();
+        if (hasAdditiveIntent(userInput)) {
+            mergedValues.addAll(normalizeExistingOptionValues(existingValue, options));
+        }
+        for (SlotOption option : optionMatch.options()) {
+            addDistinctValue(mergedValues, option.getValue());
+        }
+        return mergedValues;
+    }
+
+    private boolean isMultiValueSlot(SlotDefinition definition) {
+        if (definition == null) {
+            return false;
+        }
+        return "array".equalsIgnoreCase(definition.getType())
+                || (definition.getOptions() != null && definition.getOptions().isMultiSelect());
+    }
+
+    private boolean hasAdditiveIntent(String userInput) {
+        String normalizedInput = normalizeOptionText(userInput);
+        return StringUtils.hasText(normalizedInput)
+                && containsAny(normalizedInput, "加上", "加入", "追加", "再加", "还要");
+    }
+
+    private List<Object> normalizeExistingOptionValues(Object existingValue, List<SlotOption> options) {
+        if (existingValue == null || options == null || options.isEmpty()) {
+            return List.of();
+        }
+        List<Object> normalizedValues = new ArrayList<>();
+        collectNormalizedOptionValues(normalizedValues, existingValue, options);
+        return normalizedValues;
+    }
+
+    private void addDistinctValue(List<Object> target, Object rawValue) {
+        if (target == null || rawValue == null) {
+            return;
+        }
+        String normalized = String.valueOf(rawValue);
+        boolean exists = target.stream().map(String::valueOf).anyMatch(normalized::equals);
+        if (!exists) {
+            target.add(rawValue);
+        }
+    }
+
+    private List<String> buildOptionAliases(SlotOption option) {
+        if (option == null) {
+            return List.of();
+        }
+        java.util.LinkedHashSet<String> aliases = new java.util.LinkedHashSet<>();
+        addOptionAlias(aliases, option.getLabel());
+        addOptionAlias(aliases, stripBracketText(asText(option.getLabel())));
+        String label = stripBracketText(asText(option.getLabel()));
+        if (StringUtils.hasText(label)) {
+            for (String segment : label.split("[-/|,，、]")) {
+                addOptionAlias(aliases, segment);
+            }
+        }
+        if (!(option.getValue() instanceof Number)) {
+            addOptionAlias(aliases, option.getValue());
+        }
+        return new ArrayList<>(aliases);
+    }
+
+    private void addOptionAlias(java.util.LinkedHashSet<String> aliases, Object rawValue) {
+        if (aliases == null) {
+            return;
+        }
+        String normalized = normalizeOptionText(rawValue);
+        if (StringUtils.hasText(normalized)) {
+            aliases.add(normalized);
+        }
+    }
+
+    private String stripBracketText(String text) {
+        if (!StringUtils.hasText(text)) {
+            return text;
+        }
+        return text.replaceAll("（[^）]*）|\\([^)]*\\)", "").trim();
+    }
+
+    private String normalizeOptionText(Object rawValue) {
+        if (rawValue == null) {
+            return null;
+        }
+        String text = String.valueOf(rawValue).trim();
+        if (!StringUtils.hasText(text)) {
+            return null;
+        }
+        text = stripBracketText(text);
+        text = text.replaceAll("[\\s\\-_/|,，。；：、]+", "");
+        return StringUtils.hasText(text) ? text : null;
+    }
+
+    private record MatchedOption(SlotOption option, String alias) {
+    }
+
+    private static final class OptionMatchResult {
+
+        private final List<SlotOption> options;
+        private final List<String> aliases;
+
+        private OptionMatchResult(List<SlotOption> options, List<String> aliases) {
+            this.options = options;
+            this.aliases = aliases;
+        }
+
+        private static OptionMatchResult empty() {
+            return new OptionMatchResult(List.of(), List.of());
+        }
+
+        private static OptionMatchResult single(SlotOption option, String alias) {
+            return new OptionMatchResult(List.of(option), List.of(alias));
+        }
+
+        private static OptionMatchResult multi(List<MatchedOption> matches) {
+            List<SlotOption> matchedOptions = new ArrayList<>();
+            List<String> matchedAliases = new ArrayList<>();
+            for (MatchedOption match : matches) {
+                matchedOptions.add(match.option());
+                matchedAliases.add(match.alias());
+            }
+            return new OptionMatchResult(matchedOptions, matchedAliases);
+        }
+
+        private boolean hasMatches() {
+            return !options.isEmpty();
+        }
+
+        private List<SlotOption> options() {
+            return options;
+        }
+
+        private List<String> aliases() {
+            return aliases;
+        }
+    }
+
+    private boolean shouldMirrorSingleDateEdit(String userInput,
+
+                                               Map<String, SlotValue> collectedSlots,
+                                               String startSlotName,
+                                               String endSlotName,
+                                               Object extractedStart,
+                                               Object extractedEnd) {
+        if (!hasTextValue(extractedStart) && !hasTextValue(extractedEnd)) {
+            return false;
+        }
+        if (isOneDayLeave(userInput)) {
+            return true;
+        }
+        String normalizedInput = normalizeOptionText(userInput);
+        if (!StringUtils.hasText(normalizedInput)) {
+            return false;
+        }
+        if (RELATIVE_DATE_RANGE_PATTERN.matcher(userInput).find()) {
+            return false;
+        }
+        if (containsAny(normalizedInput, "开始日期", "结束日期", "开始时间", "结束时间", "起始", "截至", "到", "至")) {
+            return false;
+        }
+        Object previousStart = readCollectedValue(collectedSlots, startSlotName);
+        Object previousEnd = readCollectedValue(collectedSlots, endSlotName);
+        if (!hasTextValue(previousStart) || !hasTextValue(previousEnd)) {
+            return false;
+        }
+        return String.valueOf(previousStart).equals(String.valueOf(previousEnd));
     }
 
     private Object readCollectedValue(Map<String, SlotValue> collectedSlots, String slotName) {
@@ -540,14 +1532,6 @@ public class SlotCollectTool implements BiFunction<SlotCollectTool.Request, Tool
         }
         SlotValue slotValue = collectedSlots.get(slotName);
         return slotValue != null ? slotValue.getResolvedValue() : null;
-    }
-
-    private boolean isWorkReportTool(ToolMetaSnapshot snapshot) {
-        if (snapshot == null || !StringUtils.hasText(snapshot.getToolCode())) {
-            return false;
-        }
-        String toolCode = snapshot.getToolCode().trim().toLowerCase(Locale.ROOT);
-        return toolCode.endsWith("work_report") || toolCode.endsWith(".work_report");
     }
 
     private String resolveSlotName(List<SlotDefinition> slotDefinitions, String... candidates) {
@@ -750,12 +1734,20 @@ public class SlotCollectTool implements BiFunction<SlotCollectTool.Request, Tool
 
         if (containsAny(input, "有事", "私事", "个人原因", "个人事务", "家里有事", "家中有事")
                 || GENERIC_PRIVATE_REASON_PATTERN.matcher(input).find()) {
-            return "个人事务";
+            return sanitizeReason(input);
         }
         return null;
     }
 
     private String inferLeaveTypeLabel(String input) {
+        return inferLeaveTypeLabel(input, true);
+    }
+
+    private String inferExplicitLeaveTypeLabel(String input) {
+        return inferLeaveTypeLabel(input, false);
+    }
+
+    private String inferLeaveTypeLabel(String input, boolean allowImplicitPrivateReason) {
         if (!StringUtils.hasText(input)) {
             return null;
         }
@@ -789,8 +1781,9 @@ public class SlotCollectTool implements BiFunction<SlotCollectTool.Request, Tool
         if (normalizedInput.contains("事假")) {
             return "事假";
         }
-        if (containsAny(normalizedInput, "有事", "私事", "个人原因", "家中有事", "家里有事")
-                || GENERIC_PRIVATE_REASON_PATTERN.matcher(normalizedInput).find()) {
+        if (allowImplicitPrivateReason
+                && (containsAny(normalizedInput, "有事", "私事", "个人原因", "家中有事", "家里有事")
+                || GENERIC_PRIVATE_REASON_PATTERN.matcher(normalizedInput).find())) {
             return "事假";
         }
         return null;
@@ -844,13 +1837,10 @@ public class SlotCollectTool implements BiFunction<SlotCollectTool.Request, Tool
         }
         String normalized = rawReason.trim();
         normalized = normalized.replaceFirst("^(是|为)", "").trim();
+        normalized = normalized.replaceFirst("^(今天|今日|明天|后天|大后天)", "").trim();
         normalized = normalized.replaceFirst("(需要)?请假.*$", "").trim();
         if (!StringUtils.hasText(normalized)) {
             return null;
-        }
-        if (containsAny(normalized, "有事", "私事", "个人原因", "个人事务")
-                || GENERIC_PRIVATE_REASON_PATTERN.matcher(normalized).find()) {
-            return "个人事务";
         }
         return normalized;
     }
@@ -864,156 +1854,88 @@ public class SlotCollectTool implements BiFunction<SlotCollectTool.Request, Tool
     }
 
     private ToolMetaSnapshot resolveToolMetaSnapshot(Request request, OverAllState state, ToolContext toolContext) {
-        ToolPublicationProvider.PublicationScope scope = resolvePublicationScope(state, toolContext);
-        // Priority 1: State contains a matched tool meta (set by upstream intent matching)
-        if (state != null) {
-            Object raw = state.value(AssistantStateKeys.MATCHED_TOOL_META, Object.class).orElse(null);
-            if (raw != null) {
-                if (raw instanceof ToolMetaSnapshot snapshot && hasUsableSchema(snapshot)) {
-                    return snapshot;
-                }
-                if (raw instanceof ToolMeta toolMeta) {
-                    ToolMetaSnapshot snapshot = convertFromToolMeta(toolMeta);
-                    if (hasUsableSchema(snapshot)) {
-                        return snapshot;
-                    }
-                }
-                try {
-                    ToolMetaSnapshot snapshot = objectMapper.convertValue(raw, ToolMetaSnapshot.class);
-                    if (hasUsableSchema(snapshot)) {
-                        return snapshot;
-                    }
-                }
-                catch (Exception e) {
-                    logger.warn("SlotCollectTool#resolveToolMetaSnapshot - cannot convert state meta, error={}",
-                            e.getMessage());
-                }
-            }
+        ToolMetaSnapshot stateSnapshot = resolveStateToolMetaSnapshot(state);
+        if (hasUsableSchema(stateSnapshot)) {
+            return stateSnapshot;
         }
-        // Priority 2: Lookup published artifact interaction by toolCode
-        if (StringUtils.hasText(request.toolCode) && artifactPublicationLookupService != null) {
-            Optional<PublishedToolDescriptor> publishedArtifact = artifactPublicationLookupService
-                    .findPublishedArtifact(request.toolCode, toolContext);
-            if (publishedArtifact.isPresent()) {
-                logger.info("SlotCollectTool#resolveToolMetaSnapshot - reason=从artifact publication找到交互定义, toolCode={}",
-                        request.toolCode);
-                return convertFromPublishedArtifact(publishedArtifact.get());
-            }
+        if (!StringUtils.hasText(request.toolCode) || artifactPublicationLookupService == null) {
+            return null;
         }
+        return artifactPublicationLookupService.findPublishedArtifact(request.toolCode, toolContext)
+                .map(this::convertFromPublishedArtifact)
+                .filter(this::hasUsableSchema)
+                .orElse(null);
+    }
 
-        // Priority 3: Lookup ToolMeta from database by toolCode only when compatibility fallback is allowed
-        if (StringUtils.hasText(request.toolCode) && toolMetaService != null
-                && allowsLegacyToolMetaFallback(scope)) {
-            String tenantId = resolveTenantId(state, request);
-            ToolMeta toolMeta = lookupToolMetaByCode(tenantId, request.toolCode);
-            if (toolMeta != null) {
-                LegacyCompatibilityLogHelper.logFallback(
-                        logger,
-                        "SlotCollectTool#resolveToolMetaSnapshot",
-                        "legacy ToolMeta",
-                        scope,
-                        tenantId,
-                        request.toolCode);
-                return convertFromToolMeta(toolMeta);
-            }
+    private ToolMetaSnapshot resolveStateToolMetaSnapshot(OverAllState state) {
+        if (state == null) {
+            return null;
         }
-
-        // Priority 4: Inline schema from request (fallback)
-        if (StringUtils.hasText(request.slotSchema) || StringUtils.hasText(request.requestSchema)) {
-            ToolMetaSnapshot snapshot = new ToolMetaSnapshot();
-            snapshot.setToolCode(request.toolCode);
-            snapshot.setSlotSchema(request.slotSchema);
-            snapshot.setRequestSchema(request.requestSchema);
-            snapshot.setBehaviorConfig(request.behaviorConfig);
-            snapshot.setSystemCode(request.systemCode);
+        Object raw = state.value(AssistantStateKeys.MATCHED_TOOL_META, Object.class).orElse(null);
+        if (raw == null) {
+            return null;
+        }
+        if (raw instanceof ToolMetaSnapshot snapshot && hasUsableSchema(snapshot)) {
             return snapshot;
         }
-
+        if (raw instanceof ToolMeta toolMeta) {
+            ToolMetaSnapshot snapshot = convertFromToolMeta(toolMeta);
+            if (hasUsableSchema(snapshot)) {
+                return snapshot;
+            }
+        }
+        try {
+            ToolMetaSnapshot snapshot = objectMapper.convertValue(raw, ToolMetaSnapshot.class);
+            if (hasUsableSchema(snapshot)) {
+                return snapshot;
+            }
+        }
+        catch (Exception e) {
+            logger.warn("SlotCollectTool#resolveToolMetaSnapshot - cannot convert state meta, error={}", e.getMessage());
+        }
         return null;
+    }
+
+    private ToolMetaSnapshot resolveToolMetaSnapshotFromRegistry(String toolCode) {
+        return findToolMetaByCode(toolCode)
+                .map(this::convertFromToolMeta)
+                .filter(this::hasUsableSchema)
+                .orElse(null);
+    }
+
+    private Optional<ToolMeta> findToolMetaByCode(String toolCode) {
+        if (!StringUtils.hasText(toolCode) || toolMetaService == null) {
+            return Optional.empty();
+        }
+        return toolMetaService.findLatestEnabledByToolCode(null, toolCode.trim());
     }
 
     private boolean hasUsableSchema(ToolMetaSnapshot snapshot) {
         return snapshot != null
-                && (StringUtils.hasText(snapshot.getSlotSchema()) || StringUtils.hasText(snapshot.getRequestSchema()));
-    }
-
-    private boolean allowsLegacyToolMetaFallback(OverAllState state, ToolContext toolContext) {
-        return allowsLegacyToolMetaFallback(resolvePublicationScope(state, toolContext));
-    }
-
-    private boolean allowsLegacyToolMetaFallback(ToolPublicationProvider.PublicationScope scope) {
-        if (scope == null) {
-            return true;
-        }
-        if (containsIgnoreCase(scope.requestedSourceIds(), "legacy-bridge")) {
-            return true;
-        }
-        if (containsIgnoreCase(scope.blockedSourceIds(), "legacy-bridge")) {
-            return false;
-        }
-        return scope.sourceSelectionMode() != ToolPublicationProvider.SourceSelectionMode.EXCLUSIVE;
-    }
-
-    @Nullable
-    private ToolPublicationProvider.PublicationScope resolvePublicationScope(OverAllState state, ToolContext toolContext) {
-        if (publicationScopeResolver == null) {
-            return null;
-        }
-        if (toolContext != null) {
-            return publicationScopeResolver.resolve(toolContext);
-        }
-        if (state == null) {
-            return null;
-        }
-        return publicationScopeResolver.resolve(Map.of(ToolContextConstants.AGENT_STATE_CONTEXT_KEY, state));
-    }
-
-    private boolean containsIgnoreCase(List<String> source, String target) {
-        if (source == null || source.isEmpty() || !StringUtils.hasText(target)) {
-            return false;
-        }
-        for (String item : source) {
-            if (item != null && target.equalsIgnoreCase(item.trim())) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    private ToolMeta lookupToolMetaByCode(String tenantId, String toolCode) {
-        if (!StringUtils.hasText(toolCode) || toolMetaService == null) {
-            return null;
-        }
-        Optional<ToolMeta> latest = toolMetaService.findLatestEnabledByToolCode(tenantId, toolCode);
-        if (latest.isPresent()) {
-            return latest.get();
-        }
-        String effectiveTenantId = StringUtils.hasText(tenantId) ? tenantId.trim() : "default";
-        try {
-            LambdaQueryWrapper<ToolMeta> query = new LambdaQueryWrapper<>();
-            query.and(wrapper -> wrapper.eq(ToolMeta::getTenantId, effectiveTenantId)
-                    .or()
-                    .isNull(ToolMeta::getTenantId));
-            query.eq(ToolMeta::getToolCode, toolCode);
-            query.and(w -> w.isNull(ToolMeta::getStatus).or().eq(ToolMeta::getStatus, "enabled"));
-            query.orderByDesc(ToolMeta::getVersion);
-            query.orderByDesc(ToolMeta::getId);
-            query.last("LIMIT 1");
-            return toolMetaService.getOne(query, false);
-        }
-        catch (Exception e) {
-            logger.warn("SlotCollectTool#lookupToolMetaByCode - reason=数据库查找失败, tenantId={}, toolCode={}, error={}",
-                    effectiveTenantId, toolCode, e.getMessage());
-            return null;
-        }
+                && StringUtils.hasText(snapshot.getSlotSchema());
     }
 
     private ToolMetaSnapshot convertFromPublishedArtifact(PublishedToolDescriptor descriptor) {
         ToolMetaSnapshot snapshot = new ToolMetaSnapshot();
-        snapshot.setToolCode(descriptor.artifact().getArtifactCode());
-        if (descriptor.artifact().getInteraction() != null) {
-            snapshot.setSlotSchema(descriptor.artifact().getInteraction().slotSchemaJson());
-            snapshot.setBehaviorConfig(descriptor.artifact().getInteraction().askStrategyJson());
+        if (descriptor == null) {
+            return snapshot;
+        }
+        if (descriptor.artifact() != null) {
+            snapshot.setToolCode(descriptor.artifact().getArtifactCode());
+            if (descriptor.artifact().getInteraction() != null) {
+                snapshot.setSlotSchema(descriptor.artifact().getInteraction().slotSchemaJson());
+                snapshot.setBehaviorConfig(descriptor.artifact().getInteraction().askStrategyJson());
+            }
+            snapshot.setSystemCode(descriptor.executionSystemCode());
+            return snapshot;
+        }
+        if (descriptor.directTool() == null) {
+            return snapshot;
+        }
+        snapshot.setToolCode(resolvePublishedDirectToolCode(descriptor));
+        org.springframework.ai.tool.definition.ToolDefinition definition = descriptor.directTool().getToolDefinition();
+        if (definition != null) {
+            applySchema(snapshot, definition.inputSchema());
         }
         snapshot.setSystemCode(descriptor.executionSystemCode());
         return snapshot;
@@ -1022,11 +1944,18 @@ public class SlotCollectTool implements BiFunction<SlotCollectTool.Request, Tool
     private ToolMetaSnapshot convertFromToolMeta(ToolMeta toolMeta) {
         ToolMetaSnapshot snapshot = new ToolMetaSnapshot();
         snapshot.setToolCode(toolMeta.getToolCode());
-        snapshot.setSlotSchema(toolMeta.getParameterSchema());
+        applySchema(snapshot, toolMeta.getParameterSchema());
         snapshot.setExecutionPlan(toolMeta.getExecutionPlan());
         snapshot.setBehaviorConfig(toolMeta.getInteractionPolicy());
         snapshot.setSystemCode(toolMeta.getSystemCode());
         return snapshot;
+    }
+
+    private void applySchema(ToolMetaSnapshot snapshot, String rawSchema) {
+        if (snapshot == null || !StringUtils.hasText(rawSchema)) {
+            return;
+        }
+        snapshot.setSlotSchema(rawSchema);
     }
 
     private DependencyExecution resolveAndExecuteDependencies(ToolMetaSnapshot snapshot,
@@ -1078,7 +2007,7 @@ public class SlotCollectTool implements BiFunction<SlotCollectTool.Request, Tool
                         + ", reason=" + executionResult.errorMessage());
             }
 
-            results.put(dependencyKey, executionResult.outputFields());
+            results.put(dependencyKey, buildDependencyResultPayload(executionResult));
         }
         return new DependencyExecution(results, mappings);
     }
@@ -1092,8 +2021,6 @@ public class SlotCollectTool implements BiFunction<SlotCollectTool.Request, Tool
         }
 
         String targetToolCode = snapshot.getToolCode().trim();
-        ToolPublicationProvider.PublicationScope scope = resolvePublicationScope(state, toolContext);
-        boolean allowLegacyFallback = allowsLegacyToolMetaFallback(scope);
         ToolMeta rootMeta = new ToolMeta();
         rootMeta.setToolCode(targetToolCode);
         rootMeta.setDescription(targetToolCode);
@@ -1101,46 +2028,13 @@ public class SlotCollectTool implements BiFunction<SlotCollectTool.Request, Tool
         rootMeta.setInteractionPolicy(snapshot.getBehaviorConfig());
         rootMeta.setParameterSchema(snapshot.getSlotSchema());
 
-        if (!StringUtils.hasText(rootMeta.getInteractionPolicy()) && allowLegacyFallback && toolMetaService != null) {
-            ToolMeta legacyRootMeta = toolMetaService.findLatestEnabledByToolCode(tenantId, targetToolCode).orElse(null);
-            if (legacyRootMeta != null) {
-                LegacyCompatibilityLogHelper.logFallback(
-                        logger,
-                        "SlotCollectTool#resolveDependencySteps",
-                        "legacy dependency root ToolMeta",
-                        scope,
-                        tenantId,
-                        targetToolCode);
-                rootMeta = legacyRootMeta;
-                if (!StringUtils.hasText(rootMeta.getInteractionPolicy())
-                        && StringUtils.hasText(snapshot.getBehaviorConfig())) {
-                    rootMeta.setInteractionPolicy(snapshot.getBehaviorConfig());
-                }
-            }
-        }
-
         ToolMeta finalRootMeta = rootMeta;
         return dependencyResolver.resolve(targetToolCode, toolCode -> {
             if (StringUtils.hasText(toolCode)
                     && targetToolCode.equalsIgnoreCase(toolCode.trim())) {
                 return Optional.of(finalRootMeta);
             }
-            Optional<ToolMeta> publishedMeta = resolvePublishedDependencyToolMeta(toolCode, state, toolContext);
-            if (publishedMeta.isPresent()) {
-                return publishedMeta;
-            }
-            if (!allowLegacyFallback || toolMetaService == null) {
-                return Optional.empty();
-            }
-            Optional<ToolMeta> legacyMeta = toolMetaService.findLatestEnabledByToolCode(tenantId, toolCode);
-            legacyMeta.ifPresent(meta -> LegacyCompatibilityLogHelper.logFallback(
-                    logger,
-                    "SlotCollectTool#resolveDependencySteps",
-                    "legacy dependency ToolMeta",
-                    scope,
-                    tenantId,
-                    toolCode));
-            return legacyMeta;
+            return resolvePublishedDependencyToolMeta(toolCode, state, toolContext);
         });
     }
 
@@ -1160,21 +2054,59 @@ public class SlotCollectTool implements BiFunction<SlotCollectTool.Request, Tool
 
     private ToolMeta convertPublishedArtifactToToolMeta(PublishedToolDescriptor descriptor) {
         ToolMeta toolMeta = new ToolMeta();
-        toolMeta.setToolCode(descriptor.artifact().getArtifactCode());
-        toolMeta.setToolName(firstNonEmpty(
-                descriptor.displayName(),
-                descriptor.artifact().getDisplayName(),
-                descriptor.artifact().getArtifactCode()));
-        toolMeta.setDescription(firstNonEmpty(
-                descriptor.displayName(),
-                descriptor.artifact().getDisplayName(),
-                descriptor.artifact().getArtifactCode()));
-        toolMeta.setSystemCode(descriptor.executionSystemCode());
-        if (descriptor.artifact().getInteraction() != null) {
-            toolMeta.setParameterSchema(descriptor.artifact().getInteraction().slotSchemaJson());
-            toolMeta.setInteractionPolicy(descriptor.artifact().getInteraction().askStrategyJson());
+        if (descriptor == null) {
+            return toolMeta;
+        }
+        if (descriptor.artifact() != null) {
+            toolMeta.setToolCode(descriptor.artifact().getArtifactCode());
+            toolMeta.setToolName(firstNonEmpty(
+                    descriptor.displayName(),
+                    descriptor.artifact().getDisplayName(),
+                    descriptor.artifact().getArtifactCode()));
+            toolMeta.setDescription(firstNonEmpty(
+                    descriptor.displayName(),
+                    descriptor.artifact().getDisplayName(),
+                    descriptor.artifact().getArtifactCode()));
+            toolMeta.setSystemCode(descriptor.executionSystemCode());
+            if (descriptor.artifact().getInteraction() != null) {
+                toolMeta.setParameterSchema(descriptor.artifact().getInteraction().slotSchemaJson());
+                toolMeta.setInteractionPolicy(descriptor.artifact().getInteraction().askStrategyJson());
+            }
+            return toolMeta;
+        }
+        if (descriptor.directTool() != null) {
+            org.springframework.ai.tool.definition.ToolDefinition definition = descriptor.directTool().getToolDefinition();
+            toolMeta.setToolCode(resolvePublishedDirectToolCode(descriptor));
+            toolMeta.setToolName(firstNonEmpty(
+                    descriptor.displayName(),
+                    definition != null ? definition.description() : null,
+                    definition != null ? definition.name() : null));
+            toolMeta.setDescription(firstNonEmpty(
+                    descriptor.displayName(),
+                    definition != null ? definition.description() : null,
+                    definition != null ? definition.name() : null));
+            toolMeta.setSystemCode(descriptor.executionSystemCode());
+            if (definition != null) {
+                toolMeta.setParameterSchema(definition.inputSchema());
+            }
         }
         return toolMeta;
+    }
+
+    private String resolvePublishedDirectToolCode(PublishedToolDescriptor descriptor) {
+        if (descriptor == null || descriptor.directTool() == null) {
+            return null;
+        }
+        com.alibaba.assistant.agent.common.tools.CodeactToolMetadata metadata = descriptor.directTool().getCodeactMetadata();
+        if (metadata != null && metadata.aliases() != null) {
+            for (String alias : metadata.aliases()) {
+                if (StringUtils.hasText(alias)) {
+                    return alias;
+                }
+            }
+        }
+        org.springframework.ai.tool.definition.ToolDefinition definition = descriptor.directTool().getToolDefinition();
+        return definition != null ? definition.name() : null;
     }
     private List<DependencyResolver.FieldMapping> collectDependencyMappings(List<DependencyResolver.ResolvedStep> steps) {
         if (steps == null || steps.size() <= 1) {
@@ -1203,6 +2135,9 @@ public class SlotCollectTool implements BiFunction<SlotCollectTool.Request, Tool
                     continue;
                 }
                 for (Map.Entry<String, Object> entry : result.entrySet()) {
+                    if (RAW_TOOL_OPTION_PAYLOAD_KEY.equals(entry.getKey())) {
+                        continue;
+                    }
                     args.putIfAbsent(entry.getKey(), entry.getValue());
                 }
             }
@@ -1282,19 +2217,378 @@ public class SlotCollectTool implements BiFunction<SlotCollectTool.Request, Tool
         return result;
     }
 
-    private List<EnrichedSlot> enrichSlotsSafely(List<SlotDefinition> slotDefinitions, String systemCode,
-                                                 String assistantUid) {
-        if (!StringUtils.hasText(systemCode) || !StringUtils.hasText(assistantUid)) {
-            return slotDefinitions.stream().map(EnrichedSlot::new).collect(Collectors.toList());
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> readCurrentTurnSlotInputs(OverAllState state, List<SlotDefinition> slotDefinitions) {
+        if (state == null || slotDefinitions == null || slotDefinitions.isEmpty()) {
+            return Collections.emptyMap();
+        }
+        Map<String, Object> inputs = new LinkedHashMap<>();
+        Map<String, Object> raw = state.value(AssistantStateKeys.CURRENT_TURN_SLOT_INPUTS, Map.class).orElse(null);
+        if (raw != null && !raw.isEmpty()) {
+            inputs.putAll(filterSupportedSlotInputs(raw, slotDefinitions));
+        }
+        for (SlotDefinition slotDefinition : slotDefinitions) {
+            if (slotDefinition == null || !StringUtils.hasText(slotDefinition.getName())) {
+                continue;
+            }
+            Object flatValue = state.value(slotDefinition.getName(), Object.class).orElse(null);
+            if (flatValue != null) {
+                inputs.put(slotDefinition.getName(), flatValue);
+            }
+        }
+        return inputs;
+    }
+
+    private Map<String, Object> buildComputationMetadata(OverAllState state) {
+        Map<String, Object> metadata = new LinkedHashMap<>();
+        LocalDate anchorDate = resolveAnchorDate(state);
+        metadata.put("current_date", anchorDate.toString());
+        return metadata;
+    }
+
+    private List<EnrichedSlot> readEnrichedSlots(OverAllState state) {
+        List<EnrichedSlot> enrichedSlots = new ArrayList<>();
+        if (state == null) {
+            return enrichedSlots;
         }
 
+        Object raw = state.value(AssistantStateKeys.ENRICHED_SLOTS, Object.class).orElse(null);
+        if (!(raw instanceof List<?> rawList) || rawList.isEmpty()) {
+            return enrichedSlots;
+        }
+
+        for (Object item : rawList) {
+            if (item instanceof EnrichedSlot enrichedSlot) {
+                enrichedSlots.add(enrichedSlot);
+                continue;
+            }
+            try {
+                enrichedSlots.add(objectMapper.convertValue(item, EnrichedSlot.class));
+            }
+            catch (Exception e) {
+                logger.warn("SlotCollectTool#readEnrichedSlots - failed to convert enriched slot, error={}",
+                        e.getMessage());
+            }
+        }
+        return enrichedSlots;
+    }
+
+    private SlotEnrichmentResult enrichSlotsSafely(List<SlotDefinition> slotDefinitions,
+                                                   String systemCode,
+                                                   String assistantUid,
+                                                   String tenantId,
+                                                   Map<String, SlotValue> collectedSlots,
+                                                   Map<String, Map<String, Object>> dependencyResults,
+                                                   OverAllState state,
+                                                   ToolContext toolContext) {
+        List<EnrichedSlot> enrichedSlots = slotDefinitions.stream().map(EnrichedSlot::new).collect(Collectors.toList());
+        if (StringUtils.hasText(systemCode) && StringUtils.hasText(assistantUid)) {
+            try {
+                enrichedSlots = slotEnricherService.enrichSlots(slotDefinitions, systemCode, assistantUid);
+            }
+            catch (Exception e) {
+                logger.warn("SlotCollectTool#enrichSlotsSafely - enrichment failed, error={}", e.getMessage());
+            }
+        }
+        return resolveToolBackedOptions(
+                slotDefinitions,
+                enrichedSlots,
+                tenantId,
+                collectedSlots,
+                dependencyResults,
+                systemCode,
+                assistantUid,
+                state,
+                toolContext);
+    }
+
+    private SlotEnrichmentResult resolveToolBackedOptions(List<SlotDefinition> slotDefinitions,
+                                                          List<EnrichedSlot> enrichedSlots,
+                                                          String tenantId,
+                                                          Map<String, SlotValue> collectedSlots,
+                                                          Map<String, Map<String, Object>> dependencyResults,
+                                                          String systemCode,
+                                                          String assistantUid,
+                                                          OverAllState state,
+                                                          ToolContext toolContext) {
+        if (slotDefinitions == null || slotDefinitions.isEmpty()) {
+            return new SlotEnrichmentResult(
+                    enrichedSlots != null ? enrichedSlots : Collections.emptyList(),
+                    dependencyResults != null ? dependencyResults : Collections.emptyMap());
+        }
+
+        Map<String, EnrichedSlot> enrichedByName = new LinkedHashMap<>();
+        if (enrichedSlots != null) {
+            for (EnrichedSlot enrichedSlot : enrichedSlots) {
+                if (enrichedSlot != null && enrichedSlot.getDefinition() != null
+                        && StringUtils.hasText(enrichedSlot.getDefinition().getName())) {
+                    enrichedByName.put(enrichedSlot.getDefinition().getName(), enrichedSlot);
+                }
+            }
+        }
+
+        Map<String, Map<String, Object>> resolvedDependencyResults = dependencyResults != null
+                ? new LinkedHashMap<>(dependencyResults)
+                : new LinkedHashMap<>();
+
+        for (SlotDefinition definition : slotDefinitions) {
+            if (definition == null || !StringUtils.hasText(definition.getName())) {
+                continue;
+            }
+            SlotOptions optionsConfig = definition.getOptions();
+            if (optionsConfig == null || optionsConfig.getSource() != SlotOptions.SourceType.TOOL
+                    || optionsConfig.getToolConfig() == null) {
+                continue;
+            }
+
+            ToolOptionResolution resolution = resolveToolOptions(
+                    definition,
+                    optionsConfig,
+                    tenantId,
+                    collectedSlots,
+                    resolvedDependencyResults,
+                    systemCode,
+                    assistantUid,
+                    state,
+                    toolContext);
+            if (!resolution.dependencyResults().isEmpty()) {
+                resolvedDependencyResults.putAll(resolution.dependencyResults());
+            }
+
+            EnrichedSlot target = enrichedByName.computeIfAbsent(definition.getName(), key -> {
+                EnrichedSlot enrichedSlot = new EnrichedSlot(definition);
+                if (enrichedSlots != null) {
+                    enrichedSlots.add(enrichedSlot);
+                }
+                return enrichedSlot;
+            });
+
+            if (!resolution.options().isEmpty()) {
+                target.setOptions(resolution.options());
+                target.setOptionsError(null);
+                continue;
+            }
+            if (StringUtils.hasText(resolution.errorMessage())) {
+                target.setOptionsError(resolution.errorMessage());
+            }
+        }
+
+        return new SlotEnrichmentResult(
+                enrichedSlots != null ? enrichedSlots : Collections.emptyList(),
+                resolvedDependencyResults);
+    }
+
+    private ToolOptionResolution resolveToolOptions(SlotDefinition definition,
+                                                    SlotOptions optionsConfig,
+                                                    String tenantId,
+                                                    Map<String, SlotValue> collectedSlots,
+                                                    Map<String, Map<String, Object>> dependencyResults,
+                                                    String systemCode,
+                                                    String assistantUid,
+                                                    OverAllState state,
+                                                    ToolContext toolContext) {
+        Map<String, Map<String, Object>> updatedResults = new LinkedHashMap<>();
+        Map<String, Object> optionPayload = null;
+        String errorMessage = null;
+
         try {
-            return slotEnricherService.enrichSlots(slotDefinitions, systemCode, assistantUid);
+            String resolverToolCode = optionsConfig.getToolConfig().getToolCode();
+            if (StringUtils.hasText(resolverToolCode)) {
+                String dependencyKey = normalizeToolCode(resolverToolCode);
+                optionPayload = dependencyResults != null ? dependencyResults.get(dependencyKey) : null;
+                if ((optionPayload == null || optionPayload.isEmpty()) && toolExecutor != null) {
+                    Map<String, Object> dependencyArgs = buildDependencyArgs(
+                            collectedSlots,
+                            dependencyResults,
+                            systemCode,
+                            assistantUid,
+                            state);
+                    ToolExecutor.ExecutionResult executionResult = toolExecutor.execute(
+                            tenantId, resolverToolCode, dependencyArgs, toolContext);
+                    if (!executionResult.success()) {
+                        errorMessage = executionResult.errorMessage();
+                    }
+                    else {
+                        optionPayload = buildDependencyResultPayload(executionResult);
+                        updatedResults.put(dependencyKey, optionPayload);
+                    }
+                }
+            }
+
+            if ((optionPayload == null || optionPayload.isEmpty()) && definition.getDependsOn() != null) {
+                for (String dependencyToolCode : definition.getDependsOn()) {
+                    if (!StringUtils.hasText(dependencyToolCode)) {
+                        continue;
+                    }
+                    Map<String, Object> result = dependencyResults != null
+                            ? dependencyResults.get(normalizeToolCode(dependencyToolCode))
+                            : null;
+                    if (result != null && !result.isEmpty()) {
+                        optionPayload = result;
+                        break;
+                    }
+                }
+            }
         }
         catch (Exception e) {
-            logger.warn("SlotCollectTool#enrichSlotsSafely - enrichment failed, error={}", e.getMessage());
-            return slotDefinitions.stream().map(EnrichedSlot::new).collect(Collectors.toList());
+            errorMessage = e.getMessage();
         }
+
+        if (optionPayload == null || optionPayload.isEmpty()) {
+            return new ToolOptionResolution(Collections.emptyList(), updatedResults, errorMessage);
+        }
+
+        List<SlotOption> options = mapToolResultToOptions(optionsConfig, optionPayload);
+        return new ToolOptionResolution(options, updatedResults, errorMessage);
+    }
+
+    private Map<String, Object> buildDependencyResultPayload(ToolExecutor.ExecutionResult executionResult) {
+        if (executionResult == null) {
+            return Collections.emptyMap();
+        }
+
+        Map<String, Object> payload = executionResult.payload();
+        Map<String, Object> outputFields = executionResult.outputFields();
+        if ((payload == null || payload.isEmpty()) && (outputFields == null || outputFields.isEmpty())) {
+            return Collections.emptyMap();
+        }
+        if (payload == null || payload.isEmpty()) {
+            return new LinkedHashMap<>(outputFields);
+        }
+        if (outputFields == null || outputFields.isEmpty()) {
+            Map<String, Object> rawOnly = new LinkedHashMap<>();
+            rawOnly.put(RAW_TOOL_OPTION_PAYLOAD_KEY, new LinkedHashMap<>(payload));
+            return rawOnly;
+        }
+
+        Map<String, Object> merged = new LinkedHashMap<>(outputFields);
+        merged.put(RAW_TOOL_OPTION_PAYLOAD_KEY, new LinkedHashMap<>(payload));
+        return merged;
+    }
+
+    private List<SlotOption> mapToolResultToOptions(SlotOptions optionsConfig, Map<String, Object> optionPayload) {
+        if (optionsConfig == null || optionsConfig.getToolConfig() == null || optionPayload == null
+                || optionPayload.isEmpty()) {
+            return Collections.emptyList();
+        }
+
+        Object extracted = extractOptionSource(optionPayload, optionsConfig.getToolConfig().getResultPath());
+        if (extracted == null) {
+            extracted = extractOptionSourceFromRawPayload(optionPayload, optionsConfig.getToolConfig().getResultPath());
+        }
+        if (extracted == null) {
+            return Collections.emptyList();
+        }
+
+        if (extracted instanceof List<?> list) {
+            List<SlotOption> options = new ArrayList<>();
+            for (Object item : list) {
+                SlotOption option = toSlotOption(item, optionsConfig.getToolConfig());
+                if (option != null) {
+                    options.add(option);
+                }
+            }
+            return options;
+        }
+
+        if (extracted instanceof Map<?, ?> map) {
+            List<SlotOption> options = new ArrayList<>();
+            for (Map.Entry<?, ?> entry : map.entrySet()) {
+                if (entry.getKey() == null) {
+                    continue;
+                }
+                options.add(new SlotOption(String.valueOf(entry.getKey()), entry.getValue()));
+            }
+            return options;
+        }
+
+        return List.of(new SlotOption(String.valueOf(extracted), extracted));
+    }
+
+    @SuppressWarnings("unchecked")
+    private Object extractOptionSourceFromRawPayload(Map<String, Object> optionPayload, String resultPath) {
+        Object rawPayload = optionPayload.get(RAW_TOOL_OPTION_PAYLOAD_KEY);
+        if (rawPayload instanceof Map<?, ?> rawMap) {
+            return extractOptionSource((Map<String, Object>) rawMap, resultPath);
+        }
+        return null;
+    }
+
+    private Object extractOptionSource(Map<String, Object> optionPayload, String resultPath) {
+        if (!StringUtils.hasText(resultPath)) {
+            for (String candidate : List.of("data", "items", "list", "records", "options")) {
+                Object value = optionPayload.get(candidate);
+                if (value instanceof List<?> || value instanceof Map<?, ?>) {
+                    return value;
+                }
+            }
+            if (optionPayload.size() == 1 && optionPayload.containsKey(RAW_TOOL_OPTION_PAYLOAD_KEY)) {
+                return null;
+            }
+            return optionPayload;
+        }
+
+        JsonNode current = objectMapper.valueToTree(optionPayload);
+        for (String segment : resultPath.split("\\.")) {
+            if (!StringUtils.hasText(segment) || current == null || current.isMissingNode() || current.isNull()) {
+                return null;
+            }
+            current = current.path(segment.trim());
+        }
+        if (current == null || current.isMissingNode() || current.isNull()) {
+            return null;
+        }
+        return objectMapper.convertValue(current, Object.class);
+    }
+
+    @SuppressWarnings("unchecked")
+    private SlotOption toSlotOption(Object item, com.alibaba.assistant.agent.slot.model.ToolOptionResolverConfig toolConfig) {
+        if (item == null) {
+            return null;
+        }
+        if (item instanceof Map<?, ?> rawMap) {
+            Map<String, Object> map = new LinkedHashMap<>();
+            for (Map.Entry<?, ?> entry : rawMap.entrySet()) {
+                if (entry.getKey() != null) {
+                    map.put(String.valueOf(entry.getKey()), entry.getValue());
+                }
+            }
+            Object rawLabel = readMappedField(map, toolConfig.getLabelField(), toolConfig.getValueField());
+            Object rawValue = readMappedField(map, toolConfig.getValueField(), toolConfig.getLabelField());
+            if (rawLabel == null && rawValue == null) {
+                return null;
+            }
+            SlotOption option = new SlotOption(String.valueOf(rawLabel != null ? rawLabel : rawValue), rawValue);
+            Object description = readMappedField(map, toolConfig.getDescriptionField(), null);
+            if (description != null) {
+                option.setDescription(String.valueOf(description));
+            }
+            Object disabled = readMappedField(map, toolConfig.getDisabledField(), null);
+            if (disabled instanceof Boolean booleanValue) {
+                option.setDisabled(booleanValue);
+            }
+            else if (disabled != null) {
+                option.setDisabled(Boolean.parseBoolean(String.valueOf(disabled)));
+            }
+            return option;
+        }
+        if (item instanceof List<?> list && !list.isEmpty()) {
+            return toSlotOption(list.get(0), toolConfig);
+        }
+        return new SlotOption(String.valueOf(item), item);
+    }
+
+    private Object readMappedField(Map<String, Object> source, String primaryField, String fallbackField) {
+        if (source == null || source.isEmpty()) {
+            return null;
+        }
+        if (StringUtils.hasText(primaryField) && source.containsKey(primaryField)) {
+            return source.get(primaryField);
+        }
+        if (StringUtils.hasText(fallbackField) && source.containsKey(fallbackField)) {
+            return source.get(fallbackField);
+        }
+        return null;
     }
 
     private void applyAutoSelect(List<SlotDefinition> slotDefinitions, List<EnrichedSlot> enrichedSlots,
@@ -1437,7 +2731,8 @@ public class SlotCollectTool implements BiFunction<SlotCollectTool.Request, Tool
                               Map<String, SlotValue> collectedSlots, List<EnrichedSlot> enrichedSlots,
                               SlotCollectStatus status, int round,
                               Map<String, Map<String, Object>> dependencyResults,
-                              String userInput) {
+                              String userInput,
+                              Map<String, Object> currentTurnSlotInputs) {
         if (state == null) {
             return;
         }
@@ -1454,6 +2749,8 @@ public class SlotCollectTool implements BiFunction<SlotCollectTool.Request, Tool
         // jump_to is a one-shot routing hint; clear stale value to avoid tool/model self-loop in same turn.
         updates.put("jump_to", null);
         updates.put(AssistantStateKeys.EXECUTION_CONFIRM_GRANTED, false);
+        updates.put(AssistantStateKeys.CURRENT_TURN_SLOT_INPUTS, null);
+        clearTransientSlotInputs(updates, currentTurnSlotInputs);
         updates.put(AssistantStateKeys.EXECUTION_CONFIRM_TOOL_NAME, null);
         updates.put(AssistantStateKeys.EXECUTION_CONFIRM_USER_INPUT, null);
         if (StringUtils.hasText(userInput)) {
@@ -1464,6 +2761,17 @@ public class SlotCollectTool implements BiFunction<SlotCollectTool.Request, Tool
         }
 
         state.updateState(updates);
+    }
+
+    private void clearTransientSlotInputs(Map<String, Object> updates, Map<String, Object> currentTurnSlotInputs) {
+        if (updates == null || currentTurnSlotInputs == null || currentTurnSlotInputs.isEmpty()) {
+            return;
+        }
+        for (String slotName : currentTurnSlotInputs.keySet()) {
+            if (StringUtils.hasText(slotName)) {
+                updates.put(slotName, null);
+            }
+        }
     }
 
     private String resolveTenantId(OverAllState state, Request request) {
@@ -1530,15 +2838,26 @@ public class SlotCollectTool implements BiFunction<SlotCollectTool.Request, Tool
     }
 
     /**
-     * Dependency resolution and execution output.
+     * 依赖解析结果与执行输出。
      */
     private record DependencyExecution(Map<String, Map<String, Object>> results,
-                                       List<DependencyResolver.FieldMapping> mappings) {
+                           List<DependencyResolver.FieldMapping> mappings) {
+
+    }
+
+    private record SlotEnrichmentResult(List<EnrichedSlot> enrichedSlots,
+                                        Map<String, Map<String, Object>> dependencyResults) {
+
+    }
+
+    private record ToolOptionResolution(List<SlotOption> options,
+                                        Map<String, Map<String, Object>> dependencyResults,
+                                        String errorMessage) {
 
     }
 
     /**
-     * slot_collect request.
+     * {@code slot_collect} 的输入参数。
      */
     public static class Request {
         @JsonPropertyDescription("Target tool code")
@@ -1546,15 +2865,6 @@ public class SlotCollectTool implements BiFunction<SlotCollectTool.Request, Tool
 
         @JsonPropertyDescription("Extracted slot values from current user turn")
         public Map<String, Object> extractedSlots = new HashMap<>();
-
-        @JsonPropertyDescription("Optional slot_schema JSON, used when state has no matched tool meta")
-        public String slotSchema;
-
-        @JsonPropertyDescription("Optional request_schema JSON fallback")
-        public String requestSchema;
-
-        @JsonPropertyDescription("Optional interaction/behavior configuration JSON")
-        public String behaviorConfig;
 
         @JsonPropertyDescription("Optional system code override")
         public String systemCode;
@@ -1567,19 +2877,21 @@ public class SlotCollectTool implements BiFunction<SlotCollectTool.Request, Tool
     }
 
     /**
-     * slot_collect response.
+     * {@code slot_collect} 的执行结果。
      */
     public static class Response {
         public String status;
         public String phase;
         public String message;
+        public String toolCode;
         public Integer round;
         public Map<String, Object> collected;
         public Map<String, Object> allCollected;
         public List<MissingSlot> missing;
         public List<EnrichedSlot> enrichedSlots;
 
-        public static Response collecting(Map<String, Object> collected,
+        public static Response collecting(String toolCode,
+                                          Map<String, Object> collected,
                                           List<MissingSlot> missing,
                                           Integer round,
                                           List<EnrichedSlot> enrichedSlots,
@@ -1587,6 +2899,7 @@ public class SlotCollectTool implements BiFunction<SlotCollectTool.Request, Tool
             Response response = new Response();
             response.status = status;
             response.phase = "COLLECTING";
+            response.toolCode = toolCode;
             response.collected = collected;
             response.missing = missing;
             response.round = round;
@@ -1595,13 +2908,15 @@ public class SlotCollectTool implements BiFunction<SlotCollectTool.Request, Tool
             return response;
         }
 
-        public static Response complete(Map<String, Object> allCollected,
+        public static Response complete(String toolCode,
+                                        Map<String, Object> allCollected,
                                         Map<String, Object> collected,
                                         Integer round,
                                         List<EnrichedSlot> enrichedSlots) {
             Response response = new Response();
             response.status = SlotCollectStatus.COMPLETE.name();
             response.phase = "READY_TO_CONFIRM";
+            response.toolCode = toolCode;
             response.allCollected = allCollected;
             response.collected = collected;
             response.round = round;
@@ -1622,7 +2937,7 @@ public class SlotCollectTool implements BiFunction<SlotCollectTool.Request, Tool
     }
 
     /**
-     * Missing slot descriptor returned to LLM.
+     * 返回给模型的缺失槽位描述。
      */
     public static class MissingSlot {
         public String name;
@@ -1633,4 +2948,10 @@ public class SlotCollectTool implements BiFunction<SlotCollectTool.Request, Tool
         public String options;
     }
 }
+
+
+
+
+
+
 

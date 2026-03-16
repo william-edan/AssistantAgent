@@ -40,7 +40,7 @@ import java.security.Principal;
 import java.time.LocalDateTime;
 
 /**
- * Control-plane API for execution run list views.
+ * 执行运行列表查询入口。
  */
 @RestController
 @Profile("migration")

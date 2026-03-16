@@ -125,7 +125,7 @@ public class DAGFlowExecutor {
 						stepResults.put(stepId, waiting);
 						notifyStepWaitingApproval(step, context);
 						context.setCurrentStepId(null);
-						return waitingResult(stepStatuses, stepResults, context, stepId, startTime);
+						return waitingResult(stepStatuses, stepResults, stepId, startTime);
 					}
 
 					logger.info("DAGFlowExecutor#execute - executing step, stepId={}, name={}", stepId, step.getName());
@@ -146,7 +146,7 @@ public class DAGFlowExecutor {
 						logger.error("DAGFlowExecutor#execute - step failed, stepId={}, error={}",
 								stepId, result.getErrorMessage());
 						context.setCurrentStepId(null);
-						return failedResult(stepStatuses, stepResults, context, result.getErrorMessage(), startTime);
+						return failedResult(stepStatuses, stepResults, result.getErrorMessage(), startTime);
 					}
 					context.setCurrentStepId(null);
 				}
@@ -155,7 +155,6 @@ public class DAGFlowExecutor {
 					return failedResult(
 							stepStatuses,
 							stepResults,
-							context,
 							"Flow execution stalled due to unsatisfied dependencies or cyclic graph",
 							startTime);
 				}
@@ -166,13 +165,13 @@ public class DAGFlowExecutor {
 			successResult.setLifecycleStatus("COMPLETED");
 			successResult.setStepResults(stepResults);
 			successResult.setStepStatuses(stepStatuses);
-			successResult.setFinalOutputs(context.toMap());
+			successResult.setFinalOutputs(resolveFinalOutputs(stepStatuses, stepResults));
 			successResult.setDurationMs(System.currentTimeMillis() - startTime);
 			return successResult;
 		}
 		catch (Exception e) {
 			logger.error("DAGFlowExecutor#execute - flow execution error", e);
-			return failedResult(stepStatuses, stepResults, context, "Flow execution error: " + e.getMessage(), startTime);
+			return failedResult(stepStatuses, stepResults, "Flow execution error: " + e.getMessage(), startTime);
 		}
 	}
 
@@ -579,10 +578,32 @@ public class DAGFlowExecutor {
 		return StepResult.success(Map.of("result", evaluateConditionExpression(conditions, context)));
 	}
 
+	private Map<String, Object> resolveFinalOutputs(
+			Map<String, StepStatus> stepStatuses,
+			Map<String, StepResult> stepResults) {
+		if (stepResults == null || stepResults.isEmpty()) {
+			return Map.of();
+		}
+		Map<String, Object> finalOutputs = new LinkedHashMap<>();
+		for (Map.Entry<String, StepResult> entry : stepResults.entrySet()) {
+			if (entry == null || entry.getValue() == null) {
+				continue;
+			}
+			if (stepStatuses == null || stepStatuses.get(entry.getKey()) != StepStatus.COMPLETED) {
+				continue;
+			}
+			Map<String, Object> outputs = entry.getValue().getOutputs();
+			if (outputs == null || outputs.isEmpty()) {
+				continue;
+			}
+			finalOutputs.putAll(outputs);
+		}
+		return finalOutputs.isEmpty() ? Map.of() : finalOutputs;
+	}
+
 	private FlowExecutionResult waitingResult(
 			Map<String, StepStatus> stepStatuses,
 			Map<String, StepResult> stepResults,
-			FlowContext context,
 			String pausedStepId,
 			long startTime) {
 		FlowExecutionResult waitingResult = new FlowExecutionResult();
@@ -591,7 +612,7 @@ public class DAGFlowExecutor {
 		waitingResult.setPausedStepId(pausedStepId);
 		waitingResult.setStepResults(stepResults);
 		waitingResult.setStepStatuses(stepStatuses);
-		waitingResult.setFinalOutputs(context.toMap());
+		waitingResult.setFinalOutputs(resolveFinalOutputs(stepStatuses, stepResults));
 		waitingResult.setDurationMs(System.currentTimeMillis() - startTime);
 		return waitingResult;
 	}
@@ -599,7 +620,6 @@ public class DAGFlowExecutor {
 	private FlowExecutionResult failedResult(
 			Map<String, StepStatus> stepStatuses,
 			Map<String, StepResult> stepResults,
-			FlowContext context,
 			String errorMessage,
 			long startTime) {
 		FlowExecutionResult errorResult = new FlowExecutionResult();
@@ -607,7 +627,7 @@ public class DAGFlowExecutor {
 		errorResult.setLifecycleStatus("FAILED");
 		errorResult.setStepResults(stepResults);
 		errorResult.setStepStatuses(stepStatuses);
-		errorResult.setFinalOutputs(context != null ? context.toMap() : Map.of());
+		errorResult.setFinalOutputs(resolveFinalOutputs(stepStatuses, stepResults));
 		errorResult.setErrorMessage(errorMessage);
 		errorResult.setDurationMs(System.currentTimeMillis() - startTime);
 		return errorResult;

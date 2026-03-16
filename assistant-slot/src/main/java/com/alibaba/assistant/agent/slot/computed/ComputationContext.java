@@ -42,7 +42,10 @@ public class ComputationContext {
 	}
 
 	public Object getValue(String slotName) {
-		return slotValues.get(slotName);
+		if (slotValues.containsKey(slotName)) {
+			return slotValues.get(slotName);
+		}
+		return metadata.get(slotName);
 	}
 
 	public void setValue(String slotName, Object value) {
@@ -54,7 +57,7 @@ public class ComputationContext {
 	}
 
 	public boolean hasValue(String slotName) {
-		return slotValues.containsKey(slotName);
+		return slotValues.containsKey(slotName) || metadata.containsKey(slotName);
 	}
 
 	public Object getMetadata(String key) {

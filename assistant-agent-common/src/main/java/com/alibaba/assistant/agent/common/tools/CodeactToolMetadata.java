@@ -110,7 +110,7 @@ public interface CodeactToolMetadata extends ToolMetadata {
 		return false;
 	}
 
-	// ============ 废弃方法（保留兼容性）============
+	// ============ 历史调用模板 ============
 
 	/**
 	 * 获取在目标语言下的代码调用签名模板。

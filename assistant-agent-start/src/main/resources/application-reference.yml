@@ -25,7 +25,7 @@ assistant:
       max-body-chars: 4000            # 请求体最大打印长度
       sanitize-invalid-tool-messages: true  # 发送前清理明显非法的空工具消息
   # Runtime namespace (new orchestration controls)
-  # Note: In migration stage, legacy spring.ai.alibaba.codeact.extension.* keys may override these values.
+  # Runtime reference configuration for assistant.runtime.* feature flags.
   runtime:
     fast-intent:
       enabled: false
@@ -49,12 +49,11 @@ assistant:
 # DashScope Configuration (Required)
 # ============================================================================
 spring.ai.dashscope:
-  api-key: ${DASHSCOPE_API_KEY:sk-8ae125796fc6476cb1062e2eabe5b43a}
+  api-key: ${DASHSCOPE_API_KEY:}
   chat:
     options:
-      model: qwen3.5-plus          # Options: qwen3.5-plus, qwen-max, qwen-plus, qwen-turbo
-      multi-model: true            # qwen3.5-plus 需开启，走 multimodal-generation endpoint
-      incremental-output: true     # qwen3.5-plus 需开启，否则会报 only supports incremental_output=true
+      model: qwen-plus             # Options: qwen-max, qwen-plus, qwen-turbo
+      incremental-output: true
       # temperature: 0.7
       # top-p: 0.8
 
@@ -210,4 +209,5 @@ logging:
     com.alibaba.assistant.agent: INFO
     # com.alibaba.assistant.agent: DEBUG
     # org.springframework.ai: DEBUG
+
 

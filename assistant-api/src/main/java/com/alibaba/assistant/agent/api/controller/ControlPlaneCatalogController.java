@@ -44,7 +44,7 @@ import java.security.Principal;
 import java.util.List;
 
 /**
- * Control-plane navigation API for operator-facing catalog pages.
+ * 控制面导航与总览入口。
  */
 @RestController
 @Profile("migration")

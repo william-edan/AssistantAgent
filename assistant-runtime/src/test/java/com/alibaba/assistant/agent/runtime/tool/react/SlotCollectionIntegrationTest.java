@@ -35,6 +35,7 @@ import org.springframework.ai.chat.model.ToolContext;
 import org.springframework.ai.chat.messages.UserMessage;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -61,6 +62,7 @@ class SlotCollectionIntegrationTest {
 			      "options": {
 			        "source": "ENUM",
 			        "enum_mapping": {
+			          "事假": 1,
 			          "年假": 2,
 			          "病假": 4
 			        }
@@ -209,7 +211,8 @@ class SlotCollectionIntegrationTest {
 		assertEquals("READY_TO_CONFIRM", secondResponse.phase);
 		assertEquals(2L, ((Number) secondResponse.collected.get("duration")).longValue());
 		assertEquals(101, ((Number) secondResponse.collected.get("check_flow_id")).intValue());
-		assertEquals("u1001", secondResponse.collected.get("check_uids"));
+		assertEquals("u2004", secondResponse.collected.get("check_uids"));
+		assertEquals(3, optionsCount(secondResponse, "check_uids"));
 
 		SlotConfirmTool.Response confirmResponse = slotConfirmTool.apply(new SlotConfirmTool.Request(), toolContext);
 		assertEquals("CONFIRMING", confirmResponse.status);
@@ -327,6 +330,54 @@ class SlotCollectionIntegrationTest {
 		assertTrue(confirmResponse.message.contains("end_date"));
 	}
 
+
+	@Test
+	void shouldKeepCollectedLeaveTypeWhenLaterTurnOnlyProvidesReason() {
+		ObjectMapper objectMapper = new ObjectMapper();
+		SlotSchemaParser parser = new SlotSchemaParser(objectMapper);
+		SlotCollectorService collectorService = new SlotCollectorService();
+		SlotEnricherService enricherService = mock(SlotEnricherService.class);
+		ComputedFieldProcessor computedFieldProcessor = new ComputedFieldProcessor(
+				List.of(new DateDiffFunction(), new ConcatFunction()));
+
+		mockEnricher(enricherService);
+
+		SlotCollectTool slotCollectTool = new SlotCollectTool(
+				collectorService,
+				enricherService,
+				computedFieldProcessor,
+				parser,
+				objectMapper);
+
+		OverAllState state = initState();
+		ToolContext toolContext = toolContext(state);
+
+		state.updateState(Map.of(
+				"input", "我要请年假，明天一天",
+				"messages", List.of(new UserMessage("我要请年假，明天一天"))));
+		SlotCollectTool.Request firstTurn = new SlotCollectTool.Request();
+		firstTurn.extractedSlots = Map.of(
+				"types", 2,
+				"start_date", "2026-03-16",
+				"end_date", "2026-03-16");
+		SlotCollectTool.Response firstResponse = slotCollectTool.apply(firstTurn, toolContext);
+		assertEquals("COLLECTING", firstResponse.phase);
+		assertTrue(firstResponse.missing.stream().map(item -> item.name).collect(Collectors.toSet()).contains("reason"));
+
+		state.updateState(Map.of(
+				"input", "家里有事",
+				"messages", List.of(
+						new UserMessage("我要请年假，明天一天"),
+						new UserMessage("家里有事"))));
+		SlotCollectTool.Request secondTurn = new SlotCollectTool.Request();
+		secondTurn.extractedSlots = Collections.emptyMap();
+		SlotCollectTool.Response secondResponse = slotCollectTool.apply(secondTurn, toolContext);
+
+		assertEquals("READY_TO_CONFIRM", secondResponse.phase);
+		assertEquals(2, ((Number) secondResponse.collected.get("types")).intValue());
+		assertEquals("家里有事", secondResponse.collected.get("reason"));
+	}
+
 	private static void mockEnricher(SlotEnricherService enricherService) {
 		when(enricherService.enrichSlots(anyList(), eq("oa"), eq("u1")))
 				.thenAnswer(invocation -> {
@@ -342,6 +393,7 @@ class SlotCollectionIntegrationTest {
 						}
 						else if ("check_uids".equals(definition.getName())) {
 							enrichedSlot.setOptions(List.of(
+									new SlotOption("直属上级（推荐）", "u2004"),
 									new SlotOption("张三", "u1001"),
 									new SlotOption("李四", "u1002")));
 						}
@@ -349,6 +401,17 @@ class SlotCollectionIntegrationTest {
 					}
 					return enrichedSlots;
 				});
+	}
+
+	private static int optionsCount(SlotCollectTool.Response response, String slotName) {
+		if (response.enrichedSlots == null) {
+			return 0;
+		}
+		return response.enrichedSlots.stream()
+				.filter(slot -> slot.getDefinition() != null && slotName.equals(slot.getDefinition().getName()))
+				.findFirst()
+				.map(slot -> slot.getOptions() != null ? slot.getOptions().size() : 0)
+				.orElse(0);
 	}
 
 	private static OverAllState initState() {
@@ -370,4 +433,3 @@ class SlotCollectionIntegrationTest {
 		return new ToolContext(Map.of(ToolContextConstants.AGENT_STATE_CONTEXT_KEY, state));
 	}
 }
-

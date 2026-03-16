@@ -15,16 +15,13 @@
  */
 package com.alibaba.assistant.agent.controlplane.catalog;
 
-import com.alibaba.assistant.agent.controlplane.action.ActionSpec;
-import com.alibaba.assistant.agent.controlplane.action.ActionSpecService;
 import com.alibaba.assistant.agent.controlplane.agentapp.AgentApp;
 import com.alibaba.assistant.agent.controlplane.agentapp.AgentAppService;
 import com.alibaba.assistant.agent.controlplane.connector.Connector;
 import com.alibaba.assistant.agent.controlplane.connector.ConnectorService;
 import com.alibaba.assistant.agent.controlplane.space.PlatformSpace;
 import com.alibaba.assistant.agent.controlplane.space.PlatformSpaceService;
-import com.alibaba.assistant.agent.controlplane.workflow.WorkflowSpec;
-import com.alibaba.assistant.agent.controlplane.workflow.WorkflowSpecService;
+import com.alibaba.assistant.agent.controlplane.toolregistry.ToolMetaCatalogService;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
@@ -44,20 +41,17 @@ public class ControlPlaneCatalogService {
     private final PlatformSpaceService platformSpaceService;
     private final ConnectorService connectorService;
     private final AgentAppService agentAppService;
-    private final ActionSpecService actionSpecService;
-    private final WorkflowSpecService workflowSpecService;
+    private final ToolMetaCatalogService toolMetaCatalogService;
 
     public ControlPlaneCatalogService(
             PlatformSpaceService platformSpaceService,
             ConnectorService connectorService,
             AgentAppService agentAppService,
-            ActionSpecService actionSpecService,
-            WorkflowSpecService workflowSpecService) {
+            ToolMetaCatalogService toolMetaCatalogService) {
         this.platformSpaceService = platformSpaceService;
         this.connectorService = connectorService;
         this.agentAppService = agentAppService;
-        this.actionSpecService = actionSpecService;
-        this.workflowSpecService = workflowSpecService;
+        this.toolMetaCatalogService = toolMetaCatalogService;
     }
 
     public List<ResolvedPlatformSpaceView> listSpaces(String environment, String keyword) {
@@ -134,45 +128,7 @@ public class ControlPlaneCatalogService {
                                 app.getDisplayName(),
                                 app.getStatus()))
                         .toList(),
-                actionSpecService.lambdaQuery()
-                        .eq(ActionSpec::getSpaceId, spaceId)
-                        .eq(ActionSpec::getStatus, STATUS_ENABLED)
-                        .and(StringUtils.hasText(normalizedKeyword), wrapper -> wrapper
-                                .like(ActionSpec::getActionCode, normalizedKeyword)
-                                .or()
-                                .like(ActionSpec::getRiskLevel, normalizedKeyword)
-                                .or()
-                                .like(ActionSpec::getSideEffectLevel, normalizedKeyword))
-                        .orderByAsc(ActionSpec::getActionCode)
-                        .list()
-                        .stream()
-                        .map(action -> new ResolvedActionSummaryView(
-                                action.getId(),
-                                action.getActionCode(),
-                                action.getConnectorId(),
-                                action.getRiskLevel(),
-                                action.getSideEffectLevel(),
-                                action.getStatus(),
-                                action.getVersion()))
-                        .toList(),
-                workflowSpecService.lambdaQuery()
-                        .eq(WorkflowSpec::getSpaceId, spaceId)
-                        .eq(WorkflowSpec::getStatus, STATUS_ENABLED)
-                        .and(StringUtils.hasText(normalizedKeyword), wrapper -> wrapper
-                                .like(WorkflowSpec::getWorkflowCode, normalizedKeyword)
-                                .or()
-                                .like(WorkflowSpec::getDisplayName, normalizedKeyword))
-                        .orderByAsc(WorkflowSpec::getWorkflowCode)
-                        .list()
-                        .stream()
-                        .map(workflow -> new ResolvedWorkflowSummaryView(
-                                workflow.getId(),
-                                workflow.getWorkflowCode(),
-                                workflow.getDisplayName(),
-                                workflow.getInteractionSpecId(),
-                                workflow.getStatus(),
-                                workflow.getVersion()))
-                        .toList()));
+                toolMetaCatalogService.listSpaceTools(spaceId, normalizedEnvironment, normalizedKeyword)));
     }
 
     private boolean matchesEnvironment(String requestedEnvironment, String connectorEnvironment) {

@@ -14,12 +14,13 @@
  */
 package com.alibaba.assistant.agent.runtime.registry;
 
-import com.alibaba.assistant.agent.controlplane.space.PlatformSpace;
 import com.alibaba.assistant.agent.controlplane.space.PlatformSpaceService;
+import com.alibaba.assistant.agent.runtime.context.RuntimeSpaceResolver;
 import com.alibaba.assistant.agent.runtime.agent.AssistantStateKeys;
 import com.alibaba.cloud.ai.graph.OverAllState;
 import com.alibaba.cloud.ai.graph.agent.tools.ToolContextConstants;
 import org.springframework.ai.chat.model.ToolContext;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.lang.Nullable;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
@@ -30,7 +31,6 @@ import java.util.Collection;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 
 /**
  * Resolves runtime publication scope from ToolContext and prompt/runtime attributes.
@@ -42,18 +42,25 @@ public class PublicationScopeResolver {
 
     private static final String DEFAULT_ENVIRONMENT = "prod";
 
-    private final PlatformSpaceService platformSpaceService;
+    private final RuntimeSpaceResolver runtimeSpaceResolver;
 
     private final AgentAppPublicationPolicyResolver agentAppPublicationPolicyResolver;
 
     public PublicationScopeResolver(PlatformSpaceService platformSpaceService) {
-        this(platformSpaceService, null);
+        this(new RuntimeSpaceResolver(platformSpaceService, "prod"), null);
     }
 
     public PublicationScopeResolver(
             PlatformSpaceService platformSpaceService,
             @Nullable AgentAppPublicationPolicyResolver agentAppPublicationPolicyResolver) {
-        this.platformSpaceService = platformSpaceService;
+        this(new RuntimeSpaceResolver(platformSpaceService, "prod"), agentAppPublicationPolicyResolver);
+    }
+
+    @Autowired
+    public PublicationScopeResolver(
+            RuntimeSpaceResolver runtimeSpaceResolver,
+            @Nullable AgentAppPublicationPolicyResolver agentAppPublicationPolicyResolver) {
+        this.runtimeSpaceResolver = runtimeSpaceResolver;
         this.agentAppPublicationPolicyResolver = agentAppPublicationPolicyResolver;
     }
 
@@ -80,29 +87,15 @@ public class PublicationScopeResolver {
                 readStateText(state, "tenantId"),
                 readText(context, "tenant_id", "tenantId"),
                 DEFAULT_TENANT);
-        String environment = firstNonBlank(
-                readStateText(state, AssistantStateKeys.SPACE_ENVIRONMENT),
-                readStateText(state, "environment"),
-                readText(context, AssistantStateKeys.SPACE_ENVIRONMENT, "environment"),
-                DEFAULT_ENVIRONMENT);
+        RuntimeSpaceResolver.ResolvedSpace resolvedSpace = runtimeSpaceResolver.resolve(context);
+        String environment = firstNonBlank(resolvedSpace.environment(), DEFAULT_ENVIRONMENT);
         String agentAppCode = firstNonBlank(
                 readStateText(state, AssistantStateKeys.AGENT_APP_CODE),
                 readStateText(state, "agentAppCode"),
                 readStateText(state, "appName"),
                 readText(context, AssistantStateKeys.AGENT_APP_CODE, "agent_app_code", "agentAppCode", "appName"));
-        Long spaceId = firstNonNull(
-                readStateLong(state, AssistantStateKeys.SPACE_ID),
-                readStateLong(state, "spaceId"),
-                asLong(readValue(context, AssistantStateKeys.SPACE_ID, "space_id", "spaceId")));
-        String spaceCode = firstNonBlank(
-                readStateText(state, AssistantStateKeys.SPACE_CODE),
-                readStateText(state, "spaceCode"),
-                readText(context, AssistantStateKeys.SPACE_CODE, "space_code", "spaceCode"),
-                tenantId);
-        if (spaceId == null && StringUtils.hasText(spaceCode)) {
-            Optional<PlatformSpace> space = platformSpaceService.findActiveByCode(spaceCode, environment);
-            spaceId = space.map(PlatformSpace::getId).orElse(null);
-        }
+        Long spaceId = resolvedSpace.spaceId();
+        String spaceCode = firstNonBlank(resolvedSpace.spaceCode(), tenantId);
 
         String explicitSourceSelectionMode = firstNonBlank(
                 readStateText(state, "tool_source_mode"),
@@ -118,11 +111,6 @@ public class PublicationScopeResolver {
                 readStateTextList(state, "disabledToolSourceIds"),
                 readTextList(context, "disabled_tool_source_ids", "disabledToolSourceIds", "blockedSourceIds"),
                 List.of());
-        Boolean explicitLegacyFallback = firstNonNull(
-                readStateBoolean(state, "allow_legacy_fallback"),
-                readStateBoolean(state, "allowLegacyFallback"),
-                asBoolean(readValue(context, "allow_legacy_fallback", "allowLegacyFallback",
-                        "legacy_fallback_enabled", "legacyFallbackEnabled")));
         boolean hasExplicitSourceSelection = StringUtils.hasText(explicitSourceSelectionMode)
                 || !explicitRequestedSourceIds.isEmpty()
                 || !explicitBlockedSourceIds.isEmpty();
@@ -131,26 +119,23 @@ public class PublicationScopeResolver {
             appDefaultPolicy = agentAppPublicationPolicyResolver.resolve(spaceId, agentAppCode).orElse(null);
         }
         boolean scopedAgentAppCall = spaceId != null && StringUtils.hasText(agentAppCode);
-        boolean allowLegacyFallback = Boolean.TRUE.equals(explicitLegacyFallback);
         ToolPublicationProvider.SourceSelectionMode sourceSelectionMode = hasExplicitSourceSelection
                 ? ToolPublicationProvider.SourceSelectionMode.fromValue(explicitSourceSelectionMode)
                 : appDefaultPolicy != null
                         ? appDefaultPolicy.sourceSelectionMode()
-                        : scopedAgentAppCall && !allowLegacyFallback
+                        : scopedAgentAppCall
                                 ? ToolPublicationProvider.SourceSelectionMode.EXCLUSIVE
                                 : ToolPublicationProvider.SourceSelectionMode.MERGE;
         List<String> requestedSourceIds = hasExplicitSourceSelection
                 ? explicitRequestedSourceIds
                 : appDefaultPolicy != null
                         ? appDefaultPolicy.requestedSourceIds()
-                        : scopedAgentAppCall ? List.of("artifact-catalog") : List.of();
+                        : scopedAgentAppCall ? List.of("tool-meta-catalog") : List.of();
         List<String> blockedSourceIds = hasExplicitSourceSelection
                 ? explicitBlockedSourceIds
                 : appDefaultPolicy != null
                         ? appDefaultPolicy.blockedSourceIds()
-                        : scopedAgentAppCall && !allowLegacyFallback
-                                ? List.of("legacy-bridge")
-                                : List.of();
+                        : List.of();
 
         return new ToolPublicationProvider.PublicationScope(
                 tenantId,
@@ -343,3 +328,6 @@ public class PublicationScopeResolver {
         return null;
     }
 }
+
+
+

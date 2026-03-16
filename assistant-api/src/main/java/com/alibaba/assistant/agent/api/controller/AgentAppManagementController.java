@@ -41,7 +41,7 @@ import org.springframework.web.server.ResponseStatusException;
 import java.security.Principal;
 
 /**
- * Control-plane management API for agent apps.
+ * 控制面中的 Agent 应用管理入口。
  */
 @RestController
 @Profile("migration")

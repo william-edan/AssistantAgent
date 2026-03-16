@@ -26,7 +26,7 @@ import java.util.List;
 import java.util.Optional;
 
 /**
- * Typed control-plane write/read facade for connector management.
+ * 连接器管理的控制面读写门面服务。
  */
 @Service
 public class ConnectorManagementService {

@@ -25,7 +25,7 @@ import java.util.List;
 import java.util.Optional;
 
 /**
- * Service for connector lookup operations.
+ * 连接器查询服务。
  *
  * @author Assistant Agent Team
  * @since 1.0.0

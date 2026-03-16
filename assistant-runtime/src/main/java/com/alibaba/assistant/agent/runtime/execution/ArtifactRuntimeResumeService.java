@@ -30,7 +30,7 @@ import java.time.LocalDateTime;
 import java.util.Map;
 
 /**
- * Restores paused artifact executions after approval is granted.
+ * 审批通过后的执行恢复服务。
  */
 @Service
 public class ArtifactRuntimeResumeService {

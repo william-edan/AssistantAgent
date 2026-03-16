@@ -20,38 +20,37 @@ import java.util.List;
 import java.util.Set;
 
 /**
- * Shared credential resolution request for artifact-native execution.
+ * 原生执行链使用的统一凭证解析请求。
  */
 public record CredentialResolutionRequest(
-		Long spaceId,
-		Long connectorId,
-		List<String> candidateAuthProfileCodes,
-		String platformPrincipalId,
-		String platformPrincipalType,
-		List<String> requestedScopes,
-		String runId,
-		String stepId,
-		String compatibilitySystemCode) {
+        Long spaceId,
+        Long connectorId,
+        List<String> candidateAuthProfileCodes,
+        String platformPrincipalId,
+        String platformPrincipalType,
+        List<String> requestedScopes,
+        String runId,
+        String stepId) {
 
-	public CredentialResolutionRequest {
-		candidateAuthProfileCodes = normalize(candidateAuthProfileCodes);
-		requestedScopes = normalize(requestedScopes);
-	}
+    public CredentialResolutionRequest {
+        candidateAuthProfileCodes = normalize(candidateAuthProfileCodes);
+        requestedScopes = normalize(requestedScopes);
+    }
 
-	private static List<String> normalize(List<String> values) {
-		if (values == null || values.isEmpty()) {
-			return List.of();
-		}
-		Set<String> normalized = new LinkedHashSet<>();
-		for (String value : values) {
-			if (value == null) {
-				continue;
-			}
-			String trimmed = value.trim();
-			if (!trimmed.isEmpty()) {
-				normalized.add(trimmed);
-			}
-		}
-		return List.copyOf(normalized);
-	}
+    private static List<String> normalize(List<String> values) {
+        if (values == null || values.isEmpty()) {
+            return List.of();
+        }
+        Set<String> normalized = new LinkedHashSet<>();
+        for (String value : values) {
+            if (value == null) {
+                continue;
+            }
+            String trimmed = value.trim();
+            if (!trimmed.isEmpty()) {
+                normalized.add(trimmed);
+            }
+        }
+        return List.copyOf(normalized);
+    }
 }

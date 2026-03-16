@@ -24,7 +24,7 @@ import java.util.List;
 import java.util.Locale;
 
 /**
- * Typed control-plane access policy for a local migration user inside a space.
+ * 迁移模式下本地用户在空间内的控制面权限策略。
  */
 public record LocalUserControlPlaneAccessPolicy(
         boolean spaceAdmin,

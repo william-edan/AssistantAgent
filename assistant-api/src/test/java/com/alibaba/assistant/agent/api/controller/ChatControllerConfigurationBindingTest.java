@@ -31,31 +31,18 @@ class ChatControllerConfigurationBindingTest {
 			.withBean(ChatController.class);
 
 	@Test
-	void shouldFallbackToLegacyCurrentSystemProperty() {
+	void shouldBindChatDefaultSystemProperty() {
 		contextRunner
 				.withPropertyValues(
-						"assistant.auth.current-system.default-system-code=legacy-system",
+						"assistant.chat.default-system-code=chat-system",
 						"assistant.chat.default-space-code=finance-space",
 						"assistant.chat.default-space-environment=test")
 				.run(context -> {
 					assertThat(context).hasSingleBean(ChatController.class);
 					ChatController controller = context.getBean(ChatController.class);
-					assertThat(ReflectionTestUtils.getField(controller, "defaultSystemCode")).isEqualTo("legacy-system");
+					assertThat(ReflectionTestUtils.getField(controller, "defaultSystemCode")).isEqualTo("chat-system");
 					assertThat(ReflectionTestUtils.getField(controller, "defaultSpaceCode")).isEqualTo("finance-space");
 					assertThat(ReflectionTestUtils.getField(controller, "defaultSpaceEnvironment")).isEqualTo("test");
-				});
-	}
-
-	@Test
-	void shouldPreferChatDefaultSystemPropertyWhenPresent() {
-		contextRunner
-				.withPropertyValues(
-						"assistant.chat.default-system-code=chat-system",
-						"assistant.auth.current-system.default-system-code=legacy-system")
-				.run(context -> {
-					assertThat(context).hasSingleBean(ChatController.class);
-					ChatController controller = context.getBean(ChatController.class);
-					assertThat(ReflectionTestUtils.getField(controller, "defaultSystemCode")).isEqualTo("chat-system");
 				});
 	}
 

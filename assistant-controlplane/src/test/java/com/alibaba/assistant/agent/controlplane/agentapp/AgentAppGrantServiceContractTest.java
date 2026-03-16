@@ -59,7 +59,7 @@ class AgentAppGrantServiceContractTest {
     void shouldAssemblePublicationSourcePolicyFromTypedGrantRows() {
         AgentAppGrantService service = spy(new AgentAppGrantService(new com.fasterxml.jackson.databind.ObjectMapper()));
         doReturn(List.of(
-                grant("publication_source", "artifact-catalog", "allow", null),
+                grant("publication_source", "tool-meta-catalog", "allow", null),
                 grant("publication_source", "mcp-gateway", "allow", null),
                 grant("publication_source", "legacy-bridge", "deny", null),
                 grant("publication_source_policy", "default", "allow", "{\"sourceSelectionMode\":\"exclusive\"}")))
@@ -68,7 +68,7 @@ class AgentAppGrantServiceContractTest {
         AgentAppPublicationSourcePolicy policy = service.findPublicationSourcePolicy(7L).orElseThrow();
 
         assertEquals("EXCLUSIVE", policy.sourceSelectionMode());
-        assertEquals(List.of("artifact-catalog", "mcp-gateway"), policy.allowedSourceIds());
+        assertEquals(List.of("tool-meta-catalog", "mcp-gateway"), policy.allowedSourceIds());
         assertEquals(List.of("legacy-bridge"), policy.blockedSourceIds());
     }
 
@@ -80,7 +80,7 @@ class AgentAppGrantServiceContractTest {
 
         boolean updated = service.replacePublicationSourcePolicy(
                 7L,
-                new AgentAppPublicationSourcePolicy("exclusive", List.of("artifact-catalog", "mcp-gateway"),
+                new AgentAppPublicationSourcePolicy("exclusive", List.of("tool-meta-catalog", "mcp-gateway"),
                         List.of("legacy-bridge")));
 
         assertTrue(updated);
@@ -91,7 +91,7 @@ class AgentAppGrantServiceContractTest {
         assertEquals(4, saved.size());
         assertEquals(List.of("publication_source", "publication_source", "publication_source", "publication_source_policy"),
                 saved.stream().map(AgentAppGrant::getTargetType).toList());
-        assertEquals(List.of("artifact-catalog", "mcp-gateway", "legacy-bridge", "default"),
+        assertEquals(List.of("tool-meta-catalog", "mcp-gateway", "legacy-bridge", "default"),
                 saved.stream().map(AgentAppGrant::getTargetCode).toList());
         assertEquals(List.of("allow", "allow", "deny", "allow"),
                 saved.stream().map(AgentAppGrant::getGrantMode).toList());
@@ -121,3 +121,4 @@ class AgentAppGrantServiceContractTest {
         return grant;
     }
 }
+

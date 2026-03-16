@@ -18,7 +18,7 @@ package com.alibaba.assistant.agent.runtime.execution;
 import java.time.LocalDateTime;
 
 /**
- * Result view for approve/reject decisions on persisted approval requests.
+ * 持久化审批请求在通过或驳回后的结果视图。
  */
 public record ExecutionApprovalDecisionView(
         String requestId,

@@ -95,6 +95,23 @@ class DAGFlowExecutorTest {
     }
 
     @Test
+    void shouldExposeMergedCompletedStepOutputsAsFinalOutputs() {
+        mockWebServer.enqueue(jsonResponse("{\"code\":0,\"msg\":\"success\",\"data\":{\"return_id\":12345}}"));
+        mockWebServer.enqueue(jsonResponse("{\"code\":0,\"msg\":\"审批提交成功\"}"));
+
+        FlowExecutionResult result = dagFlowExecutor.execute(loadFlowDefinition(), createFlowContext(baseInputs()));
+
+        assertTrue(result.isSuccess());
+        assertNotNull(result.getFinalOutputs());
+        assertEquals(12345, ((Number) result.getFinalOutputs().get("leave_id")).intValue());
+        assertEquals("success", result.getFinalOutputs().get("message"));
+        assertEquals(0, ((Number) result.getFinalOutputs().get("code")).intValue());
+        assertEquals("审批提交成功", result.getFinalOutputs().get("final_message"));
+        assertFalse(result.getFinalOutputs().containsKey("types"));
+        assertFalse(result.getFinalOutputs().containsKey("create_leave.leave_id"));
+    }
+
+    @Test
     void shouldStopAtFirstFailedStepAndSkipSecondStep() {
         mockWebServer.enqueue(jsonResponse("{\"code\":500,\"msg\":\"create failed\"}"));
         mockWebServer.enqueue(jsonResponse("{\"code\":0,\"msg\":\"should not be called\"}"));

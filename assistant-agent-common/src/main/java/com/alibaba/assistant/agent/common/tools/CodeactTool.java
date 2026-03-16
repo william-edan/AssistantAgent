@@ -35,7 +35,7 @@ import java.util.Optional;
  *
  * <h2>核心特性</h2>
  * <ul>
- * <li>继承自 Spring AI 的 ToolCallback，保持与 Spring AI 生态的兼容性</li>
+ * <li>继承自 Spring AI 的 ToolCallback，复用 Spring AI 的工具调用契约</li>
  * <li>提供 CodeAct 扩展元数据，支持代码生成和执行阶段的额外语义</li>
  * <li>支持结构化参数树和返回值 schema</li>
  * </ul>

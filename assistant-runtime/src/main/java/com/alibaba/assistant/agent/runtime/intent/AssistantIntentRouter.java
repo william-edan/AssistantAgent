@@ -22,7 +22,7 @@ import com.alibaba.assistant.agent.extension.experience.model.ExperienceQuery;
 import com.alibaba.assistant.agent.extension.experience.model.ExperienceQueryContext;
 import com.alibaba.assistant.agent.extension.experience.model.ExperienceType;
 import com.alibaba.assistant.agent.extension.experience.spi.ExperienceProvider;
-import com.alibaba.assistant.agent.runtime.config.RuntimeConfigCompatibilityAdapter;
+import com.alibaba.assistant.agent.runtime.config.RuntimeConfigView;
 import com.alibaba.cloud.ai.graph.OverAllState;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -56,15 +56,15 @@ public class AssistantIntentRouter {
 
 	private final FastIntentService fastIntentService;
 
-	private final RuntimeConfigCompatibilityAdapter compatibilityAdapter;
+	private final RuntimeConfigView runtimeConfigView;
 
 	public AssistantIntentRouter(
 			ExperienceProvider experienceProvider,
 			FastIntentService fastIntentService,
-			RuntimeConfigCompatibilityAdapter compatibilityAdapter) {
+			RuntimeConfigView runtimeConfigView) {
 		this.experienceProvider = experienceProvider;
 		this.fastIntentService = fastIntentService;
-		this.compatibilityAdapter = compatibilityAdapter;
+		this.runtimeConfigView = runtimeConfigView;
 	}
 
 	public IntentResult route(String input, OverAllState state) {
@@ -72,7 +72,7 @@ public class AssistantIntentRouter {
 	}
 
 	public IntentResult route(String input, OverAllState state, Map<String, Object> configMetadata) {
-		if (!compatibilityAdapter.fastIntentEnabled()) {
+		if (!runtimeConfigView.fastIntentEnabled()) {
 			return IntentResult.mainFlow();
 		}
 
@@ -205,3 +205,5 @@ public class AssistantIntentRouter {
 	}
 
 }
+
+

@@ -47,16 +47,16 @@ class AgentAppPublicationPolicyResolverTest {
         when(agentAppGrantService.findPublicationSourcePolicy(7L)).thenReturn(Optional.of(
                 new AgentAppPublicationSourcePolicy(
                         "exclusive",
-                        List.of("artifact-catalog", "mcp-gateway"),
-                        List.of("legacy-bridge"))));
+                        List.of("tool-meta-catalog", "mcp-gateway"),
+                        List.of("tool-meta-catalog"))));
 
         Optional<AgentAppPublicationPolicyResolver.PublicationSourcePolicy> policy =
                 resolver.resolve(1L, "finance-agent");
 
         assertTrue(policy.isPresent());
         assertEquals(ToolPublicationProvider.SourceSelectionMode.EXCLUSIVE, policy.get().sourceSelectionMode());
-        assertEquals(List.of("artifact-catalog", "mcp-gateway"), policy.get().requestedSourceIds());
-        assertEquals(List.of("legacy-bridge"), policy.get().blockedSourceIds());
+        assertEquals(List.of("tool-meta-catalog", "mcp-gateway"), policy.get().requestedSourceIds());
+        assertEquals(List.of("tool-meta-catalog"), policy.get().blockedSourceIds());
     }
 
     @Test
@@ -71,3 +71,5 @@ class AgentAppPublicationPolicyResolverTest {
         assertTrue(resolver.resolve(1L, "finance-agent").isEmpty());
     }
 }
+
+

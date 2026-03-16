@@ -26,6 +26,7 @@ import com.alibaba.assistant.agent.core.tool.schema.ReturnSchemaRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.model.ToolContext;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Profile;
 import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Component;
@@ -41,11 +42,7 @@ import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * Tenant-aware CodeactToolRegistry with snapshot cache.
- * Uses provider-driven publication snapshots and supports event-driven invalidation.
- *
- * @author Assistant Agent Team
- * @since 1.0.0
+ * 按租户和发布源隔离的运行时工具注册表。
  */
 @Component
 @Profile("migration")
@@ -67,6 +64,7 @@ public class TenantAwareToolRegistry implements ToolContextScopedCodeactToolRegi
 
     private volatile DefaultCodeactToolRegistry delegate;
 
+    @Autowired
     public TenantAwareToolRegistry(
             List<ToolPublicationProvider> publicationProviders,
             ToolPublicationMaterializer toolPublicationMaterializer,
@@ -94,14 +92,14 @@ public class TenantAwareToolRegistry implements ToolContextScopedCodeactToolRegi
     }
 
     /**
-     * Build tenant-scoped immutable snapshot registry.
+     * 构建租户级不可变快照。
      */
     public DefaultCodeactToolRegistry createSessionRegistry(String tenantId) {
         return createSessionRegistry(new ToolPublicationProvider.PublicationScope(normalizeTenant(tenantId), null, null, null));
     }
 
     /**
-     * Build scoped immutable snapshot registry.
+     * 按作用域构建不可变快照。
      */
     public DefaultCodeactToolRegistry createSessionRegistry(ToolPublicationProvider.PublicationScope scope) {
         ToolPublicationProvider.PublicationScope effectiveScope = normalizeScope(scope);
@@ -209,12 +207,12 @@ public class TenantAwareToolRegistry implements ToolContextScopedCodeactToolRegi
         });
     }
 
-    private static boolean isReactAccessiblePublication(PublishedToolDescriptor descriptor) {
-        return descriptor != null
-                && descriptor.isDirectToolPublication()
-                && descriptor.directTool() != null
-                && !"legacy-bridge".equalsIgnoreCase(descriptor.sourceType());
-    }
+	private static boolean isReactAccessiblePublication(PublishedToolDescriptor descriptor) {
+		return descriptor != null
+				&& descriptor.isDirectToolPublication()
+				&& descriptor.isUserVisible()
+				&& descriptor.directTool() != null;
+	}
 
     private ToolPublicationProvider.PublicationScope normalizeScope(ToolPublicationProvider.PublicationScope scope) {
         if (scope == null) {
@@ -268,9 +266,8 @@ public class TenantAwareToolRegistry implements ToolContextScopedCodeactToolRegi
     }
 
     /**
-     * Tool publish event used for cache invalidation.
+     * 发布事件，用于失效快照缓存。
      */
     public record ToolPublishedEvent(String tenantId) {
     }
 }
-

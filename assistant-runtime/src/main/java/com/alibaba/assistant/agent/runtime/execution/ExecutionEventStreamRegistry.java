@@ -26,7 +26,9 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
- * Maintains thread-scoped live execution event streams for SSE subscribers.
+ * 维护按线程隔离的实时执行事件流。
+ *
+ * <p>聊天 SSE 和其他实时订阅方都会从这里订阅对应线程的运行事件。
  */
 @Component
 public class ExecutionEventStreamRegistry {

@@ -19,13 +19,11 @@ import com.alibaba.assistant.agent.runtime.agent.AssistantStateKeys;
 import com.alibaba.cloud.ai.agent.studio.controller.ExecutionController;
 import com.alibaba.cloud.ai.agent.studio.dto.AgentResumeRequest;
 import com.alibaba.cloud.ai.agent.studio.dto.AgentRunRequest;
-import com.alibaba.cloud.ai.agent.studio.dto.messages.UserMessageDTO;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.codec.ServerSentEvent;
 import org.springframework.util.StringUtils;
-import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -56,27 +54,6 @@ public class UnifiedChatController {
             @Value("${assistant.chat.default-app-name:grayscale_agent}") String defaultAppName) {
         this.executionController = executionController;
         this.defaultAppName = defaultAppName;
-    }
-
-    /**
-     * Query-param friendly stream endpoint for compatibility with existing callers.
-     */
-    @GetMapping(path = "/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
-    public Flux<ServerSentEvent<String>> stream(
-            @RequestParam("threadId") String threadId,
-            @RequestParam("userId") String userId,
-            @RequestParam("message") String message,
-            @RequestParam(value = "appName", required = false) String appName,
-            @RequestParam(value = "assistantUid", required = false) String assistantUid,
-            @RequestParam(value = "systemCode", required = false) String systemCode) {
-        AgentRunRequest request = new AgentRunRequest();
-        request.appName = resolveAppName(appName, assistantUid);
-        request.threadId = threadId;
-        request.userId = userId;
-        request.newMessage = new UserMessageDTO(message);
-        request.streaming = true;
-        request.stateDelta = mergeStateDelta(null, assistantUid, systemCode);
-        return executionController.agentRunSse(request);
     }
 
     /**

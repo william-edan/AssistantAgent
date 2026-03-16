@@ -18,7 +18,7 @@ package com.alibaba.assistant.agent.runtime.execution;
 import java.time.LocalDateTime;
 
 /**
- * Read model for control-plane approval queue entries.
+ * 控制面审批队列列表项读模型。
  */
 public record ExecutionApprovalRequestView(
         String requestId,

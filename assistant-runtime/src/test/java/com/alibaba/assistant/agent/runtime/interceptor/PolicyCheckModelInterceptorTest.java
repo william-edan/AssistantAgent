@@ -171,28 +171,26 @@ class PolicyCheckModelInterceptorTest {
 	}
 
 	@Test
-	void shouldNotFilterExecuteToolFromModelContextWhenConfirming() {
+	void shouldNotFilterArtifactExecuteFromModelContextWhenConfirming() {
 		PolicyCheckModelInterceptor interceptor = new PolicyCheckModelInterceptor();
 		ModelCallHandler handler = mock(ModelCallHandler.class);
-		when(handler.call(any())).thenReturn(ModelResponse.of(assistantMessageWithToolCall("gougu_oa_leave_application_execute")));
+		when(handler.call(any())).thenReturn(ModelResponse.of(assistantMessageWithToolCall("artifact_execute")));
 
 		OverAllState state = new OverAllState();
 		state.updateState(Map.of(
 				AssistantStateKeys.CONVERSATION_PHASE, "CONFIRMING",
-				CodeactStateKeys.AVAILABLE_TOOL_NAMES, List.of("slot_confirm", "gougu_oa_leave_application_execute")));
+				CodeactStateKeys.AVAILABLE_TOOL_NAMES, List.of("slot_confirm", "artifact_execute")));
 
 		ModelRequest request = buildRequest(state, Map.of(
 				"slot_confirm", "slot confirm",
-				"gougu_oa_leave_application_execute", "execute leave"));
-		// HumanInTheLoopHook handles execute tool interruption at framework level,
-		// so the model interceptor should NOT filter execute tools.
+				"artifact_execute", "execute artifact"));
 		interceptor.interceptModel(request, handler);
 
 		ArgumentCaptor<ModelRequest> captor = ArgumentCaptor.forClass(ModelRequest.class);
 		verify(handler, times(1)).call(captor.capture());
 		assertEquals(2, captor.getValue().getToolDescriptions().size());
 		assertTrue(captor.getValue().getToolDescriptions().containsKey("slot_confirm"));
-		assertTrue(captor.getValue().getToolDescriptions().containsKey("gougu_oa_leave_application_execute"));
+		assertTrue(captor.getValue().getToolDescriptions().containsKey("artifact_execute"));
 	}
 
 	@Test

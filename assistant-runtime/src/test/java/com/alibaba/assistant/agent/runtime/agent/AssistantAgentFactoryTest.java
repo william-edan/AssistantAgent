@@ -31,6 +31,7 @@ import org.springframework.ai.tool.ToolCallback;
 import org.springframework.ai.tool.definition.DefaultToolDefinition;
 
 import java.util.List;
+import java.util.Optional;
 import java.util.stream.Collectors;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -76,7 +77,7 @@ class AssistantAgentFactoryTest {
     @Test
     void shouldMergeCodeactToolsIntoReactCallbacks() {
         ToolCallback slotCollect = mockTool("slot_collect");
-        CodeactTool executeTool = mockCodeactTool("gougu_oa_leave_application_execute");
+        CodeactTool executeTool = mockCodeactTool("kb_search");
 
         ToolCallback[] merged = AssistantAgentFactory.mergeReactAndCodeactToolCallbacks(
                 List.of(slotCollect),
@@ -87,13 +88,13 @@ class AssistantAgentFactoryTest {
                 .collect(Collectors.toList());
         assertEquals(2, merged.length);
         assertTrue(names.contains("slot_collect"));
-        assertTrue(names.contains("gougu_oa_leave_application_execute"));
+        assertTrue(names.contains("kb_search"));
     }
 
     @Test
     void shouldKeepFirstToolWhenDuplicateNamesExist() {
-        ToolCallback reactTool = mockTool("same_execute");
-        CodeactTool codeactTool = mockCodeactTool("same_execute");
+        ToolCallback reactTool = mockTool("same_tool");
+        CodeactTool codeactTool = mockCodeactTool("same_tool");
 
         ToolCallback[] merged = AssistantAgentFactory.mergeReactAndCodeactToolCallbacks(
                 List.of(reactTool),
@@ -122,6 +123,30 @@ class AssistantAgentFactoryTest {
         assertTrue(names.contains("kb_search"));
         verify(registry).getReactAccessibleTools();
         verify(registry, never()).getAllTools();
+    }
+
+    @Test
+    void shouldFilterOutUnpublishedCallbacksFromReactTools() {
+        ToolCallback slotCollect = mockTool("slot_collect");
+        ToolCallback publishedQuery = mockTool("kb_search");
+        ToolCallback internalResolver = mockTool("gougu_oa_leave_type_options");
+        TenantAwareToolRegistry registry = mock(TenantAwareToolRegistry.class);
+        CodeactTool publishedTool = mockCodeactTool("kb_search");
+        when(registry.getTool("kb_search"))
+                .thenReturn(Optional.of(publishedTool));
+        when(registry.getTool("gougu_oa_leave_type_options")).thenReturn(Optional.empty());
+
+        List<ToolCallback> filtered = AssistantAgentFactory.filterReactToolCallbacks(
+                List.of(slotCollect, publishedQuery, internalResolver),
+                registry);
+
+        List<String> names = filtered.stream()
+                .map(callback -> callback.getToolDefinition().name())
+                .collect(Collectors.toList());
+        assertEquals(2, filtered.size());
+        assertTrue(names.contains("slot_collect"));
+        assertTrue(names.contains("kb_search"));
+        assertFalse(names.contains("gougu_oa_leave_type_options"));
     }
 
     @Test

@@ -94,7 +94,7 @@ class AgentAppPublicationPolicyServiceTest {
         app.setAgentAppCode("finance-agent");
         AgentAppPublicationSourcePolicy policy = new AgentAppPublicationSourcePolicy(
                 "exclusive",
-                List.of("artifact-catalog"),
+                List.of("tool-meta-catalog"),
                 List.of("legacy-bridge"));
         when(platformSpaceService.findActiveByCode("enterprise-default", "test")).thenReturn(Optional.of(space));
         when(agentAppService.findActiveByCode(9L, "finance-agent")).thenReturn(Optional.of(app));
@@ -104,8 +104,9 @@ class AgentAppPublicationPolicyServiceTest {
                 .replacePublicationSourcePolicy("enterprise-default", "test", "finance-agent", policy)
                 .orElseThrow();
 
-        assertEquals("artifact-catalog", result.policy().allowedSourceIds().get(0));
+        assertEquals("tool-meta-catalog", result.policy().allowedSourceIds().get(0));
         assertEquals("legacy-bridge", result.policy().blockedSourceIds().get(0));
         verify(agentAppGrantService).replacePublicationSourcePolicy(7L, policy);
     }
 }
+

@@ -24,6 +24,7 @@ import com.alibaba.assistant.agent.api.controller.dto.ExecutionApprovalListRespo
 import com.alibaba.assistant.agent.api.controller.dto.ExecutionApprovalRequestData;
 import com.alibaba.assistant.agent.api.security.AuthenticatedUserContext;
 import com.alibaba.assistant.agent.api.security.MigrationControlPlaneAuthorizationService;
+import com.alibaba.assistant.agent.api.service.ChatApprovalDecisionSyncService;
 import com.alibaba.assistant.agent.runtime.execution.ExecutionApprovalDecisionView;
 import com.alibaba.assistant.agent.runtime.execution.ExecutionApprovalDetailView;
 import com.alibaba.assistant.agent.runtime.execution.ExecutionApprovalService;
@@ -46,7 +47,7 @@ import java.time.LocalDateTime;
 import java.util.Optional;
 
 /**
- * Control-plane API for approval queue listing and decisions.
+ * 控制面的审批队列查询与审批决策入口。
  */
 @RestController
 @Profile("migration")
@@ -57,11 +58,15 @@ public class ExecutionApprovalController {
 
     private final MigrationControlPlaneAuthorizationService authorizationService;
 
+    private final ChatApprovalDecisionSyncService chatApprovalDecisionSyncService;
+
     public ExecutionApprovalController(
             ExecutionApprovalService executionApprovalService,
-            MigrationControlPlaneAuthorizationService authorizationService) {
+            MigrationControlPlaneAuthorizationService authorizationService,
+            ChatApprovalDecisionSyncService chatApprovalDecisionSyncService) {
         this.executionApprovalService = executionApprovalService;
         this.authorizationService = authorizationService;
+        this.chatApprovalDecisionSyncService = chatApprovalDecisionSyncService;
     }
 
     @GetMapping
@@ -119,12 +124,13 @@ public class ExecutionApprovalController {
         AuthenticatedUserContext authenticatedUser = requireAuthenticatedUser(principal);
         String normalizedEnvironment = normalizeEnvironment(environment);
         requireApprovalAccess(authenticatedUser, spaceCode, normalizedEnvironment);
-        return ResponseEntity.ok(ExecutionApprovalDecisionResponse.ok(ExecutionApprovalDecisionData.from(
-                requireDecision(executionApprovalService.approveRequest(
-                        spaceCode,
-                        normalizedEnvironment,
-                        requestId,
-                        authenticatedUser.userId())))));
+        ExecutionApprovalDecisionView decisionView = requireDecision(executionApprovalService.approveRequest(
+                spaceCode,
+                normalizedEnvironment,
+                requestId,
+                authenticatedUser.userId()));
+        chatApprovalDecisionSyncService.publishDecision(spaceCode, normalizedEnvironment, requestId, decisionView);
+        return ResponseEntity.ok(ExecutionApprovalDecisionResponse.ok(ExecutionApprovalDecisionData.from(decisionView)));
     }
 
     @PostMapping("/{requestId}/reject")
@@ -136,12 +142,13 @@ public class ExecutionApprovalController {
         AuthenticatedUserContext authenticatedUser = requireAuthenticatedUser(principal);
         String normalizedEnvironment = normalizeEnvironment(environment);
         requireApprovalAccess(authenticatedUser, spaceCode, normalizedEnvironment);
-        return ResponseEntity.ok(ExecutionApprovalDecisionResponse.ok(ExecutionApprovalDecisionData.from(
-                requireDecision(executionApprovalService.rejectRequest(
-                        spaceCode,
-                        normalizedEnvironment,
-                        requestId,
-                        authenticatedUser.userId())))));
+        ExecutionApprovalDecisionView decisionView = requireDecision(executionApprovalService.rejectRequest(
+                spaceCode,
+                normalizedEnvironment,
+                requestId,
+                authenticatedUser.userId()));
+        chatApprovalDecisionSyncService.publishDecision(spaceCode, normalizedEnvironment, requestId, decisionView);
+        return ResponseEntity.ok(ExecutionApprovalDecisionResponse.ok(ExecutionApprovalDecisionData.from(decisionView)));
     }
 
     private ExecutionApprovalDetailView requireDetail(Optional<ExecutionApprovalDetailView> detailOptional) {
@@ -174,5 +181,3 @@ public class ExecutionApprovalController {
         return StringUtils.hasText(value) ? value.trim() : null;
     }
 }
-
-

@@ -19,7 +19,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Resolved auth-profile management view scoped to a concrete connector.
+ * 面向具体连接器的认证配置管理视图。
  */
 public record ResolvedAuthProfileManagementView(
         Long authProfileId,

@@ -48,12 +48,18 @@ public class ComputedFieldProcessor {
 	}
 
 	/**
-	 * Process all computed fields and add calculated values to slot values.
-	 *
-	 * @param slotDefinitions list of slot definitions
-	 * @param slotValues collected slot values (will be modified with computed values)
+	 * 处理计算字段，并将派生结果写回已收集槽位。
 	 */
 	public void processComputedFields(List<SlotDefinition> slotDefinitions, Map<String, SlotValue> slotValues) {
+		processComputedFields(slotDefinitions, slotValues, Collections.emptyMap());
+	}
+
+	/**
+	 * 处理计算字段，并注入运行时元数据。
+	 */
+	public void processComputedFields(List<SlotDefinition> slotDefinitions,
+			Map<String, SlotValue> slotValues,
+			Map<String, Object> metadata) {
 		if (slotDefinitions == null || slotValues == null) {
 			return;
 		}
@@ -69,12 +75,18 @@ public class ComputedFieldProcessor {
 		logger.info("ComputedFieldProcessor#processComputedFields - processing {} computed fields",
 				computedSlots.size());
 
-		// Build computation context from collected slot values
 		Map<String, Object> contextValues = new HashMap<>();
 		for (Map.Entry<String, SlotValue> entry : slotValues.entrySet()) {
 			contextValues.put(entry.getKey(), entry.getValue().getResolvedValue());
 		}
 		ComputationContext context = new ComputationContext(contextValues);
+		if (metadata != null && !metadata.isEmpty()) {
+			for (Map.Entry<String, Object> entry : metadata.entrySet()) {
+				if (entry.getKey() != null && entry.getValue() != null) {
+					context.setMetadata(entry.getKey(), entry.getValue());
+				}
+			}
+		}
 
 		for (SlotDefinition slot : computedSlots) {
 			try {
@@ -158,8 +170,12 @@ public class ComputedFieldProcessor {
 		throw new UnsupportedOperationException("Expression-based computation not yet implemented");
 	}
 
-	private static final Set<String> LITERAL_VALUES = Set.of("true", "false", "yes", "no", "days", "weeks", "months",
-			"years", "hours", "minutes", "seconds");
+	private static final Set<String> LITERAL_VALUES = Set.of("true", "false", "yes", "no",
+			"day", "week", "month", "year",
+			"days", "weeks", "months", "years",
+			"current_day", "current_week", "current_month",
+			"start", "end",
+			"hours", "minutes", "seconds");
 
 	private boolean areDependenciesSatisfied(SlotDefinition slot, ComputationContext context) {
 		ComputedFieldConfig config = slot.getComputed();

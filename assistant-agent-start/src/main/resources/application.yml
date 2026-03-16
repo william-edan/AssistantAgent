@@ -28,12 +28,9 @@ assistant:
   chat:
     default-app-name: grayscale_agent
     default-assistant-uid: ${ASSISTANT_CHAT_DEFAULT_ASSISTANT_UID:}
-    default-system-code: ${assistant.auth.current-system.default-system-code:}
+    default-system-code: ${ASSISTANT_CHAT_DEFAULT_SYSTEM_CODE:}
     default-space-code: ${ASSISTANT_CHAT_DEFAULT_SPACE_CODE:}
     default-space-environment: ${ASSISTANT_CHAT_DEFAULT_SPACE_ENVIRONMENT:prod}
-  auth:
-    current-system:
-      default-system-code: ${CURRENT_SYSTEM_DEFAULT_SYSTEM_CODE:gougu_oa}
   debug:
     http:
       enabled: true
@@ -45,10 +42,11 @@ assistant:
 # DashScope Configuration
 # ============================================================================
 spring.ai.dashscope:
-  api-key: ${DASHSCOPE_API_KEY:sk-434f88b803e348b1b799b34b45360874}
+  # 生产环境必须通过环境变量注入密钥，避免将密钥写入仓库。
+  api-key: ${DASHSCOPE_API_KEY:}
   chat:
     options:
-      model: deepseek-v3.2
+      model: qwen-plus
       incremental-output: true
 
 

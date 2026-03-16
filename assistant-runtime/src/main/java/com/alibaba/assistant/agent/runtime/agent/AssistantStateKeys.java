@@ -16,8 +16,10 @@
 package com.alibaba.assistant.agent.runtime.agent;
 
 /**
- * OverAllState key constants for the enterprise assistant platform.
- * Complements framework's CodeactStateKeys.
+ * 企业智能助理运行时使用的状态键常量。
+ *
+ * <p>这些键会写入 {@code OverAllState}，用于在线程内传递槽位、身份、执行和前端投影等上下文。
+ * 它与框架默认的 {@code CodeactStateKeys} 共同组成完整的运行时状态模型。
  *
  * @author Assistant Agent Team
  * @since 1.0.0
@@ -27,7 +29,7 @@ public final class AssistantStateKeys {
 	private AssistantStateKeys() {
 	}
 
-	// Session Context
+	// 会话上下文
 	public static final String THREAD_ID = "thread_id";
 
 	public static final String ASSISTANT_UID = "assistant_uid";
@@ -42,10 +44,12 @@ public final class AssistantStateKeys {
 
 	public static final String SPACE_ENVIRONMENT = "space_environment";
 
-	// Slot Collection
+	// 槽位收集
 	public static final String MATCHED_TOOL_META = "matched_tool_meta";
 
 	public static final String COLLECTED_SLOTS = "collected_slots";
+
+	public static final String CURRENT_TURN_SLOT_INPUTS = "current_turn_slot_inputs";
 
 	public static final String COLLECT_ROUND = "collect_round";
 
@@ -59,10 +63,13 @@ public final class AssistantStateKeys {
 
 	public static final String DEPENDENCY_RESULTS = "dependency_results";
 
-	// Identity
+	// 前端投影
+	public static final String FRONTEND_THREAD_STATE = "frontend_thread_state";
+
+	// 身份上下文
 	public static final String IDENTITY_CONTEXT = "identity_context";
 
-	// Execution
+	// 执行上下文
 	public static final String EXECUTION_RESULT = "execution_result";
 
 	public static final String EXECUTION_CONFIRM_GRANTED = "execution_confirm_granted";
@@ -71,7 +78,7 @@ public final class AssistantStateKeys {
 
 	public static final String EXECUTION_CONFIRM_USER_INPUT = "execution_confirm_user_input";
 
-	// Audit
+	// 审计信息
 	public static final String AUDIT_TRACE_ID = "audit_trace_id";
 
 }

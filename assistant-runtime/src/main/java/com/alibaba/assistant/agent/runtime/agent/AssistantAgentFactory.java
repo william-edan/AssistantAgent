@@ -31,7 +31,6 @@ import com.alibaba.assistant.agent.runtime.interceptor.PolicyCheckModelIntercept
 import com.alibaba.assistant.agent.runtime.interceptor.PolicyGuardToolInterceptor;
 import com.alibaba.assistant.agent.runtime.intent.AssistantFastIntentHook;
 import com.alibaba.assistant.agent.runtime.registry.TenantAwareToolRegistry;
-import com.alibaba.assistant.agent.runtime.tool.codeact.CapabilityBridgeToolFactory;
 import com.alibaba.cloud.ai.graph.CompileConfig;
 import com.alibaba.cloud.ai.graph.OverAllState;
 import com.alibaba.cloud.ai.graph.agent.hook.Hook;
@@ -53,24 +52,31 @@ import org.springframework.util.StringUtils;
 
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.LinkedHashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
 
 /**
- * Enterprise assistant agent factory.
- * Creates a CodeactAgent configured for the slot-collection workflow.
- * Activated only under the "migration" profile to avoid Bean conflicts with CodeactAgentConfig.
+ * 企业助手 Agent 装配工厂。
  *
- * @author Assistant Agent Team
- * @since 1.0.0
+ * <p>负责在 migration 模式下创建真正对外服务的 CodeactAgent，
+ * 并装配系统提示词、可见工具、拦截器、Hook 和检查点能力。
+ * 这里定义了系统默认的对话主链：意图识别、槽位收集、确认、执行和结果反馈。</p>
  */
 @Configuration
 @Profile("migration")
 public class AssistantAgentFactory {
 
 	private static final Logger logger = LoggerFactory.getLogger(AssistantAgentFactory.class);
+
+	private static final Set<String> BUILT_IN_REACT_TOOL_NAMES = Set.of(
+			"slot_collect",
+			"slot_confirm",
+			"artifact_execute");
 
 	private static final String SYSTEM_PROMPT_TEMPLATE = """
 			你是一个企业级智能助手（Enterprise Assistant Agent），专注于通过槽位收集和多步骤工作流执行来完成企业业务操作。
@@ -90,7 +96,7 @@ public class AssistantAgentFactory {
 
 			【重要规则】
 			- 调用 slot_collect 时，toolCode 参数必须使用当前可用工具目录中的 toolCode，不要编造
-			- 不要自行构造 slotSchema 或 requestSchema，留空即可，系统会根据 toolCode 自动加载
+			- 不要自行构造 slotSchema，留空即可，系统会根据 toolCode 自动加载
 			- 确认执行时，调用 artifact_execute 工具参数里必须携带 confirmed=true
 			- 如果 slot_collect 返回 ERROR，不要重复调用同样的参数，应该向用户说明情况
 			- 如果用户的请求不匹配任何已注册工具，直接用 send_message 回复用户
@@ -109,7 +115,6 @@ public class AssistantAgentFactory {
 	public CodeactAgent assistantCodeactAgent(
 			ChatModel chatModel,
 			@Autowired(required = false) List<CodeactTool> codeactTools,
-			@Autowired(required = false) CapabilityBridgeToolFactory capabilityBridgeToolFactory,
 			@Autowired(required = false) TenantAwareToolRegistry tenantAwareToolRegistry,
 			@Autowired(required = false) List<ToolCallback> reactToolCallbacks,
 			@Autowired(required = false) List<Interceptor> interceptors,
@@ -118,16 +123,10 @@ public class AssistantAgentFactory {
 		logger.info("AssistantAgentFactory#assistantCodeactAgent - reason=创建企业助手 CodeactAgent (migration profile)");
 
 		List<CodeactTool> tools = codeactTools != null ? new ArrayList<>(codeactTools) : new ArrayList<>();
-		if (tenantAwareToolRegistry == null && capabilityBridgeToolFactory != null) {
-			List<CodeactTool> dynamicTools = capabilityBridgeToolFactory
-					.createTools(DynamicToolFactoryContext.builder().build());
-			tools.addAll(dynamicTools);
-			logger.info("AssistantAgentFactory#assistantCodeactAgent - reason=动态Capability工具加载完成, count={}",
-					dynamicTools.size());
-		}
 		logger.info("AssistantAgentFactory#assistantCodeactAgent - reason=CodeactTool总数, count={}", tools.size());
 		List<CodeactTool> reactAccessibleCodeactTools = collectReactAccessibleCodeactTools(tools, tenantAwareToolRegistry);
-		ToolCallback[] reactTools = mergeReactAndCodeactToolCallbacks(reactToolCallbacks, reactAccessibleCodeactTools);
+		List<ToolCallback> filteredReactCallbacks = filterReactToolCallbacks(reactToolCallbacks, tenantAwareToolRegistry);
+		ToolCallback[] reactTools = mergeReactAndCodeactToolCallbacks(filteredReactCallbacks, reactAccessibleCodeactTools);
 		logger.info("AssistantAgentFactory#assistantCodeactAgent - reason=React ToolCallback总数, count={}",
 				reactTools.length);
 		List<Interceptor> effectiveInterceptors =
@@ -195,6 +194,34 @@ public class AssistantAgentFactory {
 		return merged.values().toArray(new ToolCallback[0]);
 	}
 
+	static List<ToolCallback> filterReactToolCallbacks(
+			List<ToolCallback> reactToolCallbacks,
+			TenantAwareToolRegistry tenantAwareToolRegistry) {
+		if (reactToolCallbacks == null || reactToolCallbacks.isEmpty()) {
+			return List.of();
+		}
+		List<ToolCallback> filtered = new ArrayList<>();
+		Set<String> blockedToolNames = new LinkedHashSet<>();
+		for (ToolCallback callback : reactToolCallbacks) {
+			if (callback == null || callback.getToolDefinition() == null) {
+				continue;
+			}
+			String toolName = callback.getToolDefinition().name();
+			if (!shouldExposeReactToolCallback(toolName, tenantAwareToolRegistry)) {
+				if (StringUtils.hasText(toolName)) {
+					blockedToolNames.add(toolName);
+				}
+				continue;
+			}
+			filtered.add(callback);
+		}
+		if (!blockedToolNames.isEmpty()) {
+			logger.info("AssistantAgentFactory#filterReactToolCallbacks - reason=过滤内部工具回调, toolNames={}",
+					blockedToolNames);
+		}
+		return List.copyOf(filtered);
+	}
+
 	static List<CodeactTool> collectReactAccessibleCodeactTools(List<CodeactTool> codeactTools,
 			TenantAwareToolRegistry tenantAwareToolRegistry) {
 		List<CodeactTool> merged = new ArrayList<>();
@@ -208,6 +235,23 @@ public class AssistantAgentFactory {
 			}
 		}
 		return merged;
+	}
+
+	private static boolean shouldExposeReactToolCallback(
+			String toolName,
+			TenantAwareToolRegistry tenantAwareToolRegistry) {
+		if (!StringUtils.hasText(toolName)) {
+			return false;
+		}
+		String normalized = toolName.trim();
+		if (BUILT_IN_REACT_TOOL_NAMES.contains(normalized)) {
+			return true;
+		}
+		if (tenantAwareToolRegistry == null) {
+			return false;
+		}
+		Optional<CodeactTool> publishedTool = tenantAwareToolRegistry.getTool(normalized);
+		return publishedTool.isPresent();
 	}
 
 	private static void mergeToolCallbacks(Map<String, ToolCallback> merged, List<? extends ToolCallback> source) {
@@ -277,7 +321,7 @@ public class AssistantAgentFactory {
 				continue;
 			}
 			String normalized = name.trim().toLowerCase(Locale.ROOT);
-			if ("artifact_execute".equals(normalized) || normalized.endsWith("_execute") || normalized.matches(".*_execute_[0-9]+$")) {
+			if ("artifact_execute".equals(normalized)) {
 				builder.approvalOn(name, ToolConfig.builder()
 						.description("需要用户确认后执行")
 						.build());
@@ -304,7 +348,7 @@ public class AssistantAgentFactory {
 		List<Hook> filtered = new ArrayList<>();
 		for (Hook hook : source) {
 			if (hook instanceof FastIntentReactHook) {
-				logger.info("AssistantAgentFactory#filterReactHooks - reason=skip legacy FastIntentReactHook");
+				logger.info("AssistantAgentFactory#filterReactHooks - reason=skip disabled FastIntentReactHook");
 				continue;
 			}
 			filtered.add(hook);
@@ -313,6 +357,8 @@ public class AssistantAgentFactory {
 	}
 
 }
+
+
 
 
 

@@ -21,7 +21,7 @@ import com.alibaba.assistant.agent.extension.experience.model.ExperienceQuery;
 import com.alibaba.assistant.agent.extension.experience.model.ExperienceQueryContext;
 import com.alibaba.assistant.agent.extension.experience.model.ExperienceType;
 import com.alibaba.assistant.agent.extension.experience.spi.ExperienceProvider;
-import com.alibaba.assistant.agent.runtime.config.RuntimeConfigCompatibilityAdapter;
+import com.alibaba.assistant.agent.runtime.config.RuntimeConfigView;
 import com.alibaba.assistant.agent.prompt.PromptContribution;
 import com.alibaba.assistant.agent.prompt.PromptContributor;
 import com.alibaba.assistant.agent.prompt.PromptContributorContext;
@@ -67,13 +67,13 @@ public class ExperienceContributor implements PromptContributor {
 
 	private final ExperienceProvider experienceProvider;
 
-	private final RuntimeConfigCompatibilityAdapter compatibilityAdapter;
+	private final RuntimeConfigView runtimeConfigView;
 
 	public ExperienceContributor(
 			@Nullable ExperienceProvider experienceProvider,
-			RuntimeConfigCompatibilityAdapter compatibilityAdapter) {
+			RuntimeConfigView runtimeConfigView) {
 		this.experienceProvider = experienceProvider;
-		this.compatibilityAdapter = compatibilityAdapter;
+		this.runtimeConfigView = runtimeConfigView;
 	}
 
 	@Override
@@ -88,7 +88,7 @@ public class ExperienceContributor implements PromptContributor {
 
 	@Override
 	public boolean shouldContribute(PromptContributorContext context) {
-		return experienceProvider != null && compatibilityAdapter.promptDynamicEnabled();
+		return experienceProvider != null && runtimeConfigView.promptDynamicEnabled();
 	}
 
 	@Override
@@ -243,3 +243,5 @@ public class ExperienceContributor implements PromptContributor {
 	}
 
 }
+
+

@@ -15,7 +15,8 @@
  */
 package com.alibaba.assistant.agent.api.protocol;
 
-import com.alibaba.assistant.agent.api.protocol.V3ProtocolAdapter.AssistantEvent;
+import com.alibaba.assistant.agent.runtime.agent.AssistantStateKeys;
+import com.alibaba.assistant.agent.runtime.task.AgentTaskProjector;
 import com.alibaba.cloud.ai.graph.OverAllState;
 import com.alibaba.cloud.ai.graph.agent.interceptor.ToolCallHandler;
 import com.alibaba.cloud.ai.graph.agent.interceptor.ToolCallRequest;
@@ -25,23 +26,22 @@ import com.alibaba.cloud.ai.graph.agent.tools.ToolContextConstants;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.annotation.Profile;
+import org.springframework.lang.Nullable;
 import org.springframework.stereotype.Component;
+import org.springframework.util.StringUtils;
 
 import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
 /**
- * Tool interceptor that adapts tool outputs to v3 protocol events and stores
- * them in agent state for SSE/event-layer consumption.
+ * 工具调用拦截器。
  *
- * <p>This interceptor does not overwrite original tool outputs to avoid
- * breaking model reasoning in the React loop.</p>
- *
- * @author Assistant Agent Team
- * @since 1.0.0
+ * <p>该拦截器会把对前端公开的协议数据投影回 Agent 状态，
+ * 这样持久化检查点在恢复时才能正确重建未完成会话。
  */
 @Component
 @Profile("migration")
@@ -53,8 +53,13 @@ public class V3ProtocolToolInterceptor extends ToolInterceptor {
 
 	private final V3ProtocolAdapter v3ProtocolAdapter;
 
-	public V3ProtocolToolInterceptor(V3ProtocolAdapter v3ProtocolAdapter) {
+	private final AgentTaskProjector agentTaskProjector;
+
+	public V3ProtocolToolInterceptor(
+			V3ProtocolAdapter v3ProtocolAdapter,
+			@Nullable AgentTaskProjector agentTaskProjector) {
 		this.v3ProtocolAdapter = v3ProtocolAdapter;
+		this.agentTaskProjector = agentTaskProjector;
 	}
 
 	@Override
@@ -65,10 +70,20 @@ public class V3ProtocolToolInterceptor extends ToolInterceptor {
 		}
 
 		try {
-			String toolName = request.getToolName();
-			String toolOutput = response.getResult();
-			List<AssistantEvent> events = v3ProtocolAdapter.adapt(toolName, toolOutput, (Map<String, Object>) null);
-			appendEventsToState(request, events);
+			OverAllState state = extractState(request);
+			Map<String, Object> stateView = snapshotState(state);
+			String threadId = resolveThreadId(request, stateView);
+			List<FrontendEvent> events = v3ProtocolAdapter.adapt(
+					threadId,
+					request.getToolName(),
+					response.getResult(),
+					stateView);
+			Map<String, Object> projectedThreadState = v3ProtocolAdapter.projectThreadState(
+					request.getToolName(),
+					response.getResult(),
+					stateView);
+			projectTaskState(threadId, stateView, events);
+			appendProjectionToState(state, events, projectedThreadState);
 		}
 		catch (Exception e) {
 			logger.warn("V3ProtocolToolInterceptor#interceptToolCall - adapt failed, toolName={}, error={}",
@@ -84,29 +99,68 @@ public class V3ProtocolToolInterceptor extends ToolInterceptor {
 	}
 
 	@SuppressWarnings("unchecked")
-	private void appendEventsToState(ToolCallRequest request, List<AssistantEvent> events) {
-		if (events == null || events.isEmpty()) {
-			return;
-		}
-		OverAllState state = extractState(request);
+	private void appendProjectionToState(
+			OverAllState state,
+			List<FrontendEvent> events,
+			Map<String, Object> projectedThreadState) {
 		if (state == null) {
 			return;
 		}
 
+		Map<String, Object> updates = new HashMap<>();
 		List<Object> existing = state.value(STATE_KEY_V3_PROTOCOL_EVENTS, List.class).orElse(null);
-		List<AssistantEvent> merged = new ArrayList<>();
+		List<FrontendEvent> merged = new ArrayList<>();
 		if (existing != null) {
 			for (Object item : existing) {
-				if (item instanceof AssistantEvent assistantEvent) {
-					merged.add(assistantEvent);
+				if (item instanceof FrontendEvent frontendEvent) {
+					merged.add(frontendEvent);
 				}
 			}
 		}
-		merged.addAll(events);
+		if (events != null && !events.isEmpty()) {
+			merged.addAll(events);
+			updates.put(STATE_KEY_V3_PROTOCOL_EVENTS, merged);
+		}
+		if (projectedThreadState != null && !projectedThreadState.isEmpty()) {
+			updates.put(AssistantStateKeys.FRONTEND_THREAD_STATE, projectedThreadState);
+		}
+		if (!updates.isEmpty()) {
+			state.updateState(updates);
+		}
+	}
 
-		Map<String, Object> updates = new HashMap<>();
-		updates.put(STATE_KEY_V3_PROTOCOL_EVENTS, merged);
-		state.updateState(updates);
+	private Map<String, Object> snapshotState(OverAllState state) {
+		Map<String, Object> snapshot = new LinkedHashMap<>();
+		if (state == null) {
+			return snapshot;
+		}
+		copyValue(state, snapshot, AssistantStateKeys.ASSISTANT_UID);
+		copyValue(state, snapshot, AssistantStateKeys.THREAD_ID);
+		copyValue(state, snapshot, AssistantStateKeys.SYSTEM_CODE);
+		copyValue(state, snapshot, AssistantStateKeys.AGENT_APP_CODE);
+		copyValue(state, snapshot, AssistantStateKeys.MATCHED_TOOL_META);
+		copyValue(state, snapshot, AssistantStateKeys.COLLECTED_SLOTS);
+		copyValue(state, snapshot, AssistantStateKeys.ENRICHED_SLOTS);
+		copyValue(state, snapshot, AssistantStateKeys.CONVERSATION_PHASE);
+		copyValue(state, snapshot, AssistantStateKeys.EXECUTION_RESULT);
+		copyValue(state, snapshot, AssistantStateKeys.FRONTEND_THREAD_STATE);
+		return snapshot;
+	}
+
+	private void projectTaskState(String threadId, Map<String, Object> stateView, List<FrontendEvent> events) {
+		if (agentTaskProjector == null || events == null || events.isEmpty()) {
+			return;
+		}
+		for (FrontendEvent event : events) {
+			if (event == null || event.eventType() != FrontendEventType.TASK_STATE || event.payload() == null) {
+				continue;
+			}
+			agentTaskProjector.recordTaskState(threadId, stateView, event.payload());
+		}
+	}
+
+	private void copyValue(OverAllState state, Map<String, Object> target, String key) {
+		state.value(key, Object.class).ifPresent(value -> target.put(key, value));
 	}
 
 	private OverAllState extractState(ToolCallRequest request) {
@@ -133,6 +187,30 @@ public class V3ProtocolToolInterceptor extends ToolInterceptor {
 			}
 		}
 		return null;
+	}
+
+	private String resolveThreadId(ToolCallRequest request, Map<String, Object> stateView) {
+		String threadId = asText(stateView.get(AssistantStateKeys.THREAD_ID));
+		if (StringUtils.hasText(threadId)) {
+			return threadId;
+		}
+		threadId = asText(invokeNoArg(request, "getThreadId"));
+		if (StringUtils.hasText(threadId)) {
+			return threadId;
+		}
+		threadId = asText(invokeNoArg(request, "threadId"));
+		if (StringUtils.hasText(threadId)) {
+			return threadId;
+		}
+		return null;
+	}
+
+	private String asText(Object value) {
+		if (value == null) {
+			return null;
+		}
+		String text = String.valueOf(value).trim();
+		return StringUtils.hasText(text) ? text : null;
 	}
 
 	private Object invokeNoArg(Object target, String methodName) {

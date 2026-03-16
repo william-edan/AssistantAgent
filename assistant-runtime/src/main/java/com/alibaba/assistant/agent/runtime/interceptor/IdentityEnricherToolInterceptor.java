@@ -66,7 +66,7 @@ public class IdentityEnricherToolInterceptor extends ToolInterceptor {
 	@Autowired
 	public IdentityEnricherToolInterceptor(TokenBroker tokenBroker, ObjectMapper objectMapper,
 			@Value("${assistant.chat.default-assistant-uid:}") String defaultAssistantUid,
-			@Value("${assistant.chat.default-system-code:${assistant.auth.current-system.default-system-code:}}")
+			@Value("${assistant.chat.default-system-code:}")
 			String defaultSystemCode) {
 		this.tokenBroker = tokenBroker;
 		this.objectMapper = objectMapper;

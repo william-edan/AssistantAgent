@@ -16,11 +16,10 @@
 package com.alibaba.assistant.agent.api.controller.dto;
 
 import com.alibaba.assistant.agent.controlplane.catalog.ControlPlaneCatalogOverview;
-import com.alibaba.assistant.agent.controlplane.catalog.ResolvedActionSummaryView;
 import com.alibaba.assistant.agent.controlplane.catalog.ResolvedAgentAppSummaryView;
 import com.alibaba.assistant.agent.controlplane.catalog.ResolvedConnectorSummaryView;
 import com.alibaba.assistant.agent.controlplane.catalog.ResolvedPlatformSpaceView;
-import com.alibaba.assistant.agent.controlplane.catalog.ResolvedWorkflowSummaryView;
+import com.alibaba.assistant.agent.controlplane.toolregistry.ResolvedToolMetaSummaryView;
 
 import java.util.List;
 
@@ -31,16 +30,14 @@ public record ControlPlaneCatalogOverviewData(
         SpaceSummary space,
         List<ConnectorSummary> connectors,
         List<AgentAppSummary> agentApps,
-        List<ActionSummary> actions,
-        List<WorkflowSummary> workflows) {
+        List<ToolSummary> tools) {
 
     public static ControlPlaneCatalogOverviewData from(ControlPlaneCatalogOverview overview) {
         return new ControlPlaneCatalogOverviewData(
                 SpaceSummary.from(overview.space()),
                 overview.connectors().stream().map(ConnectorSummary::from).toList(),
                 overview.agentApps().stream().map(AgentAppSummary::from).toList(),
-                overview.actions().stream().map(ActionSummary::from).toList(),
-                overview.workflows().stream().map(WorkflowSummary::from).toList());
+                overview.tools().stream().map(ToolSummary::from).toList());
     }
 
     public record SpaceSummary(Long spaceId, String spaceCode, String spaceName, String environment, String status) {
@@ -84,39 +81,31 @@ public record ControlPlaneCatalogOverviewData(
         }
     }
 
-    public record ActionSummary(
-            Long actionId,
-            String actionCode,
-            Long connectorId,
+    public record ToolSummary(
+            Long toolId,
+            String toolCode,
+            String toolName,
+            String systemCode,
+            String toolType,
+            String visibility,
+            String invocationPolicy,
+            String executionMode,
             String riskLevel,
-            String sideEffectLevel,
+            Boolean requiresConfirm,
             String status,
             Integer version) {
-        static ActionSummary from(ResolvedActionSummaryView view) {
-            return new ActionSummary(
-                    view.actionId(),
-                    view.actionCode(),
-                    view.connectorId(),
+        static ToolSummary from(ResolvedToolMetaSummaryView view) {
+            return new ToolSummary(
+                    view.toolId(),
+                    view.toolCode(),
+                    view.toolName(),
+                    view.systemCode(),
+                    normalize(view.toolType()),
+                    normalize(view.visibility()),
+                    normalize(view.invocationPolicy()),
+                    normalize(view.executionMode()),
                     normalize(view.riskLevel()),
-                    normalize(view.sideEffectLevel()),
-                    normalize(view.status()),
-                    view.version());
-        }
-    }
-
-    public record WorkflowSummary(
-            Long workflowId,
-            String workflowCode,
-            String displayName,
-            Long interactionSpecId,
-            String status,
-            Integer version) {
-        static WorkflowSummary from(ResolvedWorkflowSummaryView view) {
-            return new WorkflowSummary(
-                    view.workflowId(),
-                    view.workflowCode(),
-                    view.displayName(),
-                    view.interactionSpecId(),
+                    view.requiresConfirm(),
                     normalize(view.status()),
                     view.version());
         }

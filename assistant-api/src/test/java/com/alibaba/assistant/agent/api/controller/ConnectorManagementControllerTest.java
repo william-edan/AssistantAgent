@@ -112,7 +112,7 @@ class ConnectorManagementControllerTest {
                         "active",
                         2)));
 
-        mockMvc.perform(get("/api/controlplane/spaces/enterprise-default/connectors/oa-core")
+        mockMvc.perform(get("/api/controlplane/spaces/enterprise-default/connectors/manage/oa-core")
                         .principal(authenticatedPrincipal()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.code").value(0))
@@ -141,7 +141,7 @@ class ConnectorManagementControllerTest {
                         "active",
                         1)));
 
-        mockMvc.perform(put("/api/controlplane/spaces/enterprise-default/connectors/oa-core")
+        mockMvc.perform(put("/api/controlplane/spaces/enterprise-default/connectors/manage/oa-core")
                         .param("environment", "test")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
@@ -178,7 +178,7 @@ class ConnectorManagementControllerTest {
         when(connectorManagementService.getConnector("enterprise-default", "prod", "oa-core"))
                 .thenReturn(Optional.empty());
 
-        mockMvc.perform(get("/api/controlplane/spaces/enterprise-default/connectors/oa-core")
+        mockMvc.perform(get("/api/controlplane/spaces/enterprise-default/connectors/manage/oa-core")
                         .principal(authenticatedPrincipal()))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.code").value(404))

@@ -34,10 +34,10 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 
 /**
- * Migration auth controller for legacy /system/auth compatibility routes.
+ * 统一认证代理控制器。
  *
- * @author Assistant Agent Team
- * @since 1.0.0
+ * <p>对外提供登录、刷新令牌、权限信息和退出登录接口，
+ * 是前端进入聊天能力之前的认证入口。</p>
  */
 @RestController
 @Profile("migration")
@@ -149,3 +149,4 @@ public class SystemAuthProxyController {
 	}
 
 }
+

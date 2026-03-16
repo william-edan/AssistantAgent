@@ -21,7 +21,7 @@ import org.springframework.context.annotation.Profile;
 import org.springframework.ai.tool.ToolCallback;
 
 /**
- * Registers migration profile React tool callbacks.
+ * 迁移模式下的 React 工具注册配置。
  *
  * @author Assistant Agent Team
  * @since 1.0.0

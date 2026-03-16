@@ -15,11 +15,12 @@
  */
 package com.alibaba.assistant.agent.slot;
 
-import com.alibaba.assistant.agent.controlplane.identity.TokenBroker;
-import com.alibaba.assistant.agent.controlplane.identity.TokenLease;
-import com.alibaba.assistant.agent.slot.model.*;
+import com.alibaba.assistant.agent.slot.model.EnrichedSlot;
+import com.alibaba.assistant.agent.slot.model.SlotDefinition;
+import com.alibaba.assistant.agent.slot.model.SlotOption;
+import com.alibaba.assistant.agent.slot.model.SlotOptions;
+import com.alibaba.assistant.agent.slot.model.ToolOptionResolverConfig;
 import com.alibaba.assistant.agent.slot.port.OptionCachePort;
-import com.alibaba.assistant.agent.slot.port.SystemAccessProfilePort;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -27,124 +28,152 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
-import java.time.LocalDateTime;
-import java.util.*;
+import java.util.Collections;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
 
-import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.ArgumentMatchers.*;
-import static org.mockito.Mockito.*;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
 class SlotEnricherServiceTest {
 
-	@Mock
-	private SystemAccessProfilePort systemAccessProfilePort;
+    @Mock
+    private OptionCachePort optionCachePort;
 
-	@Mock
-	private TokenBroker tokenBroker;
+    @Mock
+    private ToolBackedSlotOptionResolver toolOptionResolver;
 
-	@Mock
-	private OptionCachePort optionCachePort;
+    private SlotEnricherService enricherService;
 
-	private SlotEnricherService enricherService;
+    private ObjectMapper objectMapper;
 
-	@BeforeEach
-	void setUp() {
-		enricherService = new SlotEnricherService(systemAccessProfilePort, tokenBroker, new ObjectMapper(),
-				optionCachePort);
-	}
+    @BeforeEach
+    void setUp() {
+        objectMapper = new ObjectMapper();
+        enricherService = new SlotEnricherService(objectMapper, optionCachePort, toolOptionResolver);
+    }
 
-	@Test
-	void shouldFallbackToEnumMappingWhenApiFails() {
-		// Given: slot with API source and enumMapping fallback
-		SlotDefinition slot = new SlotDefinition();
-		slot.setName("leave_type");
-		slot.setType("enum");
+    @Test
+    void shouldFallbackToEnumMappingWhenLegacyApiSourceIsEncountered() {
+        SlotDefinition slot = new SlotDefinition();
+        slot.setName("leave_type");
+        slot.setType("enum");
 
-		SlotOptions options = new SlotOptions();
-		options.setSource(SlotOptions.SourceType.API);
+        SlotOptions options = new SlotOptions();
+        options.setSource(SlotOptions.SourceType.API);
+        Map<String, Object> enumMapping = new LinkedHashMap<>();
+        enumMapping.put("事假", 1);
+        enumMapping.put("年假", 2);
+        enumMapping.put("调休假", 3);
+        options.setEnumMapping(enumMapping);
+        slot.setOptions(options);
 
-		SlotOptions.ApiConfig apiConfig = new SlotOptions.ApiConfig();
-		apiConfig.setEndpoint("/api/leave-types");
-		apiConfig.setLabelField("name");
-		apiConfig.setValueField("id");
-		options.setApiConfig(apiConfig);
+        List<EnrichedSlot> result = enricherService.enrichSlots(List.of(slot), "oa", "user1");
 
-		Map<String, Object> enumMapping = new LinkedHashMap<>();
-		enumMapping.put("事假", 1);
-		enumMapping.put("年假", 2);
-		enumMapping.put("调休假", 3);
-		enumMapping.put("病假", 4);
-		options.setEnumMapping(enumMapping);
+        assertEquals(1, result.size());
+        EnrichedSlot enriched = result.get(0);
+        assertNotNull(enriched.getOptions());
+        assertEquals(3, enriched.getOptions().size());
+        assertNotNull(enriched.getOptionsError());
+        verify(toolOptionResolver, never()).resolve(org.mockito.ArgumentMatchers.any(), anyString(), anyString());
+    }
 
-		slot.setOptions(options);
+    @Test
+    void shouldUseEnumMappingDirectlyForEnumSource() {
+        SlotDefinition slot = new SlotDefinition();
+        slot.setName("leave_type");
+        slot.setType("enum");
 
-		// Given: system is configured but API call will fail (no base URL)
-		when(systemAccessProfilePort.getBaseUrl("hr")).thenReturn(null);
-		when(optionCachePort.get(anyString())).thenReturn(Optional.empty());
+        SlotOptions options = new SlotOptions();
+        options.setSource(SlotOptions.SourceType.ENUM);
+        Map<String, Object> enumMapping = new LinkedHashMap<>();
+        enumMapping.put("事假", 1);
+        enumMapping.put("年假", 2);
+        options.setEnumMapping(enumMapping);
+        slot.setOptions(options);
 
-		// When
-		List<EnrichedSlot> result = enricherService.enrichSlots(List.of(slot), "hr", "user1");
+        List<EnrichedSlot> result = enricherService.enrichSlots(List.of(slot), "oa", "user1");
 
-		// Then: fallback to enumMapping
-		assertEquals(1, result.size());
-		EnrichedSlot enriched = result.get(0);
-		assertNotNull(enriched.getOptions());
-		assertEquals(4, enriched.getOptions().size());
+        assertEquals(1, result.size());
+        assertEquals(2, result.get(0).getOptions().size());
+        assertNull(result.get(0).getOptionsError());
+    }
 
-		// Verify enumMapping values are used
-		List<SlotOption> optionList = enriched.getOptions();
-		assertEquals("事假", optionList.get(0).getLabel());
-		assertEquals(1, optionList.get(0).getValue());
-		assertEquals("病假", optionList.get(3).getLabel());
-		assertEquals(4, optionList.get(3).getValue());
+    @Test
+    void shouldResolveToolBackedOptionsAndPopulateCache() {
+        SlotDefinition slot = toolBackedSlot("check_uids", "gougu_oa.approver_candidates");
+        List<SlotOption> resolved = List.of(new SlotOption("人事领导", 4, "直属上级"));
 
-		// Error should be recorded
-		assertNotNull(enriched.getOptionsError());
-	}
+        when(optionCachePort.get(anyString())).thenReturn(Optional.empty());
+        when(toolOptionResolver.resolve(eq(slot), eq("oa"), eq("user1"))).thenReturn(resolved);
 
-	@Test
-	void shouldUseEnumMappingDirectlyForNonApiSource() {
-		// Given: slot with ENUM source
-		SlotDefinition slot = new SlotDefinition();
-		slot.setName("leave_type");
-		slot.setType("enum");
+        List<EnrichedSlot> result = enricherService.enrichSlots(List.of(slot), "oa", "user1");
 
-		SlotOptions options = new SlotOptions();
-		Map<String, Object> enumMapping = new LinkedHashMap<>();
-		enumMapping.put("事假", 1);
-		enumMapping.put("年假", 2);
-		options.setEnumMapping(enumMapping);
+        assertEquals(1, result.size());
+        assertEquals(1, result.get(0).getOptions().size());
+        assertEquals("人事领导", result.get(0).getOptions().get(0).getLabel());
+        assertNull(result.get(0).getOptionsError());
+        verify(toolOptionResolver).resolve(eq(slot), eq("oa"), eq("user1"));
+        verify(optionCachePort).put(anyString(), anyString(), eq(java.time.Duration.ofMinutes(10)));
+    }
 
-		slot.setOptions(options);
+    @Test
+    void shouldReuseCachedToolBackedOptions() throws Exception {
+        SlotDefinition slot = toolBackedSlot("check_uids", "gougu_oa.approver_candidates");
+        String cachedJson = objectMapper.writeValueAsString(List.of(new SlotOption("人事领导", 4, "直属上级")));
 
-		// When
-		List<EnrichedSlot> result = enricherService.enrichSlots(List.of(slot), "hr", "user1");
+        when(optionCachePort.get(anyString())).thenReturn(Optional.of(cachedJson));
 
-		// Then: enum options loaded directly
-		assertEquals(1, result.size());
-		EnrichedSlot enriched = result.get(0);
-		assertNotNull(enriched.getOptions());
-		assertEquals(2, enriched.getOptions().size());
-		assertNull(enriched.getOptionsError());
-	}
+        List<EnrichedSlot> result = enricherService.enrichSlots(List.of(slot), "oa", "user1");
 
-	@Test
-	void shouldReturnEmptyForNullSlots() {
-		assertTrue(enricherService.enrichSlots(null, "hr", "user1").isEmpty());
-		assertTrue(enricherService.enrichSlots(Collections.emptyList(), "hr", "user1").isEmpty());
-	}
+        assertEquals(1, result.size());
+        assertEquals(1, result.get(0).getOptions().size());
+        assertEquals("人事领导", result.get(0).getOptions().get(0).getLabel());
+        verify(toolOptionResolver, never()).resolve(org.mockito.ArgumentMatchers.any(), anyString(), anyString());
+    }
 
-	@Test
-	void shouldEnrichSlotWithoutOptions() {
-		SlotDefinition slot = new SlotDefinition();
-		slot.setName("reason");
-		slot.setType("string");
+    @Test
+    void shouldReturnEmptyForNullSlots() {
+        assertTrue(enricherService.enrichSlots(null, "oa", "user1").isEmpty());
+        assertTrue(enricherService.enrichSlots(Collections.emptyList(), "oa", "user1").isEmpty());
+    }
 
-		List<EnrichedSlot> result = enricherService.enrichSlots(List.of(slot), "hr", "user1");
+    @Test
+    void shouldEnrichSlotWithoutOptions() {
+        SlotDefinition slot = new SlotDefinition();
+        slot.setName("reason");
+        slot.setType("string");
 
-		assertEquals(1, result.size());
-		assertNull(result.get(0).getOptions());
-	}
+        List<EnrichedSlot> result = enricherService.enrichSlots(List.of(slot), "oa", "user1");
 
+        assertEquals(1, result.size());
+        assertNull(result.get(0).getOptions());
+    }
+
+    private SlotDefinition toolBackedSlot(String slotName, String toolCode) {
+        SlotDefinition slot = new SlotDefinition();
+        slot.setName(slotName);
+        slot.setType("string");
+
+        SlotOptions options = new SlotOptions();
+        options.setSource(SlotOptions.SourceType.TOOL);
+        ToolOptionResolverConfig toolConfig = new ToolOptionResolverConfig();
+        toolConfig.setToolCode(toolCode);
+        toolConfig.setResultPath("data");
+        toolConfig.setLabelField("name");
+        toolConfig.setValueField("id");
+        options.setToolConfig(toolConfig);
+        slot.setOptions(options);
+        return slot;
+    }
 }

@@ -21,7 +21,7 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 
 /**
- * Serializable runtime snapshot used to resume paused artifact executions.
+ * 用于恢复暂停执行的可序列化运行时快照。
  */
 public record ExecutionContextSnapshot(
         String systemCode,

@@ -24,7 +24,7 @@ import java.util.List;
 import java.util.Optional;
 
 /**
- * Read facade for connector and auth-profile catalog views.
+ * 连接器与认证目录查询门面服务。
  */
 @Service
 public class ConnectorCatalogService {

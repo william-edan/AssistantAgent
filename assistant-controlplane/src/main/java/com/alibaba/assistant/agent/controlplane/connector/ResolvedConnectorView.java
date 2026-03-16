@@ -16,7 +16,7 @@
 package com.alibaba.assistant.agent.controlplane.connector;
 
 /**
- * Resolved connector view scoped to a concrete space/environment.
+ * 绑定到具体空间和环境的连接器视图。
  */
 public record ResolvedConnectorView(
         Long connectorId,

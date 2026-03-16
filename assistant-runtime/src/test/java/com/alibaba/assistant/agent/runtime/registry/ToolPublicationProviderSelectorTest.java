@@ -26,8 +26,8 @@ class ToolPublicationProviderSelectorTest {
     @Test
     void shouldSelectOnlyRequestedSourcesInExclusiveMode() {
         ToolPublicationProviderSelector selector = new ToolPublicationProviderSelector();
-        ToolPublicationProvider artifact = provider("artifact-catalog");
-        ToolPublicationProvider legacy = provider("legacy-bridge");
+        ToolPublicationProvider artifact = provider("tool-meta-catalog");
+        ToolPublicationProvider direct = provider("synthetic-direct");
         ToolPublicationProvider mcp = provider("mcp-gateway");
 
         ToolPublicationProvider.PublicationScope scope = new ToolPublicationProvider.PublicationScope(
@@ -36,21 +36,21 @@ class ToolPublicationProviderSelectorTest {
                 "prod",
                 "hr-assistant",
                 ToolPublicationProvider.SourceSelectionMode.EXCLUSIVE,
-                List.of("mcp-gateway", "artifact-catalog"),
+                List.of("mcp-gateway", "tool-meta-catalog"),
                 List.of());
 
-        List<String> selected = selector.selectProviders(scope, List.of(artifact, legacy, mcp)).stream()
+        List<String> selected = selector.selectProviders(scope, List.of(artifact, direct, mcp)).stream()
                 .map(ToolPublicationProvider::providerId)
                 .toList();
 
-        assertEquals(List.of("mcp-gateway", "artifact-catalog"), selected);
+        assertEquals(List.of("mcp-gateway", "tool-meta-catalog"), selected);
     }
 
     @Test
-    void shouldPrioritizeRequestedSourcesAndSkipBlockedSourcesInMergeMode() {
+    void shouldSkipBlockedSourcesAndAppendRemainingEligibleSourcesInMergeMode() {
         ToolPublicationProviderSelector selector = new ToolPublicationProviderSelector();
-        ToolPublicationProvider artifact = provider("artifact-catalog");
-        ToolPublicationProvider legacy = provider("legacy-bridge");
+        ToolPublicationProvider artifact = provider("tool-meta-catalog");
+        ToolPublicationProvider direct = provider("synthetic-direct");
         ToolPublicationProvider mcp = provider("mcp-gateway");
 
         ToolPublicationProvider.PublicationScope scope = new ToolPublicationProvider.PublicationScope(
@@ -60,13 +60,13 @@ class ToolPublicationProviderSelectorTest {
                 "hr-assistant",
                 ToolPublicationProvider.SourceSelectionMode.MERGE,
                 List.of("mcp-gateway"),
-                List.of("legacy-bridge"));
+                List.of("tool-meta-catalog"));
 
-        List<String> selected = selector.selectProviders(scope, List.of(artifact, legacy, mcp)).stream()
+        List<String> selected = selector.selectProviders(scope, List.of(artifact, direct, mcp)).stream()
                 .map(ToolPublicationProvider::providerId)
                 .toList();
 
-        assertEquals(List.of("mcp-gateway", "artifact-catalog"), selected);
+        assertEquals(List.of("mcp-gateway", "synthetic-direct"), selected);
     }
 
     private ToolPublicationProvider provider(String providerId) {

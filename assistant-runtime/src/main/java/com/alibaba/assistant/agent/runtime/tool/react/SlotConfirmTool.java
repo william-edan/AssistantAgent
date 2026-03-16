@@ -37,13 +37,16 @@ import com.alibaba.cloud.ai.graph.OverAllState;
 import com.alibaba.cloud.ai.graph.agent.tools.ToolContextConstants;
 import com.fasterxml.jackson.annotation.JsonAlias;
 import com.fasterxml.jackson.annotation.JsonPropertyDescription;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.model.ToolContext;
 import org.springframework.ai.tool.ToolCallback;
 import org.springframework.ai.tool.function.FunctionToolCallback;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Profile;
+import org.springframework.lang.Nullable;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 
@@ -60,8 +63,10 @@ import java.util.function.BiFunction;
 import java.util.stream.Collectors;
 
 /**
- * React phase confirmation form tool.
- * Builds confirm payload after auto-fill, computed-field refresh and display value rendering.
+ * React 阶段的确认卡构建工具。
+ *
+ * <p>该工具会在槽位收集完成后，基于当前上下文重新执行自动补全、计算字段刷新和展示值渲染，
+ * 最终生成前端可以直接展示的确认卡载荷。
  *
  * @author Assistant Agent Team
  * @since 1.0.0
@@ -88,12 +93,13 @@ public class SlotConfirmTool implements BiFunction<SlotConfirmTool.Request, Tool
                 null);
     }
 
+    @Autowired
     public SlotConfirmTool(SlotSchemaParser slotSchemaParser,
                            SlotEnricherService slotEnricherService,
                            ComputedFieldProcessor computedFieldProcessor,
                            FormDisplayConfigService formDisplayConfigService,
                            ObjectMapper objectMapper,
-                           ArtifactPublicationLookupService artifactPublicationLookupService) {
+                           @Nullable ArtifactPublicationLookupService artifactPublicationLookupService) {
         this.slotSchemaParser = slotSchemaParser;
         this.slotEnricherService = slotEnricherService;
         this.computedFieldProcessor = computedFieldProcessor;
@@ -102,6 +108,9 @@ public class SlotConfirmTool implements BiFunction<SlotConfirmTool.Request, Tool
         this.artifactPublicationLookupService = artifactPublicationLookupService;
     }
 
+    /**
+     * 生成提供给 Agent 运行时注册的 {@code slot_confirm} 工具回调。
+     */
     public static ToolCallback createToolCallback(SlotConfirmTool tool) {
         return FunctionToolCallback.builder("slot_confirm", tool)
                 .description("Build confirmation form payload from collected slots.")
@@ -109,6 +118,9 @@ public class SlotConfirmTool implements BiFunction<SlotConfirmTool.Request, Tool
                 .build();
     }
 
+    /**
+     * 根据当前线程状态和槽位快照构建确认卡。
+     */
     @Override
     public Response apply(Request request, ToolContext toolContext) {
         Request effectiveRequest = request != null ? request : new Request();
@@ -129,7 +141,7 @@ public class SlotConfirmTool implements BiFunction<SlotConfirmTool.Request, Tool
             boolean allowNewSlotsFromRequest = collectedSlots.isEmpty();
             mergeRequestCollected(effectiveRequest.collectedSlots, collectedSlots, allowNewSlotsFromRequest);
 
-            // Priority: state > snapshot > LLM args (LLM often hallucinates identity values)
+            // 槽位身份信息的优先级：线程状态 > 工具快照 > LLM 入参，避免模型伪造身份字段。
             String systemCode = firstNonEmpty(
                     readStringState(state, AssistantStateKeys.SYSTEM_CODE),
                     snapshot.getSystemCode(),
@@ -201,52 +213,63 @@ public class SlotConfirmTool implements BiFunction<SlotConfirmTool.Request, Tool
             }
         }
 
-        if (StringUtils.hasText(request.toolCode) && artifactPublicationLookupService != null) {
-            Optional<PublishedToolDescriptor> publishedArtifact = artifactPublicationLookupService
-                    .findPublishedArtifact(request.toolCode, toolContext);
-            if (publishedArtifact.isPresent()) {
-                return convertFromPublishedArtifact(publishedArtifact.get());
-            }
+        if (!StringUtils.hasText(request.toolCode) || artifactPublicationLookupService == null) {
+            return null;
         }
-
-        if (StringUtils.hasText(request.slotSchema) || StringUtils.hasText(request.requestSchema)) {
-            ToolMetaSnapshot snapshot = new ToolMetaSnapshot();
-            snapshot.setToolCode(request.toolCode);
-            snapshot.setSlotSchema(request.slotSchema);
-            snapshot.setRequestSchema(request.requestSchema);
-            snapshot.setBehaviorConfig(request.behaviorConfig);
-            snapshot.setSystemCode(request.systemCode);
-            return snapshot;
-        }
-        return null;
+        return artifactPublicationLookupService.findPublishedArtifact(request.toolCode, toolContext)
+                .map(this::convertFromPublishedArtifact)
+                .filter(this::hasUsableSchema)
+                .orElse(null);
     }
 
     private boolean hasUsableSchema(ToolMetaSnapshot snapshot) {
         return snapshot != null
-                && (StringUtils.hasText(snapshot.getSlotSchema()) || StringUtils.hasText(snapshot.getRequestSchema()));
+                && StringUtils.hasText(snapshot.getSlotSchema());
     }
+
     private ToolMetaSnapshot convertFromPublishedArtifact(PublishedToolDescriptor descriptor) {
         ToolMetaSnapshot snapshot = new ToolMetaSnapshot();
-        snapshot.setToolCode(descriptor.artifact().getArtifactCode());
-        if (descriptor.artifact().getInteraction() != null) {
-            snapshot.setSlotSchema(descriptor.artifact().getInteraction().slotSchemaJson());
-            snapshot.setBehaviorConfig(descriptor.artifact().getInteraction().askStrategyJson());
+        if (descriptor == null) {
+            return snapshot;
+        }
+        if (descriptor.artifact() != null) {
+            snapshot.setToolCode(descriptor.artifact().getArtifactCode());
+            if (descriptor.artifact().getInteraction() != null) {
+                snapshot.setSlotSchema(descriptor.artifact().getInteraction().slotSchemaJson());
+                snapshot.setBehaviorConfig(descriptor.artifact().getInteraction().askStrategyJson());
+            }
+            snapshot.setSystemCode(descriptor.executionSystemCode());
+            return snapshot;
+        }
+        if (descriptor.directTool() == null) {
+            return snapshot;
+        }
+        org.springframework.ai.tool.definition.ToolDefinition definition = descriptor.directTool().getToolDefinition();
+        snapshot.setToolCode(definition != null ? definition.name() : null);
+        if (definition != null) {
+            applySchema(snapshot, definition.inputSchema());
         }
         snapshot.setSystemCode(descriptor.executionSystemCode());
         return snapshot;
     }
+
     private ToolMetaSnapshot convertFromToolMeta(ToolMeta toolMeta) {
         ToolMetaSnapshot snapshot = new ToolMetaSnapshot();
         snapshot.setToolCode(toolMeta.getToolCode());
-        snapshot.setSlotSchema(toolMeta.getParameterSchema());
-        snapshot.setRequestSchema(null);
+        applySchema(snapshot, toolMeta.getParameterSchema());
         snapshot.setExecutionPlan(toolMeta.getExecutionPlan());
         snapshot.setBehaviorConfig(toolMeta.getInteractionPolicy());
         snapshot.setSystemCode(toolMeta.getSystemCode());
         return snapshot;
     }
 
-    @SuppressWarnings("unchecked")
+    private void applySchema(ToolMetaSnapshot snapshot, String rawSchema) {
+        if (snapshot == null || !StringUtils.hasText(rawSchema)) {
+            return;
+        }
+        snapshot.setSlotSchema(rawSchema);
+    }
+
     private List<SlotDefinition> resolveSlotDefinitions(OverAllState state, ToolMetaSnapshot snapshot) {
         if (state != null) {
             Object raw = state.value(AssistantStateKeys.SLOT_DEFINITIONS, Object.class).orElse(null);
@@ -670,7 +693,7 @@ public class SlotConfirmTool implements BiFunction<SlotConfirmTool.Request, Tool
     }
 
     /**
-     * slot_confirm request.
+     * {@code slot_confirm} 的输入参数。
      */
     public static class Request {
 
@@ -681,15 +704,6 @@ public class SlotConfirmTool implements BiFunction<SlotConfirmTool.Request, Tool
         @JsonAlias({"collected", "collected_slots"})
         public Map<String, Object> collectedSlots = new HashMap<>();
 
-        @JsonPropertyDescription("Optional slot_schema JSON, used when state has no matched tool meta")
-        public String slotSchema;
-
-        @JsonPropertyDescription("Optional request_schema JSON fallback")
-        public String requestSchema;
-
-        @JsonPropertyDescription("Optional interaction/behavior configuration JSON")
-        public String behaviorConfig;
-
         @JsonPropertyDescription("Optional system code override")
         public String systemCode;
 
@@ -698,7 +712,7 @@ public class SlotConfirmTool implements BiFunction<SlotConfirmTool.Request, Tool
     }
 
     /**
-     * slot_confirm response.
+     * {@code slot_confirm} 的执行结果。
      */
     public static class Response {
         public String status;
@@ -733,7 +747,7 @@ public class SlotConfirmTool implements BiFunction<SlotConfirmTool.Request, Tool
     }
 
     /**
-     * Confirm form payload.
+     * 前端确认卡载荷。
      */
     public static class ConfirmFormPayload {
         public String toolCode;
@@ -742,6 +756,10 @@ public class SlotConfirmTool implements BiFunction<SlotConfirmTool.Request, Tool
         public List<EnrichedSlot> enrichedSlots;
     }
 }
+
+
+
+
 
 
 

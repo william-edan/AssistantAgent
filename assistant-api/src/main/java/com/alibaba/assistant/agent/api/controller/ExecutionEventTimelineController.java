@@ -39,7 +39,7 @@ import java.security.Principal;
 import java.time.LocalDateTime;
 
 /**
- * Control-plane read API for persisted execution event timelines.
+ * 持久化执行事件时间线查询入口。
  */
 @RestController
 @Profile("migration")

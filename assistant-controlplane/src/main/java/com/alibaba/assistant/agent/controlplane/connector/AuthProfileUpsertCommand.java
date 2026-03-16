@@ -19,7 +19,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Typed command for auth-profile create/update operations.
+ * 认证配置新增或更新命令。
  */
 public record AuthProfileUpsertCommand(
         String authType,

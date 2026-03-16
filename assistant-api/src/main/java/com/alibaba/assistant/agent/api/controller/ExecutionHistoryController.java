@@ -37,7 +37,7 @@ import org.springframework.web.server.ResponseStatusException;
 import java.security.Principal;
 
 /**
- * Control-plane read API for persisted execution history.
+ * 执行历史详情查询入口。
  */
 @RestController
 @Profile("migration")
