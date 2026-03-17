@@ -17,6 +17,7 @@ package com.alibaba.assistant.agent.api.controller;
 
 import com.alibaba.assistant.agent.api.security.AuthenticatedUserContext;
 import com.alibaba.assistant.agent.runtime.agent.AssistantStateKeys;
+import com.alibaba.assistant.agent.runtime.role.ScenarioRouter;
 import com.alibaba.cloud.ai.agent.studio.dto.AgentResumeRequest;
 import com.alibaba.cloud.ai.agent.studio.dto.AgentRunRequest;
 import com.alibaba.cloud.ai.agent.studio.dto.messages.UserMessageDTO;
@@ -34,6 +35,7 @@ import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
@@ -41,6 +43,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyMap;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -74,6 +77,8 @@ class ChatControllerStructuredStateInputTest {
         request.stateDelta.put("works", "本周完成多轮汇报主链修复");
         request.stateDelta.put("plans", "下周补全真实联调");
         request.stateDelta.put("send", 0);
+        request.stateDelta.put(AssistantStateKeys.ROLE_PACKAGE_CODE, "digital-admin");
+        request.stateDelta.put(AssistantStateKeys.ROLE_PACKAGE_VERSION, "v1");
 
         controller.runSse(request, null, null, null).blockLast();
 
@@ -87,6 +92,8 @@ class ChatControllerStructuredStateInputTest {
         assertEquals("1001", agentInput.get(AssistantStateKeys.ASSISTANT_UID));
         assertEquals("gougu_oa", agentInput.get(AssistantStateKeys.SYSTEM_CODE));
         assertEquals("grayscale_agent", agentInput.get(AssistantStateKeys.AGENT_APP_CODE));
+        assertEquals("digital-admin", agentInput.get(AssistantStateKeys.ROLE_PACKAGE_CODE));
+        assertEquals("v1", agentInput.get(AssistantStateKeys.ROLE_PACKAGE_VERSION));
         assertTrue(agentInput.containsKey(AssistantStateKeys.CURRENT_TURN_SLOT_INPUTS));
         assertInstanceOf(List.class, agentInput.get("messages"));
     }
@@ -104,6 +111,8 @@ class ChatControllerStructuredStateInputTest {
         request.stateDelta = new LinkedHashMap<>();
         request.stateDelta.put("works", "恢复后的汇报内容");
         request.stateDelta.put("send", 1);
+        request.stateDelta.put(AssistantStateKeys.ROLE_PACKAGE_CODE, "digital-admin");
+        request.stateDelta.put(AssistantStateKeys.ROLE_PACKAGE_VERSION, "v1");
 
         controller.resumeSse(request, null, null, null).blockLast();
 
@@ -115,7 +124,47 @@ class ChatControllerStructuredStateInputTest {
         assertEquals("1001", agentInput.get(AssistantStateKeys.ASSISTANT_UID));
         assertEquals("gougu_oa", agentInput.get(AssistantStateKeys.SYSTEM_CODE));
         assertEquals("grayscale_agent", agentInput.get(AssistantStateKeys.AGENT_APP_CODE));
+        assertEquals("digital-admin", agentInput.get(AssistantStateKeys.ROLE_PACKAGE_CODE));
+        assertEquals("v1", agentInput.get(AssistantStateKeys.ROLE_PACKAGE_VERSION));
         assertTrue(agentInput.containsKey(AssistantStateKeys.CURRENT_TURN_SLOT_INPUTS));
+    }
+
+    @Test
+    void shouldResolveRoleScenarioIntoAgentInputDuringRunSse() throws Exception {
+        authenticate();
+        ScenarioRouter scenarioRouter = mock(ScenarioRouter.class);
+        ChatController routedController = new ChatController(
+                agentLoader,
+                "grayscale_agent",
+                "",
+                "",
+                "prod",
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                scenarioRouter);
+        when(agentLoader.loadAgent("grayscale_agent")).thenReturn(agent);
+        when(agent.stream(anyMap(), any(RunnableConfig.class))).thenReturn(Flux.empty());
+        when(agent.stream(any(org.springframework.ai.chat.messages.UserMessage.class), any(RunnableConfig.class)))
+                .thenReturn(Flux.empty());
+        when(scenarioRouter.resolveScenario(anyMap(), eq("我要发起请假申请"))).thenReturn(Optional.of("leave-approval"));
+
+        AgentRunRequest request = new AgentRunRequest();
+        request.threadId = "thread-role-scenario";
+        request.userId = "ignored-user";
+        request.newMessage = new UserMessageDTO("我要发起请假申请");
+        request.stateDelta = new LinkedHashMap<>();
+        request.stateDelta.put(AssistantStateKeys.ROLE_PACKAGE_CODE, "digital-admin");
+        request.stateDelta.put(AssistantStateKeys.ROLE_PACKAGE_VERSION, "v1");
+
+        routedController.runSse(request, null, null, null).blockLast();
+
+        ArgumentCaptor<Map<String, Object>> inputCaptor = ArgumentCaptor.forClass(Map.class);
+        verify(agent).stream(inputCaptor.capture(), any(RunnableConfig.class));
+        assertEquals("leave-approval", inputCaptor.getValue().get(AssistantStateKeys.ROLE_SCENARIO_CODE));
     }
 
     private static void authenticate() {
@@ -126,3 +175,4 @@ class ChatControllerStructuredStateInputTest {
     }
 
 }
+

@@ -23,14 +23,19 @@ import com.alibaba.assistant.agent.core.tool.CodeactToolRegistry;
 import com.alibaba.assistant.agent.core.tool.DefaultCodeactToolRegistry;
 import com.alibaba.assistant.agent.core.tool.ToolContextScopedCodeactToolRegistry;
 import com.alibaba.assistant.agent.core.tool.schema.ReturnSchemaRegistry;
+import com.alibaba.assistant.agent.runtime.agent.AssistantStateKeys;
+import com.alibaba.assistant.agent.runtime.role.RoleToolScopeFilter;
+import com.alibaba.cloud.ai.graph.OverAllState;
+import com.alibaba.cloud.ai.graph.agent.tools.ToolContextConstants;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.ai.chat.model.ToolContext;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Profile;
 import org.springframework.context.event.EventListener;
+import org.springframework.lang.Nullable;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
+import org.springframework.ai.chat.model.ToolContext;
 
 import java.time.Duration;
 import java.time.Instant;
@@ -42,7 +47,7 @@ import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * 按租户和发布源隔离的运行时工具注册表。
+ * Runtime tool registry isolated by tenant and publication scope.
  */
 @Component
 @Profile("migration")
@@ -60,6 +65,9 @@ public class TenantAwareToolRegistry implements ToolContextScopedCodeactToolRegi
 
     private final ToolPublicationProviderSelector toolPublicationProviderSelector;
 
+    @Nullable
+    private final RoleToolScopeFilter roleToolScopeFilter;
+
     private final Map<String, SnapshotEntry> snapshotCache = new ConcurrentHashMap<>();
 
     private volatile DefaultCodeactToolRegistry delegate;
@@ -69,41 +77,60 @@ public class TenantAwareToolRegistry implements ToolContextScopedCodeactToolRegi
             List<ToolPublicationProvider> publicationProviders,
             ToolPublicationMaterializer toolPublicationMaterializer,
             PublicationScopeResolver publicationScopeResolver,
-            ToolPublicationProviderSelector toolPublicationProviderSelector) {
+            ToolPublicationProviderSelector toolPublicationProviderSelector,
+            @Autowired(required = false) RoleToolScopeFilter roleToolScopeFilter) {
         this.publicationProviders = publicationProviders != null ? List.copyOf(publicationProviders) : List.of();
         this.toolPublicationMaterializer = toolPublicationMaterializer;
         this.publicationScopeResolver = publicationScopeResolver;
         this.toolPublicationProviderSelector = toolPublicationProviderSelector;
+        this.roleToolScopeFilter = roleToolScopeFilter;
         this.delegate = createSessionRegistry("default");
     }
 
     TenantAwareToolRegistry(
             List<ToolPublicationProvider> publicationProviders,
             ToolPublicationMaterializer toolPublicationMaterializer,
+            PublicationScopeResolver publicationScopeResolver,
+            ToolPublicationProviderSelector toolPublicationProviderSelector) {
+        this(publicationProviders, toolPublicationMaterializer, publicationScopeResolver,
+                toolPublicationProviderSelector, null);
+    }
+
+
+    TenantAwareToolRegistry(
+            List<ToolPublicationProvider> publicationProviders,
+            ToolPublicationMaterializer toolPublicationMaterializer,
             PublicationScopeResolver publicationScopeResolver) {
         this(publicationProviders, toolPublicationMaterializer, publicationScopeResolver,
-                new ToolPublicationProviderSelector());
+                new ToolPublicationProviderSelector(), null);
     }
 
     TenantAwareToolRegistry(
             List<ToolPublicationProvider> publicationProviders,
             ToolPublicationMaterializer toolPublicationMaterializer) {
-        this(publicationProviders, toolPublicationMaterializer, null, new ToolPublicationProviderSelector());
+        this(publicationProviders, toolPublicationMaterializer, null, new ToolPublicationProviderSelector(), null);
     }
 
     /**
-     * 构建租户级不可变快照。
+     * Build an immutable registry snapshot for a tenant.
      */
     public DefaultCodeactToolRegistry createSessionRegistry(String tenantId) {
-        return createSessionRegistry(new ToolPublicationProvider.PublicationScope(normalizeTenant(tenantId), null, null, null));
+        return createSessionRegistry(new ToolPublicationProvider.PublicationScope(normalizeTenant(tenantId), null, null, null),
+                Map.of());
     }
 
     /**
-     * 按作用域构建不可变快照。
+     * Build an immutable registry snapshot for a publication scope.
      */
     public DefaultCodeactToolRegistry createSessionRegistry(ToolPublicationProvider.PublicationScope scope) {
+        return createSessionRegistry(scope, Map.of());
+    }
+
+    DefaultCodeactToolRegistry createSessionRegistry(
+            ToolPublicationProvider.PublicationScope scope,
+            Map<String, Object> attributes) {
         ToolPublicationProvider.PublicationScope effectiveScope = normalizeScope(scope);
-        SnapshotEntry snapshot = resolveSnapshot(effectiveScope);
+        SnapshotEntry snapshot = resolveSnapshot(effectiveScope, attributes != null ? attributes : Map.of());
 
         DefaultCodeactToolRegistry registry = new DefaultCodeactToolRegistry();
         for (CodeactTool tool : snapshot.tools()) {
@@ -113,7 +140,7 @@ public class TenantAwareToolRegistry implements ToolContextScopedCodeactToolRegi
     }
 
     public List<CodeactTool> getReactAccessibleTools() {
-        return resolveSnapshot(new ToolPublicationProvider.PublicationScope("default", null, null, null))
+        return resolveSnapshot(new ToolPublicationProvider.PublicationScope("default", null, null, null), Map.of())
                 .reactAccessibleTools();
     }
 
@@ -122,7 +149,10 @@ public class TenantAwareToolRegistry implements ToolContextScopedCodeactToolRegi
         if (publicationScopeResolver == null) {
             return this;
         }
-        return createSessionRegistry(publicationScopeResolver.resolve(toolContext));
+        Map<String, Object> context = toolContext != null && toolContext.getContext() != null
+                ? toolContext.getContext()
+                : Map.of();
+        return createSessionRegistry(publicationScopeResolver.resolve(toolContext), context);
     }
 
     @EventListener
@@ -186,9 +216,9 @@ public class TenantAwareToolRegistry implements ToolContextScopedCodeactToolRegi
         return delegate.getReturnSchemaRegistry();
     }
 
-    private SnapshotEntry resolveSnapshot(ToolPublicationProvider.PublicationScope scope) {
+    private SnapshotEntry resolveSnapshot(ToolPublicationProvider.PublicationScope scope, Map<String, Object> attributes) {
         ToolPublicationProvider.PublicationScope effectiveScope = normalizeScope(scope);
-        String cacheKey = cacheKey(effectiveScope);
+        String cacheKey = cacheKey(effectiveScope, attributes);
         return snapshotCache.compute(cacheKey, (key, existing) -> {
             if (existing != null && !existing.isExpired()) {
                 return existing;
@@ -202,17 +232,20 @@ public class TenantAwareToolRegistry implements ToolContextScopedCodeactToolRegi
                 }
                 descriptors.addAll(provider.listPublishedTools(effectiveScope));
             }
-            List<CodeactTool> tools = toolPublicationMaterializer.materialize(descriptors);
-            return new SnapshotEntry(Instant.now(), descriptors, tools);
+            List<PublishedToolDescriptor> effectiveDescriptors = roleToolScopeFilter != null
+                    ? roleToolScopeFilter.filter(attributes, descriptors)
+                    : List.copyOf(descriptors);
+            List<CodeactTool> tools = toolPublicationMaterializer.materialize(effectiveDescriptors);
+            return new SnapshotEntry(Instant.now(), effectiveDescriptors, tools);
         });
     }
 
-	private static boolean isReactAccessiblePublication(PublishedToolDescriptor descriptor) {
-		return descriptor != null
-				&& descriptor.isDirectToolPublication()
-				&& descriptor.isUserVisible()
-				&& descriptor.directTool() != null;
-	}
+    private static boolean isReactAccessiblePublication(PublishedToolDescriptor descriptor) {
+        return descriptor != null
+                && descriptor.isDirectToolPublication()
+                && descriptor.isUserVisible()
+                && descriptor.directTool() != null;
+    }
 
     private ToolPublicationProvider.PublicationScope normalizeScope(ToolPublicationProvider.PublicationScope scope) {
         if (scope == null) {
@@ -232,14 +265,35 @@ public class TenantAwareToolRegistry implements ToolContextScopedCodeactToolRegi
         return StringUtils.hasText(tenantId) ? tenantId : "default";
     }
 
-    private String cacheKey(ToolPublicationProvider.PublicationScope scope) {
+    private String cacheKey(ToolPublicationProvider.PublicationScope scope, Map<String, Object> attributes) {
         return normalizeTenant(scope.tenantId()) + "|"
                 + Objects.toString(scope.spaceId(), "_") + "|"
                 + Objects.toString(scope.environment(), "_") + "|"
                 + Objects.toString(scope.agentAppCode(), "_") + "|"
                 + scope.sourceSelectionMode().name() + "|"
                 + String.join(",", scope.requestedSourceIds()) + "|"
-                + String.join(",", scope.blockedSourceIds());
+                + String.join(",", scope.blockedSourceIds()) + "|"
+                + readRoleAttribute(attributes, AssistantStateKeys.ROLE_PACKAGE_CODE) + "|"
+                + readRoleAttribute(attributes, AssistantStateKeys.ROLE_PACKAGE_VERSION) + "|"
+                + readRoleAttribute(attributes, AssistantStateKeys.ROLE_SCENARIO_CODE);
+    }
+
+    private String readRoleAttribute(Map<String, Object> attributes, String key) {
+        if (!StringUtils.hasText(key) || attributes == null || attributes.isEmpty()) {
+            return "_";
+        }
+        Object value = attributes.get(key);
+        if (value == null) {
+            Object state = attributes.get(ToolContextConstants.AGENT_STATE_CONTEXT_KEY);
+            if (state instanceof OverAllState overAllState) {
+                value = overAllState.value(key, Object.class).orElse(null);
+            }
+        }
+        if (value == null) {
+            return "_";
+        }
+        String text = String.valueOf(value).trim();
+        return StringUtils.hasText(text) ? text : "_";
     }
 
     private record SnapshotEntry(Instant loadedAt, List<PublishedToolDescriptor> descriptors, List<CodeactTool> tools) {
@@ -266,8 +320,9 @@ public class TenantAwareToolRegistry implements ToolContextScopedCodeactToolRegi
     }
 
     /**
-     * 发布事件，用于失效快照缓存。
+     * Publication event used to invalidate cached snapshots.
      */
     public record ToolPublishedEvent(String tenantId) {
     }
 }
+

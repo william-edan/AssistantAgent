@@ -30,11 +30,53 @@ public record CredentialResolutionRequest(
         String platformPrincipalType,
         List<String> requestedScopes,
         String runId,
-        String stepId) {
+        String stepId,
+        String agentAppCode,
+        String rolePackageCode,
+        String rolePackageVersion,
+        String scenarioCode,
+        String executionSubjectType,
+        String executionSubjectId) {
 
     public CredentialResolutionRequest {
         candidateAuthProfileCodes = normalize(candidateAuthProfileCodes);
         requestedScopes = normalize(requestedScopes);
+        platformPrincipalId = normalize(platformPrincipalId);
+        platformPrincipalType = normalize(platformPrincipalType);
+        runId = normalize(runId);
+        stepId = normalize(stepId);
+        agentAppCode = normalize(agentAppCode);
+        rolePackageCode = normalize(rolePackageCode);
+        rolePackageVersion = normalize(rolePackageVersion);
+        scenarioCode = normalize(scenarioCode);
+        executionSubjectType = normalize(executionSubjectType);
+        executionSubjectId = normalize(executionSubjectId);
+    }
+
+    public CredentialResolutionRequest(
+            Long spaceId,
+            Long connectorId,
+            List<String> candidateAuthProfileCodes,
+            String platformPrincipalId,
+            String platformPrincipalType,
+            List<String> requestedScopes,
+            String runId,
+            String stepId) {
+        this(
+                spaceId,
+                connectorId,
+                candidateAuthProfileCodes,
+                platformPrincipalId,
+                platformPrincipalType,
+                requestedScopes,
+                runId,
+                stepId,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null);
     }
 
     private static List<String> normalize(List<String> values) {
@@ -43,14 +85,19 @@ public record CredentialResolutionRequest(
         }
         Set<String> normalized = new LinkedHashSet<>();
         for (String value : values) {
-            if (value == null) {
-                continue;
-            }
-            String trimmed = value.trim();
-            if (!trimmed.isEmpty()) {
-                normalized.add(trimmed);
+            String text = normalize(value);
+            if (text != null) {
+                normalized.add(text);
             }
         }
         return List.copyOf(normalized);
+    }
+
+    private static String normalize(String value) {
+        if (value == null) {
+            return null;
+        }
+        String trimmed = value.trim();
+        return trimmed.isEmpty() ? null : trimmed;
     }
 }

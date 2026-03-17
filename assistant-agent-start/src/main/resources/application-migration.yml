@@ -54,6 +54,10 @@ assistant:
       base-url: ${GOUGU_OA_BASE_URL:http://office.ai.devefive.com}
       token-header-name: Authorization
       token-header-prefix: 'Bearer '
+    office1:
+      base-url: ${OFFICE1_BASE_URL:http://office.ai.devefive.com}
+      token-header-name: Authorization
+      token-header-prefix: 'Bearer '
   # Runtime namespace: read by AssistantRuntimeProperties
   runtime:
     fast-intent:
@@ -68,6 +72,11 @@ assistant:
       async: true
     search:
       enabled: true
+    proactive:
+      enabled: true
+      scheduler-pool-size: 4
+      scan-fixed-delay-ms: 30000
+      connector-health-delay-ms: 60000
     policy-guard:
       enabled: true
     budget:
@@ -195,4 +204,17 @@ spring.ai.mcp.client:
 logging:
   level:
     com.alibaba.assistant.agent: INFO
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+  endpoint:
+    metrics:
+      enabled: true
+  tracing:
+    enabled: true
+    sampling:
+      probability: 1.0
+
 

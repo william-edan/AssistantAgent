@@ -47,7 +47,7 @@ class ArtifactPublicationLookupServiceTest {
         ToolPublicationProvider provider = mock(ToolPublicationProvider.class);
         ToolPublicationProviderSelector selector = new ToolPublicationProviderSelector();
         ArtifactPublicationLookupService service = new ArtifactPublicationLookupService(
-                List.of(provider), scopeResolver, selector);
+                List.of(provider), scopeResolver, selector, null);
 
         ToolPublicationProvider.PublicationScope scope =
                 new ToolPublicationProvider.PublicationScope("default", 1L, "prod", "hr-assistant");
@@ -83,7 +83,7 @@ class ArtifactPublicationLookupServiceTest {
         ToolPublicationProvider provider = mock(ToolPublicationProvider.class);
         ToolPublicationProviderSelector selector = new ToolPublicationProviderSelector();
         ArtifactPublicationLookupService service = new ArtifactPublicationLookupService(
-                List.of(provider), scopeResolver, selector);
+                List.of(provider), scopeResolver, selector, null);
 
         ToolContext toolContext = new ToolContext(Map.of("space_code", "default", "agent_app_code", "hr-assistant"));
         ToolPublicationProvider.PublicationScope scope =
@@ -111,7 +111,7 @@ class ArtifactPublicationLookupServiceTest {
         when(directProvider.providerId()).thenReturn("synthetic-direct");
         ToolPublicationProviderSelector selector = new ToolPublicationProviderSelector();
         ArtifactPublicationLookupService service = new ArtifactPublicationLookupService(
-                List.of(directProvider), scopeResolver, selector);
+                List.of(directProvider), scopeResolver, selector, null);
 
         ToolContext toolContext = new ToolContext(Map.of("space_code", "default", "agent_app_code", "hr-assistant"));
         ToolPublicationProvider.PublicationScope scope =
@@ -140,7 +140,7 @@ class ArtifactPublicationLookupServiceTest {
         when(directProvider.providerId()).thenReturn("synthetic-direct");
         ToolPublicationProviderSelector selector = new ToolPublicationProviderSelector();
         ArtifactPublicationLookupService service = new ArtifactPublicationLookupService(
-                List.of(directProvider, artifactProvider), scopeResolver, selector);
+                List.of(directProvider, artifactProvider), scopeResolver, selector, null);
 
         ToolContext toolContext = new ToolContext(Map.of("space_code", "default", "agent_app_code", "hr-assistant"));
         ToolPublicationProvider.PublicationScope scope = new ToolPublicationProvider.PublicationScope(
@@ -164,7 +164,7 @@ class ArtifactPublicationLookupServiceTest {
         ToolPublicationProvider provider = mock(ToolPublicationProvider.class);
         ToolPublicationProviderSelector selector = new ToolPublicationProviderSelector();
         ArtifactPublicationLookupService service = new ArtifactPublicationLookupService(
-                List.of(provider), scopeResolver, selector);
+                List.of(provider), scopeResolver, selector, null);
 
         ToolPublicationProvider.PublicationScope scope =
                 new ToolPublicationProvider.PublicationScope("default", 1L, "prod", "hr-assistant");
@@ -186,7 +186,7 @@ class ArtifactPublicationLookupServiceTest {
         when(directProvider.providerId()).thenReturn("synthetic-direct");
         ToolPublicationProviderSelector selector = new ToolPublicationProviderSelector();
         ArtifactPublicationLookupService service = new ArtifactPublicationLookupService(
-                List.of(directProvider, artifactProvider), scopeResolver, selector);
+                List.of(directProvider, artifactProvider), scopeResolver, selector, null);
 
         ToolPublicationProvider.PublicationScope scope = new ToolPublicationProvider.PublicationScope(
                 "default",

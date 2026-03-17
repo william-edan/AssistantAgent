@@ -31,6 +31,7 @@ import com.alibaba.assistant.agent.runtime.execution.ExecutionEventType;
 import com.alibaba.assistant.agent.runtime.execution.ExecutionLifecycleStatus;
 import com.alibaba.assistant.agent.runtime.execution.ExecutionEventStreamRegistry;
 import com.alibaba.assistant.agent.runtime.context.RuntimeSpaceResolver;
+import com.alibaba.assistant.agent.runtime.role.ScenarioRouter;
 import com.alibaba.cloud.ai.agent.studio.dto.AgentResumeRequest;
 import com.alibaba.cloud.ai.agent.studio.dto.AgentRunRequest;
 import com.alibaba.cloud.ai.agent.studio.dto.messages.MessageDTO;
@@ -116,6 +117,8 @@ public class ChatController {
 
 	private final RuntimeSpaceResolver runtimeSpaceResolver;
 
+	private final ScenarioRouter scenarioRouter;
+
 	public ChatController(AgentLoader agentLoader,
 			@Value("${assistant.chat.default-app-name:grayscale_agent}") String defaultAppName,
 			@Value("${assistant.chat.default-system-code:}")
@@ -137,7 +140,33 @@ public class ChatController {
 			String defaultAppName,
 			String defaultSystemCode,
 			@Nullable ExecutionEventStreamRegistry executionEventStreamRegistry) {
-		this(agentLoader, defaultAppName, defaultSystemCode, "", "prod", executionEventStreamRegistry, null, null, null, null, null);
+		this(agentLoader, defaultAppName, defaultSystemCode, "", "prod", executionEventStreamRegistry, null, null, null, null, null, null);
+	}
+
+	public ChatController(AgentLoader agentLoader,
+			@Value("${assistant.chat.default-app-name:grayscale_agent}") String defaultAppName,
+			@Value("${assistant.chat.default-system-code:}")
+			String defaultSystemCode,
+			@Value("${assistant.chat.default-space-code:}") String defaultSpaceCode,
+			@Value("${assistant.chat.default-space-environment:prod}") String defaultSpaceEnvironment,
+			@Nullable ExecutionEventStreamRegistry executionEventStreamRegistry,
+			@Nullable V3ProtocolAdapter protocolAdapter,
+			@Nullable ChatTranscriptPersistenceService transcriptPersistenceService,
+			@Nullable ChatThreadStateService chatThreadStateService,
+			@Nullable ChatFrontendEventPublisher chatFrontendEventPublisher,
+			@Nullable RuntimeSpaceResolver runtimeSpaceResolver) {
+		this(agentLoader,
+				defaultAppName,
+				defaultSystemCode,
+				defaultSpaceCode,
+				defaultSpaceEnvironment,
+				executionEventStreamRegistry,
+				protocolAdapter,
+				transcriptPersistenceService,
+				chatThreadStateService,
+				chatFrontendEventPublisher,
+				runtimeSpaceResolver,
+				null);
 	}
 
 	@Autowired
@@ -152,7 +181,8 @@ public class ChatController {
 			@Nullable ChatTranscriptPersistenceService transcriptPersistenceService,
 			@Nullable ChatThreadStateService chatThreadStateService,
 			@Nullable ChatFrontendEventPublisher chatFrontendEventPublisher,
-			@Nullable RuntimeSpaceResolver runtimeSpaceResolver) {
+			@Nullable RuntimeSpaceResolver runtimeSpaceResolver,
+			@Nullable ScenarioRouter scenarioRouter) {
 		this.agentLoader = agentLoader;
 		this.defaultAppName = defaultAppName;
 		this.defaultSystemCode = defaultSystemCode;
@@ -164,6 +194,7 @@ public class ChatController {
 		this.chatThreadStateService = chatThreadStateService;
 		this.chatFrontendEventPublisher = chatFrontendEventPublisher;
 		this.runtimeSpaceResolver = runtimeSpaceResolver;
+		this.scenarioRouter = scenarioRouter;
 	}
 
 	/**
@@ -224,12 +255,13 @@ public class ChatController {
 		try {
 			Agent agent = agentLoader.loadAgent(appName);
 			UserMessage userMessage = newMessage.toUserMessage();
-			Map<String, Object> agentInput = buildAgentInput(userMessage, stateDelta);
+			Map<String, Object> effectiveStateDelta = resolveRoleBindingState(stateDelta, userMessage.getText());
+			Map<String, Object> agentInput = buildAgentInput(userMessage, effectiveStateDelta);
 			String turnId = UUID.randomUUID().toString();
 			RunnableConfig.Builder configBuilder = RunnableConfig.builder()
 					.threadId(threadId)
 					.addMetadata("user_id", userId);
-			String effectiveSystemCode = resolveTranscriptSystemCode(stateDelta);
+			String effectiveSystemCode = resolveTranscriptSystemCode(effectiveStateDelta);
 			if (transcriptPersistenceService != null) {
 				transcriptPersistenceService.recordUserMessage(
 						threadId,
@@ -237,7 +269,8 @@ public class ChatController {
 						appName,
 						effectiveSystemCode,
 						turnId,
-						userMessage.getText());
+						userMessage.getText(),
+						effectiveStateDelta);
 			}
 			return executeAgent(
 					agentInput,
@@ -249,7 +282,8 @@ public class ChatController {
 					userId,
 					appName,
 					effectiveSystemCode,
-					turnId);
+					turnId,
+					effectiveStateDelta);
 		}
 		catch (Exception e) {
 			logger.error("ChatController#doRunSse - reason=agent执行失败, threadId={}", threadId, e);
@@ -293,12 +327,13 @@ public class ChatController {
 				}
 			}
 
-			Map<String, Object> agentInput = buildAgentInput(null, request.stateDelta);
+			Map<String, Object> effectiveStateDelta = resolveRoleBindingState(request.stateDelta, null);
+			Map<String, Object> agentInput = buildAgentInput(null, effectiveStateDelta);
 			RunnableConfig.Builder configBuilder = RunnableConfig.builder()
 					.threadId(request.threadId)
 					.addMetadata("user_id", request.userId)
 					.addHumanFeedback(metadataBuilder.build());
-			String effectiveSystemCode = resolveTranscriptSystemCode(request.stateDelta);
+			String effectiveSystemCode = resolveTranscriptSystemCode(effectiveStateDelta);
 			if (transcriptPersistenceService != null) {
 				transcriptPersistenceService.recordResumeAction(
 						request.threadId,
@@ -306,7 +341,8 @@ public class ChatController {
 						request.appName,
 						effectiveSystemCode,
 						turnId,
-						resolveResumeActionText(request));
+						resolveResumeActionText(request),
+						effectiveStateDelta);
 			}
 			return executeAgent(
 					agentInput,
@@ -318,7 +354,8 @@ public class ChatController {
 					request.userId,
 					request.appName,
 					effectiveSystemCode,
-					turnId);
+					turnId,
+					effectiveStateDelta);
 		}
 		catch (Exception e) {
 			logger.error("ChatController#doResumeSse - reason=agent恢复失败, threadId={}", request.threadId, e);
@@ -342,7 +379,8 @@ public class ChatController {
 			String assistantUid,
 			String appName,
 			String systemCode,
-			String turnId)
+			String turnId,
+			@Nullable Map<String, Object> roleBindingState)
 			throws GraphRunnerException {
 		Flux<FrontendEvent> eventFlux = executeAgentEvents(
 				agentInput,
@@ -361,7 +399,8 @@ public class ChatController {
 							appName,
 							systemCode,
 							turnId,
-							event))
+							event,
+							roleBindingState))
 					.doFinally(signalType -> chatFrontendEventPublisher.finishTurn(
 							threadId,
 							assistantUid,
@@ -379,7 +418,8 @@ public class ChatController {
 							appName,
 							systemCode,
 							turnId,
-							event))
+							event,
+							roleBindingState))
 					.doFinally(signalType -> transcriptPersistenceService.finishTurn(
 							threadId,
 							assistantUid,
@@ -1249,6 +1289,25 @@ public class ChatController {
 			}
 		}
 		return agentInput;
+	}
+
+	private Map<String, Object> resolveRoleBindingState(
+			@Nullable Map<String, Object> stateDelta,
+			@Nullable String latestInput) {
+		if ((stateDelta == null || stateDelta.isEmpty()) && !StringUtils.hasText(latestInput)) {
+			return stateDelta;
+		}
+		Map<String, Object> resolved = stateDelta == null || stateDelta.isEmpty()
+				? new LinkedHashMap<>()
+				: new LinkedHashMap<>(stateDelta);
+		if (scenarioRouter == null
+				|| !StringUtils.hasText(latestInput)
+				|| StringUtils.hasText(asString(resolved.get(AssistantStateKeys.ROLE_SCENARIO_CODE)))) {
+			return resolved;
+		}
+		scenarioRouter.resolveScenario(resolved, latestInput)
+				.ifPresent(scenarioCode -> resolved.put(AssistantStateKeys.ROLE_SCENARIO_CODE, scenarioCode));
+		return resolved;
 	}
 
 	private String resolveDefaultSpaceEnvironment() {

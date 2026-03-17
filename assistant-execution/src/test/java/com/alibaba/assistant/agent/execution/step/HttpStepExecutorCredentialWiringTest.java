@@ -103,4 +103,49 @@ class HttpStepExecutorCredentialWiringTest {
         assertNotNull(recordedRequest);
         assertEquals("Bearer step-token", recordedRequest.getHeader("Authorization"));
     }
+
+    @Test
+    void shouldRenderPathQueryHeaderAndBodyGroupsFromInputMapping() throws Exception {
+        HttpStepExecutor executor = new HttpStepExecutor(
+                new ObjectMapper(),
+                new RequestBodySerializer(),
+                mock(HttpStepExecutor.SystemAccessProfilePort.class),
+                mock(TokenBroker.class),
+                false);
+        StepConfig config = new StepConfig();
+        config.setMethod("POST");
+        config.setEndpoint("/api/users/{userId}");
+        config.setContentType("application/json");
+        config.setInputMapping(Map.of(
+                "path", "${path}",
+                "query", "${query}",
+                "headers", "${headers}",
+                "body", "${body}"));
+        config.setOutputMapping(Map.of("response", "$"));
+
+        FlowContext context = new FlowContext(Map.of(
+                "path", Map.of("userId", "u-1"),
+                "query", Map.of("expand", "roles"),
+                "headers", Map.of("X-Trace-Id", "trace-1"),
+                "body", Map.of("reason", "vacation")));
+        context.setCurrentStepId("invoke");
+        context.putStepBaseUrl("invoke", mockWebServer.url("/").toString().replaceAll("/$", ""));
+        context.putStepRequestHeaders("invoke", Map.of("Authorization", "Bearer step-token"));
+
+        mockWebServer.enqueue(new MockResponse()
+                .setResponseCode(200)
+                .addHeader("Content-Type", "application/json")
+                .setBody("{\"ok\":true}"));
+
+        StepResult result = executor.execute(config, context);
+
+        assertTrue(result.isSuccess());
+        RecordedRequest recordedRequest = mockWebServer.takeRequest(1, TimeUnit.SECONDS);
+        assertNotNull(recordedRequest);
+        assertEquals("/api/users/u-1?expand=roles", recordedRequest.getPath());
+        assertEquals("Bearer step-token", recordedRequest.getHeader("Authorization"));
+        assertEquals("trace-1", recordedRequest.getHeader("X-Trace-Id"));
+        assertEquals("{\"reason\":\"vacation\"}", recordedRequest.getBody().readUtf8());
+        assertEquals(Boolean.TRUE, ((Map<?, ?>) result.getOutputs().get("response")).get("ok"));
+    }
 }

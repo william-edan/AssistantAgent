@@ -43,4 +43,15 @@ class ExecutionRunServiceContractTest {
         assertEquals("RUN-1", result.get().getRunId());
         verify(service).getOne(any(Wrapper.class), eq(false));
     }
+
+    @Test
+    void shouldPersistUserRatingAndCorrectionNote() {
+        ExecutionRun run = new ExecutionRun();
+
+        run.setUserRating(5);
+        run.setCorrectionNote("需要在生成结果里补充请假交接说明");
+
+        assertEquals(5, run.getUserRating());
+        assertEquals("需要在生成结果里补充请假交接说明", run.getCorrectionNote());
+    }
 }

@@ -315,13 +315,43 @@ public class ArtifactRuntimeExecutor {
     }
 
     private void resolveStepCredentials(PublishedToolDescriptor descriptor, FlowContext flowContext) {
-        if (credentialBroker == null || descriptor == null || descriptor.artifact() == null) {
+        if (credentialBroker == null || descriptor == null || descriptor.artifact() == null || flowContext == null) {
             return;
         }
         RuntimeArtifact artifact = descriptor.artifact();
-        if (artifact.getSteps().isEmpty() || !StringUtils.hasText(flowContext.getAssistantUid())) {
+        if (artifact.getSteps().isEmpty()) {
             return;
         }
+        String platformPrincipalId = resolvePlatformPrincipalId(flowContext);
+        if (!StringUtils.hasText(platformPrincipalId)) {
+            return;
+        }
+        String platformPrincipalType = resolvePlatformPrincipalType(flowContext);
+        Long spaceId = resolveSpaceId(artifact, flowContext);
+        String agentAppCode = resolveFlowInput(flowContext,
+                AssistantStateKeys.AGENT_APP_CODE,
+                "agent_app_code",
+                "agentAppCode");
+        String rolePackageCode = resolveFlowInput(flowContext,
+                AssistantStateKeys.ROLE_PACKAGE_CODE,
+                "role_package_code",
+                "rolePackageCode");
+        String rolePackageVersion = resolveFlowInput(flowContext,
+                AssistantStateKeys.ROLE_PACKAGE_VERSION,
+                "role_package_version",
+                "rolePackageVersion");
+        String scenarioCode = resolveFlowInput(flowContext,
+                AssistantStateKeys.ROLE_SCENARIO_CODE,
+                "role_scenario_code",
+                "roleScenarioCode");
+        String executionSubjectType = resolveFlowInput(flowContext,
+                AssistantStateKeys.EXECUTION_SUBJECT_TYPE,
+                "execution_subject_type",
+                "executionSubjectType");
+        String executionSubjectId = resolveFlowInput(flowContext,
+                AssistantStateKeys.EXECUTION_SUBJECT_ID,
+                "execution_subject_id",
+                "executionSubjectId");
         for (Map.Entry<String, RuntimeArtifact.StepBinding> entry : artifact.getSteps().entrySet()) {
             String stepId = entry.getKey();
             RuntimeArtifact.StepBinding stepBinding = entry.getValue();
@@ -335,19 +365,62 @@ public class ArtifactRuntimeExecutor {
                 continue;
             }
             ResolvedCredentialLease lease = credentialBroker.resolve(new CredentialResolutionRequest(
-                    resolveSpaceId(artifact, flowContext),
+                    spaceId,
                     connectorId,
                     resolveCandidateAuthProfileCodes(stepBinding),
-                    flowContext.getAssistantUid(),
-                    "local_user",
+                    platformPrincipalId,
+                    platformPrincipalType,
                     List.of(),
                     flowContext.getRunId(),
-                    stepId));
+                    stepId,
+                    agentAppCode,
+                    rolePackageCode,
+                    rolePackageVersion,
+                    scenarioCode,
+                    executionSubjectType,
+                    executionSubjectId));
             flowContext.putStepRequestHeaders(stepId, lease.headers());
             if (StringUtils.hasText(lease.baseUrl())) {
                 flowContext.putStepBaseUrl(stepId, lease.baseUrl());
             }
         }
+    }
+
+    private String resolvePlatformPrincipalId(FlowContext flowContext) {
+        return firstNonBlank(
+                resolveFlowInput(flowContext,
+                        AssistantStateKeys.PLATFORM_PRINCIPAL_ID,
+                        "platform_principal_id",
+                        "platformPrincipalId"),
+                flowContext.getAssistantUid());
+    }
+
+    private String resolvePlatformPrincipalType(FlowContext flowContext) {
+        String explicitType = resolveFlowInput(flowContext,
+                AssistantStateKeys.PLATFORM_PRINCIPAL_TYPE,
+                "platform_principal_type",
+                "platformPrincipalType");
+        if (StringUtils.hasText(explicitType)) {
+            return explicitType;
+        }
+        return StringUtils.hasText(flowContext.getAssistantUid()) ? "local_user" : null;
+    }
+
+    private String resolveFlowInput(FlowContext flowContext, String... keys) {
+        if (flowContext == null || flowContext.getInitialInputs().isEmpty()) {
+            return null;
+        }
+        for (String key : keys) {
+            if (!StringUtils.hasText(key)) {
+                continue;
+            }
+            Object value = flowContext.getInitialInputs().get(key);
+            String text = asText(value);
+            if (StringUtils.hasText(text)) {
+                return text;
+            }
+        }
+        return null;
     }
 
     private List<String> resolveCandidateAuthProfileCodes(RuntimeArtifact.StepBinding stepBinding) {
@@ -739,6 +812,27 @@ public class ArtifactRuntimeExecutor {
         }
 
         @Override
+        public void onStepProgress(StepDefinition step, Map<String, Object> progressPayload, FlowContext context) {
+            Map<String, Object> payload = appendExecutionMeta(new LinkedHashMap<>(), descriptor, flowContext);
+            if (StringUtils.hasText(step.getName())) {
+                payload.put("stepName", step.getName());
+            }
+            if (progressPayload != null && !progressPayload.isEmpty()) {
+                payload.putAll(progressPayload);
+            }
+            record(new ExecutionEvent(
+                    runId,
+                    descriptor.artifact().getArtifactCode(),
+                    descriptor.artifact().getArtifactType().name(),
+                    step.getStepId(),
+                    sequence++,
+                    ExecutionEventType.STEP_PROGRESS,
+                    ExecutionLifecycleStatus.RUNNING,
+                    Instant.now(),
+                    payload));
+        }
+
+        @Override
         public void onStepCompleted(StepDefinition step, StepResult result, FlowContext context) {
             Map<String, Object> payload = appendExecutionMeta(new LinkedHashMap<>(), descriptor, flowContext);
             if (StringUtils.hasText(step.getName())) {
@@ -831,3 +925,5 @@ public class ArtifactRuntimeExecutor {
         }
     }
 }
+
+

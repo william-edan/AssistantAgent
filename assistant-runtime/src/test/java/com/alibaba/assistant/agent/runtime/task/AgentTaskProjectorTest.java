@@ -6,15 +6,11 @@
  * You may obtain a copy of the License at
  *
  *      https://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
  */
 package com.alibaba.assistant.agent.runtime.task;
 
+import com.alibaba.assistant.agent.execution.flow.FlowContext;
+import com.alibaba.assistant.agent.execution.flow.FlowDefinition;
 import com.alibaba.assistant.agent.execution.persistence.AgentTask;
 import com.alibaba.assistant.agent.execution.persistence.AgentTaskEvent;
 import com.alibaba.assistant.agent.execution.persistence.AgentTaskEventService;
@@ -22,10 +18,17 @@ import com.alibaba.assistant.agent.execution.persistence.AgentTaskService;
 import com.alibaba.assistant.agent.execution.persistence.UserInboxNotification;
 import com.alibaba.assistant.agent.execution.persistence.UserInboxNotificationService;
 import com.alibaba.assistant.agent.runtime.agent.AssistantStateKeys;
+import com.alibaba.assistant.agent.runtime.compiler.RuntimeArtifact;
+import com.alibaba.assistant.agent.runtime.execution.ExecutionEvent;
+import com.alibaba.assistant.agent.runtime.execution.ExecutionEventType;
+import com.alibaba.assistant.agent.runtime.execution.ExecutionLifecycleStatus;
+import com.alibaba.assistant.agent.runtime.registry.PublishedToolDescriptor;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
+import java.time.Instant;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
@@ -196,6 +199,38 @@ class AgentTaskProjectorTest {
         verify(userInboxNotificationService, never()).saveOrUpdateByNotificationId(any());
     }
 
+    @Test
+    void shouldProjectBatchProgressPercentFromExecutionEventPayload() {
+        AgentTaskService agentTaskService = mock(AgentTaskService.class);
+        AgentTaskEventService agentTaskEventService = mock(AgentTaskEventService.class);
+        UserInboxNotificationService userInboxNotificationService = mock(UserInboxNotificationService.class);
+        when(agentTaskService.findLatestByTaskId("run-1")).thenReturn(Optional.empty());
+        AgentTaskProjector projector = new AgentTaskProjector(
+                agentTaskService,
+                agentTaskEventService,
+                userInboxNotificationService,
+                new ObjectMapper());
+
+        projector.recordExecutionEvent(
+                descriptor(),
+                flowContext(),
+                new ExecutionEvent(
+                        "run-1",
+                        "office1.approval_cleanup",
+                        "WORKFLOW",
+                        "approval_batch",
+                        2L,
+                        ExecutionEventType.STEP_PROGRESS,
+                        ExecutionLifecycleStatus.RUNNING,
+                        Instant.parse("2026-03-16T02:05:00Z"),
+                        Map.of("batchProgress", Map.of("percent", 50, "processedItems", 1, "selectedItems", 2))));
+
+        ArgumentCaptor<AgentTask> taskCaptor = ArgumentCaptor.forClass(AgentTask.class);
+        verify(agentTaskService).saveOrUpdateByTaskId(taskCaptor.capture());
+        assertEquals(Integer.valueOf(50), taskCaptor.getValue().getProgressPercent());
+        assertEquals("RUNNING", taskCaptor.getValue().getStatus());
+    }
+
     private Map<String, Object> buildDetachedRunningTaskPayload() {
         Map<String, Object> payload = new java.util.LinkedHashMap<>();
         payload.put("taskId", "TASK-DETACHED-1");
@@ -214,6 +249,41 @@ class AgentTaskProjectorTest {
                 "occurredAt", "2026-03-13T10:02:00Z")));
         return payload;
     }
+
+    private PublishedToolDescriptor descriptor() {
+        FlowDefinition flowDefinition = new FlowDefinition();
+        flowDefinition.setVersion("2.0");
+        flowDefinition.setEntry(List.of("approval_batch"));
+        flowDefinition.setTerminal(List.of("approval_batch"));
+        RuntimeArtifact artifact = new RuntimeArtifact(
+                1L,
+                "office1.approval_cleanup",
+                RuntimeArtifact.ArtifactType.WORKFLOW,
+                "approval cleanup",
+                1,
+                null,
+                null,
+                null,
+                null,
+                null,
+                flowDefinition,
+                Map.of(),
+                Map.of());
+        return PublishedToolDescriptor.forArtifact(
+                "tool-meta-catalog",
+                "workflow:office1.approval_cleanup",
+                "approval cleanup",
+                null,
+                null,
+                false,
+                "office1",
+                artifact);
+    }
+
+    private FlowContext flowContext() {
+        FlowContext context = new FlowContext(Map.of());
+        context.setAssistantUid("1001");
+        context.setThreadId("thread-1");
+        return context;
+    }
 }
-
-

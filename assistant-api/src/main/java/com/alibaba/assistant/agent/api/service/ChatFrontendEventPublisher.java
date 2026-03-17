@@ -52,11 +52,29 @@ public class ChatFrontendEventPublisher {
             String systemCode,
             String turnId,
             FrontendEvent event) {
+        publish(threadId, assistantUid, appName, systemCode, turnId, event, null);
+    }
+
+    public void publish(
+            String threadId,
+            String assistantUid,
+            String appName,
+            String systemCode,
+            String turnId,
+            FrontendEvent event,
+            @Nullable java.util.Map<String, Object> roleBindingAttributes) {
         if (!StringUtils.hasText(threadId) || event == null) {
             return;
         }
         if (transcriptPersistenceService != null && StringUtils.hasText(assistantUid)) {
-            transcriptPersistenceService.recordFrontendEvent(threadId, assistantUid, appName, systemCode, turnId, event);
+            transcriptPersistenceService.recordFrontendEvent(
+                    threadId,
+                    assistantUid,
+                    appName,
+                    systemCode,
+                    turnId,
+                    event,
+                    roleBindingAttributes);
         }
         if (frontendEventStreamRegistry != null) {
             frontendEventStreamRegistry.publish(threadId, event);

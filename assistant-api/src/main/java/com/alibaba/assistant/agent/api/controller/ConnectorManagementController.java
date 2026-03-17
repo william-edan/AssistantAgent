@@ -17,11 +17,16 @@ package com.alibaba.assistant.agent.api.controller;
 
 import com.alibaba.assistant.agent.api.controller.dto.ConnectorListData;
 import com.alibaba.assistant.agent.api.controller.dto.ConnectorListResponse;
-import com.alibaba.assistant.agent.api.controller.dto.ConnectorResponse;
 import com.alibaba.assistant.agent.api.controller.dto.ConnectorData;
+import com.alibaba.assistant.agent.api.controller.dto.ConnectorOpenApiImportData;
+import com.alibaba.assistant.agent.api.controller.dto.ConnectorOpenApiImportRequest;
+import com.alibaba.assistant.agent.api.controller.dto.ConnectorOpenApiImportResponse;
+import com.alibaba.assistant.agent.api.controller.dto.ConnectorResponse;
 import com.alibaba.assistant.agent.api.controller.dto.ConnectorUpsertRequest;
 import com.alibaba.assistant.agent.api.security.AuthenticatedUserContext;
 import com.alibaba.assistant.agent.api.security.MigrationControlPlaneAuthorizationService;
+import com.alibaba.assistant.agent.controlplane.connector.ConnectorOpenApiImportResult;
+import com.alibaba.assistant.agent.controlplane.connector.ConnectorOpenApiOnboardingService;
 import com.alibaba.assistant.agent.controlplane.connector.ConnectorManagementService;
 import com.alibaba.assistant.agent.controlplane.connector.ResolvedConnectorView;
 import org.springframework.context.annotation.Profile;
@@ -31,6 +36,7 @@ import org.springframework.security.core.Authentication;
 import org.springframework.util.StringUtils;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -52,12 +58,16 @@ public class ConnectorManagementController {
 
     private final ConnectorManagementService connectorManagementService;
 
+    private final ConnectorOpenApiOnboardingService connectorOpenApiOnboardingService;
+
     private final MigrationControlPlaneAuthorizationService authorizationService;
 
     public ConnectorManagementController(
             ConnectorManagementService connectorManagementService,
+            ConnectorOpenApiOnboardingService connectorOpenApiOnboardingService,
             MigrationControlPlaneAuthorizationService authorizationService) {
         this.connectorManagementService = connectorManagementService;
+        this.connectorOpenApiOnboardingService = connectorOpenApiOnboardingService;
         this.authorizationService = authorizationService;
     }
 
@@ -91,6 +101,31 @@ public class ConnectorManagementController {
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "connector_not_found"));
         return ResponseEntity.ok(ConnectorResponse.ok(ConnectorData.from(resolved)));
     }
+
+    @PostMapping("/manage/{connectorCode}/imports/openapi")
+    public ResponseEntity<ConnectorOpenApiImportResponse> importOpenApi(
+            @PathVariable String spaceCode,
+            @PathVariable String connectorCode,
+            @RequestParam(value = "environment", required = false) String environment,
+            @RequestBody(required = false) ConnectorOpenApiImportRequest request,
+            Principal principal) {
+        String normalizedEnvironment = normalizeEnvironment(environment);
+        AuthenticatedUserContext authenticatedUser = requireAuthenticatedUser(principal);
+        requireManageAccess(authenticatedUser, spaceCode, normalizedEnvironment);
+        if (request == null) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "openapi_document_missing");
+        }
+        try {
+            ConnectorOpenApiImportResult result = connectorOpenApiOnboardingService
+                    .importOpenApi(spaceCode, normalizedEnvironment, connectorCode, request.toCommand())
+                    .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "connector_not_found"));
+            return ResponseEntity.ok(ConnectorOpenApiImportResponse.ok(ConnectorOpenApiImportData.from(result)));
+        }
+        catch (IllegalArgumentException ex) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, ex.getMessage());
+        }
+    }
+
     @PutMapping("/manage/{connectorCode}")
     public ResponseEntity<ConnectorResponse> upsertConnector(
             @PathVariable String spaceCode,

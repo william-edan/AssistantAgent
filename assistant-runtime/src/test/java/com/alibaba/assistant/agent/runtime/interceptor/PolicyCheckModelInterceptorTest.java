@@ -94,6 +94,33 @@ class PolicyCheckModelInterceptorTest {
 	}
 
 	@Test
+	void shouldKeepToolCallsWhenTrailingUserMessageIsNewerThanStaleInput() {
+		PolicyCheckModelInterceptor interceptor = new PolicyCheckModelInterceptor();
+		ModelCallHandler handler = mock(ModelCallHandler.class);
+		when(handler.call(any())).thenReturn(ModelResponse.of(assistantMessageWithToolCall("slot_collect")));
+
+		OverAllState state = new OverAllState();
+		state.updateState(Map.of(
+				AssistantStateKeys.CONVERSATION_PHASE, "COLLECTING",
+				AssistantStateKeys.LAST_COLLECT_USER_INPUT, "我要请假",
+				"input", "我要请假",
+				"messages", List.of(
+						AssistantMessage.builder().content("请补充结束日期").build(),
+						new UserMessage("请假类型：事假，开始日期：2026-03-17，结束日期：2026-03-18，请假原因：123123")),
+				CodeactStateKeys.AVAILABLE_TOOL_NAMES, List.of("slot_collect", "slot_confirm")));
+
+		ModelRequest request = buildRequest(state, Map.of("slot_collect", "slot collect"));
+		ModelResponse response = interceptor.interceptModel(request, handler);
+
+		ArgumentCaptor<ModelRequest> captor = ArgumentCaptor.forClass(ModelRequest.class);
+		verify(handler, times(1)).call(captor.capture());
+		assertTrue(captor.getValue().getToolDescriptions().containsKey("slot_collect"));
+
+		AssistantMessage message = (AssistantMessage) response.getMessage();
+		assertTrue(message.hasToolCalls());
+	}
+
+	@Test
 	void shouldBlockToolCallsWhenConfirmingWithoutNewUserInput() {
 		PolicyCheckModelInterceptor interceptor = new PolicyCheckModelInterceptor();
 		ModelCallHandler handler = mock(ModelCallHandler.class);

@@ -15,12 +15,20 @@
  */
 package com.alibaba.assistant.agent.runtime.execution;
 
+import com.alibaba.assistant.agent.execution.batch.BatchAggregationPolicy;
+import com.alibaba.assistant.agent.execution.batch.BatchItemSelector;
+import com.alibaba.assistant.agent.execution.batch.BatchStepExecutor;
 import com.alibaba.assistant.agent.execution.flow.DAGFlowExecutor;
-import com.alibaba.assistant.agent.execution.flow.FlowDefinition;
 import com.alibaba.assistant.agent.execution.flow.FlowContext;
+import com.alibaba.assistant.agent.execution.flow.FlowDefinition;
 import com.alibaba.assistant.agent.execution.flow.FlowExecutionResult;
+import com.alibaba.assistant.agent.execution.model.JoinType;
+import com.alibaba.assistant.agent.execution.model.StepConfig;
+import com.alibaba.assistant.agent.execution.model.StepDefinition;
 import com.alibaba.assistant.agent.execution.model.StepResult;
 import com.alibaba.assistant.agent.execution.model.StepStatus;
+import com.alibaba.assistant.agent.execution.model.StepType;
+import com.alibaba.assistant.agent.execution.step.HttpStepExecutor;
 import com.alibaba.assistant.agent.runtime.compiler.RuntimeArtifact;
 import com.alibaba.assistant.agent.runtime.registry.PublishedToolDescriptor;
 import org.junit.jupiter.api.Test;
@@ -34,6 +42,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.same;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
@@ -128,6 +137,41 @@ class ArtifactRuntimeExecutionEventsTest {
         assertEquals("submit failed", runFailed.payload().get("error"));
     }
 
+    @Test
+    void shouldProjectBatchProgressThroughExistingExecutionEvents() {
+        BatchItemSelector selector = mock(BatchItemSelector.class);
+        BatchStepExecutor batchStepExecutor = new BatchStepExecutor(selector, new BatchAggregationPolicy());
+        DAGFlowExecutor dagFlowExecutor = new DAGFlowExecutor(mock(HttpStepExecutor.class), batchStepExecutor);
+        ArtifactRuntimeExecutor executor = new ArtifactRuntimeExecutor(dagFlowExecutor);
+        RuntimeArtifact artifact = batchArtifact("office1.approval_cleanup");
+        PublishedToolDescriptor descriptor = PublishedToolDescriptor.forArtifact(
+                "tool-meta-catalog",
+                "workflow:office1.approval_cleanup",
+                "approval cleanup",
+                null,
+                null,
+                false,
+                "office1",
+                artifact);
+        when(selector.selectItems(eq("office1.pending_approvals_query"), eq(Map.of("message", "remind")), any(FlowContext.class)))
+                .thenReturn(List.of(
+                        Map.of("approvalId", "A-1", "status", "PENDING"),
+                        Map.of("approvalId", "A-2", "status", "PENDING")));
+        when(selector.executeAction(eq("office1.send_reminder"), any(Map.class), any(FlowContext.class)))
+                .thenReturn(StepResult.success(Map.of("reminderId", "R-1")));
+
+        Map<String, Object> payload = executor.execute(descriptor, Map.of("message", "remind"), null);
+
+        assertTrue(payload.get("executionEvents") instanceof List<?>);
+        ExecutionEvent event = ((List<?>) payload.get("executionEvents")).stream()
+                .map(ExecutionEvent.class::cast)
+                .filter(it -> it.eventType() == ExecutionEventType.STEP_PROGRESS)
+                .findFirst()
+                .orElseThrow();
+        assertEquals("approval_batch", event.stepId());
+        assertEquals(100, ((Number) ((Map<?, ?>) event.payload().get("batchProgress")).get("percent")).intValue());
+    }
+
     private RuntimeArtifact runtimeArtifact(String artifactCode) {
         FlowDefinition flowDefinition = new FlowDefinition();
         flowDefinition.setVersion("2.0");
@@ -148,7 +192,40 @@ class ArtifactRuntimeExecutionEventsTest {
                 Map.of(),
                 Map.of());
     }
+
+    private RuntimeArtifact batchArtifact(String artifactCode) {
+        StepConfig config = new StepConfig();
+        config.setSelectorToolCode("office1.pending_approvals_query");
+        config.setActionToolCode("office1.send_reminder");
+        config.setFilterExpression("$.status == 'PENDING'");
+        config.setConcurrency(2);
+        config.setInputMapping(Map.of("message", "${message}"));
+
+        StepDefinition step = new StepDefinition();
+        step.setStepId("approval_batch");
+        step.setName("approval_batch");
+        step.setType(StepType.BATCH);
+        step.setJoinType(JoinType.ALL);
+        step.setConfig(config);
+
+        FlowDefinition flowDefinition = new FlowDefinition();
+        flowDefinition.setVersion("2.0");
+        flowDefinition.setSteps(Map.of("approval_batch", step));
+        flowDefinition.setEntry(List.of("approval_batch"));
+        flowDefinition.setTerminal(List.of("approval_batch"));
+        return new RuntimeArtifact(
+                1L,
+                artifactCode,
+                RuntimeArtifact.ArtifactType.WORKFLOW,
+                "approval cleanup",
+                1,
+                null,
+                null,
+                null,
+                null,
+                null,
+                flowDefinition,
+                Map.of(),
+                Map.of());
+    }
 }
-
-
-

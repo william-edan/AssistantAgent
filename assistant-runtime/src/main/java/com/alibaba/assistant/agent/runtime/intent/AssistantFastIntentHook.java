@@ -21,6 +21,7 @@ import com.alibaba.assistant.agent.common.hook.AgentPhase;
 import com.alibaba.assistant.agent.common.hook.HookPhases;
 import com.alibaba.assistant.agent.extension.experience.model.Experience;
 import com.alibaba.assistant.agent.extension.experience.model.ExperienceArtifact;
+import com.alibaba.assistant.agent.runtime.agent.ConversationUserInputResolver;
 import com.alibaba.assistant.agent.runtime.agent.AssistantStateKeys;
 import com.alibaba.assistant.agent.runtime.compiler.RuntimeArtifact;
 import com.alibaba.assistant.agent.runtime.registry.ArtifactPublicationLookupService;
@@ -44,7 +45,6 @@ import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.model.ToolContext;
 import org.springframework.ai.chat.messages.Message;
-import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Profile;
@@ -929,25 +929,7 @@ public class AssistantFastIntentHook extends AgentHook implements Prioritized {
 	}
 
 	private String resolveInput(String input, OverAllState state, List<Message> messages) {
-		if (StringUtils.hasText(input)) {
-			return input;
-		}
-		if (state != null) {
-			String stateInput = state.value("input", String.class).orElse(null);
-			if (StringUtils.hasText(stateInput)) {
-				return stateInput;
-			}
-		}
-		if (messages == null || messages.isEmpty()) {
-			return null;
-		}
-		for (int i = messages.size() - 1; i >= 0; i--) {
-			Message message = messages.get(i);
-			if (message instanceof UserMessage userMessage && StringUtils.hasText(userMessage.getText())) {
-				return userMessage.getText();
-			}
-		}
-		return null;
+		return ConversationUserInputResolver.resolve(input, state, messages);
 	}
 
 	private boolean isUserConfirmed(String input) {

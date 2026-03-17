@@ -72,10 +72,23 @@ public class ChatTranscriptPersistenceService {
             String systemCode,
             String turnId,
             String text) {
+        recordUserMessage(threadId, assistantUid, appName, systemCode, turnId, text, Map.of());
+    }
+
+    public void recordUserMessage(
+            String threadId,
+            String assistantUid,
+            String appName,
+            String systemCode,
+            String turnId,
+            String text,
+            Map<String, Object> roleBindingAttributes) {
         if (!hasThreadContext(threadId, assistantUid) || !StringUtils.hasText(text)) {
             return;
         }
+        RoleBinding roleBinding = RoleBinding.from(roleBindingAttributes);
         ChatThreadRecord threadRecord = loadOrCreateThread(threadId, assistantUid, appName, systemCode);
+        applyRoleBinding(threadRecord, roleBinding);
         threadRecord.setTitle(firstText(threadRecord.getTitle(), abbreviate(text, 80)));
         threadRecord.setStatus("UNDERSTANDING");
         threadRecord.setPhase("UNDERSTANDING");
@@ -113,10 +126,21 @@ public class ChatTranscriptPersistenceService {
             String systemCode,
             String turnId,
             String actionText) {
+        recordResumeAction(threadId, assistantUid, appName, systemCode, turnId, actionText, Map.of());
+    }
+
+    public void recordResumeAction(
+            String threadId,
+            String assistantUid,
+            String appName,
+            String systemCode,
+            String turnId,
+            String actionText,
+            Map<String, Object> roleBindingAttributes) {
         if (!StringUtils.hasText(actionText)) {
             return;
         }
-        recordUserMessage(threadId, assistantUid, appName, systemCode, turnId, actionText);
+        recordUserMessage(threadId, assistantUid, appName, systemCode, turnId, actionText, roleBindingAttributes);
     }
 
     public void recordFrontendEvent(
@@ -126,11 +150,24 @@ public class ChatTranscriptPersistenceService {
             String systemCode,
             String turnId,
             FrontendEvent event) {
+        recordFrontendEvent(threadId, assistantUid, appName, systemCode, turnId, event, Map.of());
+    }
+
+    public void recordFrontendEvent(
+            String threadId,
+            String assistantUid,
+            String appName,
+            String systemCode,
+            String turnId,
+            FrontendEvent event,
+            Map<String, Object> roleBindingAttributes) {
         if (!hasThreadContext(threadId, assistantUid) || event == null || event.eventType() == null) {
             return;
         }
+        RoleBinding roleBinding = RoleBinding.from(roleBindingAttributes);
         FrontendEvent normalizedEvent = normalizeEvent(event);
         ChatThreadRecord threadRecord = loadOrCreateThread(threadId, assistantUid, appName, systemCode);
+        applyRoleBinding(threadRecord, roleBinding);
         if (shouldSkipAssistantMessage(threadRecord, normalizedEvent)) {
             return;
         }
@@ -142,14 +179,27 @@ public class ChatTranscriptPersistenceService {
             case STAGE, EXECUTION_PROGRESS -> {
                 // 线程摘要已经更新，这两类事件不需要额外生成聊天卡片。
             }
-            case MESSAGE -> appendAssistantMessage(threadId, assistantUid, turnId, normalizedEvent);
+            case MESSAGE -> appendAssistantMessage(threadId, assistantUid, turnId, normalizedEvent, roleBinding);
             case FORM_STATE -> upsertCardMessage(
-                    threadId, assistantUid, turnId, buildFormSourceKey(turnId, normalizedEvent), "FORM_CARD", normalizedEvent, false);
+                    threadId,
+                    assistantUid,
+                    turnId,
+                    buildFormSourceKey(turnId, normalizedEvent),
+                    "FORM_CARD",
+                    normalizedEvent,
+                    false,
+                    roleBinding);
             case TASK_STATE -> upsertCardMessage(
-                    threadId, assistantUid, turnId, buildTaskSourceKey(normalizedEvent), "TASK_CARD", normalizedEvent,
-                    !Boolean.FALSE.equals(normalizedEvent.payload().get("collapsible")));
-            case RESULT -> appendCardMessage(threadId, assistantUid, turnId, "RESULT_CARD", normalizedEvent, false);
-            case ERROR -> appendCardMessage(threadId, assistantUid, turnId, "ERROR_CARD", normalizedEvent, false);
+                    threadId,
+                    assistantUid,
+                    turnId,
+                    buildTaskSourceKey(normalizedEvent),
+                    "TASK_CARD",
+                    normalizedEvent,
+                    !Boolean.FALSE.equals(normalizedEvent.payload().get("collapsible")),
+                    roleBinding);
+            case RESULT -> appendCardMessage(threadId, assistantUid, turnId, "RESULT_CARD", normalizedEvent, false, roleBinding);
+            case ERROR -> appendCardMessage(threadId, assistantUid, turnId, "ERROR_CARD", normalizedEvent, false, roleBinding);
         }
     }
 
@@ -194,7 +244,12 @@ public class ChatTranscriptPersistenceService {
         });
     }
 
-    private void appendAssistantMessage(String threadId, String assistantUid, String turnId, FrontendEvent event) {
+    private void appendAssistantMessage(
+            String threadId,
+            String assistantUid,
+            String turnId,
+            FrontendEvent event,
+            RoleBinding roleBinding) {
         String chunk = textValue(event.payload().get("text"));
         if (!StringUtils.hasText(chunk)) {
             return;
@@ -217,10 +272,12 @@ public class ChatTranscriptPersistenceService {
         messageRecord.setStatus("COMPLETED");
         messageRecord.setTitle("助手回复");
         messageRecord.setSummaryText(abbreviate(fullText, 300));
-        messageRecord.setPayloadJson(serialize(Map.of(
-                "eventType", FrontendEventType.MESSAGE.name(),
-                "stage", event.stage() != null ? event.stage().name() : FrontendStage.DONE.name(),
-                "text", fullText)));
+        Map<String, Object> envelope = new LinkedHashMap<>();
+        envelope.put("eventType", FrontendEventType.MESSAGE.name());
+        envelope.put("stage", event.stage() != null ? event.stage().name() : FrontendStage.DONE.name());
+        envelope.put("text", fullText);
+        roleBinding.applyToEnvelope(envelope);
+        messageRecord.setPayloadJson(serialize(envelope));
         messageRecord.setCollapsed(Boolean.FALSE);
         messageRecord.setRevisionNo(messageRecord.getRevisionNo() != null ? messageRecord.getRevisionNo() + 1 : 1);
         chatMessageRecordService.saveOrUpdateBySourceKey(messageRecord);
@@ -262,7 +319,8 @@ public class ChatTranscriptPersistenceService {
             String sourceKey,
             String messageType,
             FrontendEvent event,
-            boolean collapsed) {
+            boolean collapsed,
+            RoleBinding roleBinding) {
         ChatMessageRecord messageRecord = chatMessageRecordService.findBySourceKey(sourceKey).orElseGet(ChatMessageRecord::new);
         messageRecord.setMessageId(firstText(messageRecord.getMessageId(), UUID.randomUUID().toString()));
         messageRecord.setThreadId(threadId.trim());
@@ -275,7 +333,7 @@ public class ChatTranscriptPersistenceService {
         messageRecord.setStatus(resolveEventStatus(event));
         messageRecord.setTitle(resolveEventTitle(event, messageType));
         messageRecord.setSummaryText(resolveEventSummary(event));
-        messageRecord.setPayloadJson(serialize(toPersistedEnvelope(event)));
+        messageRecord.setPayloadJson(serialize(toPersistedEnvelope(event, roleBinding)));
         messageRecord.setCollapsed(collapsed);
         messageRecord.setRevisionNo(messageRecord.getRevisionNo() != null ? messageRecord.getRevisionNo() + 1 : 1);
         chatMessageRecordService.saveOrUpdateBySourceKey(messageRecord);
@@ -287,7 +345,8 @@ public class ChatTranscriptPersistenceService {
             String turnId,
             String messageType,
             FrontendEvent event,
-            boolean collapsed) {
+            boolean collapsed,
+            RoleBinding roleBinding) {
         ChatMessageRecord messageRecord = new ChatMessageRecord();
         messageRecord.setMessageId(UUID.randomUUID().toString());
         messageRecord.setThreadId(threadId.trim());
@@ -299,7 +358,7 @@ public class ChatTranscriptPersistenceService {
         messageRecord.setStatus(resolveEventStatus(event));
         messageRecord.setTitle(resolveEventTitle(event, messageType));
         messageRecord.setSummaryText(resolveEventSummary(event));
-        messageRecord.setPayloadJson(serialize(toPersistedEnvelope(event)));
+        messageRecord.setPayloadJson(serialize(toPersistedEnvelope(event, roleBinding)));
         messageRecord.setCollapsed(collapsed);
         messageRecord.setRevisionNo(1);
         chatMessageRecordService.save(messageRecord);
@@ -429,6 +488,15 @@ public class ChatTranscriptPersistenceService {
         return threadRecord;
     }
 
+    private void applyRoleBinding(ChatThreadRecord threadRecord, RoleBinding roleBinding) {
+        if (threadRecord == null || roleBinding == null || roleBinding.isEmpty()) {
+            return;
+        }
+        threadRecord.setRolePackageCode(firstText(roleBinding.rolePackageCode(), threadRecord.getRolePackageCode()));
+        threadRecord.setRolePackageVersion(firstText(roleBinding.rolePackageVersion(), threadRecord.getRolePackageVersion()));
+        threadRecord.setRoleScenarioCode(firstText(roleBinding.roleScenarioCode(), threadRecord.getRoleScenarioCode()));
+    }
+
     private String buildFormSourceKey(String turnId, FrontendEvent event) {
         String toolCode = textValue(event.payload().get("toolCode"));
         String mode = textValue(event.payload().get("mode"));
@@ -440,7 +508,7 @@ public class ChatTranscriptPersistenceService {
         return "TASK_CARD:" + firstText(taskId, UUID.randomUUID().toString());
     }
 
-    private Map<String, Object> toPersistedEnvelope(FrontendEvent event) {
+    private Map<String, Object> toPersistedEnvelope(FrontendEvent event, RoleBinding roleBinding) {
         Map<String, Object> envelope = new LinkedHashMap<>();
         envelope.put("protocolVersion", event.protocolVersion());
         envelope.put("eventId", event.eventId());
@@ -449,7 +517,64 @@ public class ChatTranscriptPersistenceService {
         envelope.put("eventType", event.eventType() != null ? event.eventType().name() : null);
         envelope.put("stage", event.stage() != null ? event.stage().name() : null);
         envelope.put("payload", event.payload());
+        if (roleBinding != null) {
+            roleBinding.applyToEnvelope(envelope);
+        }
         return envelope;
+    }
+
+    private record RoleBinding(String rolePackageCode, String rolePackageVersion, String roleScenarioCode) {
+
+        static RoleBinding from(Map<String, Object> attributes) {
+            if (attributes == null || attributes.isEmpty()) {
+                return empty();
+            }
+            return new RoleBinding(
+                    firstText(attributes.get("rolePackageCode"), attributes.get("role_package_code")),
+                    firstText(attributes.get("rolePackageVersion"), attributes.get("role_package_version")),
+                    firstText(attributes.get("roleScenarioCode"), attributes.get("role_scenario_code")));
+        }
+
+        static RoleBinding empty() {
+            return new RoleBinding(null, null, null);
+        }
+
+        boolean isEmpty() {
+            return !StringUtils.hasText(rolePackageCode)
+                    && !StringUtils.hasText(rolePackageVersion)
+                    && !StringUtils.hasText(roleScenarioCode);
+        }
+
+        void applyToEnvelope(Map<String, Object> envelope) {
+            if (envelope == null || isEmpty()) {
+                return;
+            }
+            putIfText(envelope, "rolePackageCode", rolePackageCode);
+            putIfText(envelope, "rolePackageVersion", rolePackageVersion);
+            putIfText(envelope, "roleScenarioCode", roleScenarioCode);
+        }
+
+        private static void putIfText(Map<String, Object> envelope, String key, String value) {
+            if (StringUtils.hasText(value)) {
+                envelope.put(key, value);
+            }
+        }
+
+        private static String firstText(Object... values) {
+            if (values == null) {
+                return null;
+            }
+            for (Object value : values) {
+                if (value == null) {
+                    continue;
+                }
+                String text = String.valueOf(value).trim();
+                if (StringUtils.hasText(text)) {
+                    return text;
+                }
+            }
+            return null;
+        }
     }
 
     private String resolveEventStatus(FrontendEvent event) {

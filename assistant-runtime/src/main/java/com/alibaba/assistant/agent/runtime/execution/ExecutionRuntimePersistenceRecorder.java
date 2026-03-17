@@ -29,6 +29,7 @@ import com.alibaba.assistant.agent.execution.persistence.ExecutionStepService;
 import com.alibaba.assistant.agent.runtime.agent.AssistantStateKeys;
 import com.alibaba.assistant.agent.runtime.compiler.RuntimeArtifact;
 import com.alibaba.assistant.agent.runtime.context.RuntimeSpaceResolver;
+import com.alibaba.assistant.agent.runtime.observability.ExecutionTraceCollector;
 import com.alibaba.assistant.agent.runtime.registry.PublishedToolDescriptor;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -64,13 +65,15 @@ public class ExecutionRuntimePersistenceRecorder {
 
     private final RuntimeSpaceResolver runtimeSpaceResolver;
 
+    private final ExecutionTraceCollector executionTraceCollector;
+
     public ExecutionRuntimePersistenceRecorder(
             ExecutionRunService executionRunService,
             ExecutionStepService executionStepService,
             ApprovalRequestService approvalRequestService,
             AuditEventService auditEventService,
             ObjectMapper objectMapper) {
-        this(executionRunService, executionStepService, approvalRequestService, auditEventService, objectMapper, null);
+        this(executionRunService, executionStepService, approvalRequestService, auditEventService, objectMapper, null, null);
     }
 
     @Autowired
@@ -81,12 +84,25 @@ public class ExecutionRuntimePersistenceRecorder {
             AuditEventService auditEventService,
             ObjectMapper objectMapper,
             RuntimeSpaceResolver runtimeSpaceResolver) {
+        this(executionRunService, executionStepService, approvalRequestService, auditEventService, objectMapper,
+                runtimeSpaceResolver, null);
+    }
+
+    public ExecutionRuntimePersistenceRecorder(
+            ExecutionRunService executionRunService,
+            ExecutionStepService executionStepService,
+            ApprovalRequestService approvalRequestService,
+            AuditEventService auditEventService,
+            ObjectMapper objectMapper,
+            RuntimeSpaceResolver runtimeSpaceResolver,
+            ExecutionTraceCollector executionTraceCollector) {
         this.executionRunService = executionRunService;
         this.executionStepService = executionStepService;
         this.approvalRequestService = approvalRequestService;
         this.auditEventService = auditEventService;
         this.objectMapper = objectMapper;
         this.runtimeSpaceResolver = runtimeSpaceResolver;
+        this.executionTraceCollector = executionTraceCollector;
     }
 
     public void record(
@@ -112,6 +128,9 @@ public class ExecutionRuntimePersistenceRecorder {
         upsertSteps(descriptor, runId, safeEvents);
         upsertApprovalRequest(descriptor, flowResult, safeEvents);
         persistAuditEvents(descriptor, flowContext, runId, safeEvents);
+        if (executionTraceCollector != null) {
+            executionTraceCollector.collect(descriptor, flowContext, flowResult, safeEvents);
+        }
     }
 
     private void upsertRun(

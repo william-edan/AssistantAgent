@@ -18,6 +18,7 @@ package com.alibaba.assistant.agent.api.controller;
 import com.alibaba.assistant.agent.api.security.MigrationControlPlaneAuthorizationService;
 import com.alibaba.assistant.agent.controlplane.connector.ConnectorCatalogService;
 import com.alibaba.assistant.agent.controlplane.connector.ConnectorManagementService;
+import com.alibaba.assistant.agent.controlplane.connector.ConnectorOpenApiOnboardingService;
 import com.alibaba.assistant.agent.controlplane.toolregistry.ToolMetaCatalogService;
 import com.alibaba.assistant.agent.controlplane.toolregistry.ToolMetaManagementService;
 import org.junit.jupiter.api.Test;
@@ -36,6 +37,7 @@ class ControlPlaneRequestMappingRegistrationTest {
                         mock(MigrationControlPlaneAuthorizationService.class)),
                 new ConnectorManagementController(
                         mock(ConnectorManagementService.class),
+                        mock(ConnectorOpenApiOnboardingService.class),
                         mock(MigrationControlPlaneAuthorizationService.class)))
                 .setControllerAdvice(new ControlPlaneErrorResponseAdvice())
                 .build());

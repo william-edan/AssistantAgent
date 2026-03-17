@@ -31,6 +31,7 @@ import com.alibaba.cloud.ai.graph.agent.hook.JumpTo;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 import org.springframework.ai.chat.messages.AssistantMessage;
+import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.ai.chat.model.ToolContext;
 
 import java.time.LocalDate;
@@ -227,6 +228,31 @@ class AssistantFastIntentHookTest {
         OverAllState state = new OverAllState();
         state.updateState(Map.of(
                 "input", "年假",
+                AssistantStateKeys.LAST_COLLECT_USER_INPUT, "我要请假",
+                AssistantStateKeys.CONVERSATION_PHASE, "COLLECTING",
+                AssistantStateKeys.MATCHED_TOOL_META, Map.of("toolCode", "gougu_oa.leave_application"),
+                CodeactStateKeys.AVAILABLE_TOOL_NAMES, List.of("slot_collect", "slot_confirm")));
+
+        Map<String, Object> updates = hook.beforeAgent(state, RunnableConfig.builder().build()).join();
+
+        assertEquals(JumpTo.tool, updates.get("jump_to"));
+        AssistantMessage assistantMessage = firstAssistantMessage(updates);
+        assertEquals("slot_collect", assistantMessage.getToolCalls().get(0).name());
+        verify(router, never()).route(any(), any(), any());
+    }
+
+    @Test
+    void shouldContinueSlotCollectionWhenTrailingUserMessageIsNewerThanStaleInput() {
+        AssistantIntentRouter router = mock(AssistantIntentRouter.class);
+        when(router.route(any(), any(), any())).thenReturn(AssistantIntentRouter.IntentResult.mainFlow());
+
+        AssistantFastIntentHook hook = new AssistantFastIntentHook(router, new ObjectMapper());
+        OverAllState state = new OverAllState();
+        state.updateState(Map.of(
+                "input", "我要请假",
+                "messages", List.of(
+                        AssistantMessage.builder().content("请补充结束日期").build(),
+                        new UserMessage("请假类型：事假，开始日期：2026-03-17，结束日期：2026-03-18，请假原因：123123")),
                 AssistantStateKeys.LAST_COLLECT_USER_INPUT, "我要请假",
                 AssistantStateKeys.CONVERSATION_PHASE, "COLLECTING",
                 AssistantStateKeys.MATCHED_TOOL_META, Map.of("toolCode", "gougu_oa.leave_application"),

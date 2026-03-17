@@ -32,6 +32,77 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class V3ProtocolAdapterTest {
 
     @Test
+    void shouldAdaptSlotCollectViaFormStateStrategy() {
+        V3ProtocolAdapter adapter = adapterWithStrategies(
+                new FormStateProtocolStrategy(new ProtocolPayloadSupport()));
+        List<FrontendEvent> events = adapter.adapt(
+                "slot_collect",
+                """
+                        {
+                          \"status\":\"COLLECTING\",
+                          \"phase\":\"COLLECTING\",
+                          \"message\":\"Missing required slots, continue collecting.\",
+                          \"round\":1,
+                          \"collected\":{\"reason\":\"个人事务\"},
+                          \"missing\":[{\"name\":\"types\"}],
+                          \"enrichedSlots\":[
+                            {
+                              \"name\":\"types\",
+                              \"definition\":{
+                                \"name\":\"types\",
+                                \"type\":\"integer\",
+                                \"title\":\"请假类型\",
+                                \"required\":true,
+                                \"uiComponent\":\"select\"
+                              },
+                              \"options\":[{\"label\":\"事假\",\"value\":\"1\",\"disabled\":false}],
+                              \"optionsLoaded\":true
+                            }
+                          ]
+                        }
+                        """,
+                (Map<String, Object>) null);
+
+        assertEquals(1, events.size());
+        assertEquals(FrontendEventType.FORM_STATE, events.get(0).eventType());
+        assertEquals(FrontendStage.COLLECTING, events.get(0).stage());
+        assertEquals("COLLECT", events.get(0).payload().get("mode"));
+    }
+
+    @Test
+    void shouldAdaptArtifactExecuteViaExecutionResultStrategy() {
+        V3ProtocolAdapter adapter = adapterWithStrategies(
+                new ExecutionResultProtocolStrategy(new ProtocolPayloadSupport()));
+        List<FrontendEvent> events = adapter.adapt(
+                "artifact_execute",
+                """
+                        {
+                          "success":true,
+                          "result":{"leave_id":12345},
+                          "artifactCode":"oa.leave.apply",
+                          "runId":"RUN-1"
+                        }
+                        """,
+                (Map<String, Object>) null);
+
+        assertEquals(2, events.size());
+        assertEquals(FrontendEventType.TASK_STATE, events.get(0).eventType());
+        assertEquals(FrontendEventType.RESULT, events.get(1).eventType());
+    }
+
+    @Test
+    void shouldIgnoreUnknownToolWhenNoStrategyMatches() {
+        V3ProtocolAdapter adapter = new V3ProtocolAdapter(new ObjectMapper(), List.of());
+
+        List<FrontendEvent> events = adapter.adapt(
+                "assistant_intent_analysis",
+                "{\"message\":\"用户明确表示“我要写汇报”，意图清晰，匹配可用工具。\"}",
+                (Map<String, Object>) null);
+
+        assertTrue(events.isEmpty());
+    }
+
+    @Test
     void shouldAdaptSlotCollectToStructuredFormStateEvent() {
         V3ProtocolAdapter adapter = new V3ProtocolAdapter(new ObjectMapper());
         List<FrontendEvent> events = adapter.adapt(
@@ -525,6 +596,10 @@ class V3ProtocolAdapterTest {
         assertEquals("RUN-WAIT-1", taskEvent.payload().get("taskId"));
         assertEquals("WAITING_APPROVAL", taskEvent.payload().get("status"));
         assertEquals(Boolean.FALSE, taskEvent.payload().get("resultReady"));
+    }
+
+    private V3ProtocolAdapter adapterWithStrategies(ProtocolStrategy... strategies) {
+        return new V3ProtocolAdapter(new ObjectMapper(), List.of(strategies));
     }
 }
 

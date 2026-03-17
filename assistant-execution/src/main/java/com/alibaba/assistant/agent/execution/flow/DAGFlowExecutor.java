@@ -21,9 +21,12 @@ import com.alibaba.assistant.agent.execution.model.StepDefinition;
 import com.alibaba.assistant.agent.execution.model.StepResult;
 import com.alibaba.assistant.agent.execution.model.StepStatus;
 import com.alibaba.assistant.agent.execution.model.StepType;
+import com.alibaba.assistant.agent.execution.batch.BatchStepExecutor;
 import com.alibaba.assistant.agent.execution.step.HttpStepExecutor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.lang.Nullable;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
@@ -48,8 +51,16 @@ public class DAGFlowExecutor {
 
 	private final HttpStepExecutor httpStepExecutor;
 
+	private final BatchStepExecutor batchStepExecutor;
+
 	public DAGFlowExecutor(HttpStepExecutor httpStepExecutor) {
+		this(httpStepExecutor, null);
+	}
+
+	@Autowired
+	public DAGFlowExecutor(HttpStepExecutor httpStepExecutor, @Nullable BatchStepExecutor batchStepExecutor) {
 		this.httpStepExecutor = httpStepExecutor;
+		this.batchStepExecutor = batchStepExecutor;
 	}
 
 	/**
@@ -133,6 +144,7 @@ public class DAGFlowExecutor {
 					notifyStepStarted(step, context);
 
 					StepResult result = executeStep(step, context);
+					notifyStepProgress(step, result, context);
 					stepResults.put(stepId, result);
 					if (result.isSuccess()) {
 						stepStatuses.put(stepId, StepStatus.COMPLETED);
@@ -555,6 +567,11 @@ public class DAGFlowExecutor {
 		if (step.getType() == StepType.HTTP) {
 			return httpStepExecutor.execute(step.getConfig(), context);
 		}
+		if (step.getType() == StepType.BATCH) {
+			return batchStepExecutor != null
+					? batchStepExecutor.execute(step, context)
+					: StepResult.failure("Unsupported step type: " + step.getType());
+		}
 		return StepResult.failure("Unsupported step type: " + step.getType());
 	}
 
@@ -645,6 +662,21 @@ public class DAGFlowExecutor {
 		}
 	}
 
+
+	private void notifyStepProgress(StepDefinition step, StepResult result, FlowContext context) {
+		if (result == null || result.getOutputs() == null || !result.getOutputs().containsKey("batchProgress")) {
+			return;
+		}
+		Object progress = result.getOutputs().get("batchProgress");
+		if (!(progress instanceof Map<?, ?> progressMap) || progressMap.isEmpty()) {
+			return;
+		}
+		Map<String, Object> payload = new LinkedHashMap<>();
+		payload.put("batchProgress", progressMap);
+		for (FlowExecutionListener listener : context.getExecutionListeners()) {
+			listener.onStepProgress(step, payload, context);
+		}
+	}
 	private void notifyStepFailed(StepDefinition step, StepResult result, FlowContext context) {
 		for (FlowExecutionListener listener : context.getExecutionListeners()) {
 			listener.onStepFailed(step, result, context);
@@ -664,3 +696,12 @@ public class DAGFlowExecutor {
 	}
 
 }
+
+
+
+
+
+
+
+
+

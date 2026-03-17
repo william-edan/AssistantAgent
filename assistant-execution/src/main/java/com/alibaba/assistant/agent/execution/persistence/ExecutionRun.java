@@ -50,6 +50,10 @@ public class ExecutionRun {
 
     private String approvalRequestId;
 
+    private Integer userRating;
+
+    private String correctionNote;
+
     private LocalDateTime startedAt;
 
     private LocalDateTime completedAt;
@@ -80,6 +84,10 @@ public class ExecutionRun {
     public void setPausedStepId(String pausedStepId) { this.pausedStepId = pausedStepId; }
     public String getApprovalRequestId() { return approvalRequestId; }
     public void setApprovalRequestId(String approvalRequestId) { this.approvalRequestId = approvalRequestId; }
+    public Integer getUserRating() { return userRating; }
+    public void setUserRating(Integer userRating) { this.userRating = userRating; }
+    public String getCorrectionNote() { return correctionNote; }
+    public void setCorrectionNote(String correctionNote) { this.correctionNote = correctionNote; }
     public LocalDateTime getStartedAt() { return startedAt; }
     public void setStartedAt(LocalDateTime startedAt) { this.startedAt = startedAt; }
     public LocalDateTime getCompletedAt() { return completedAt; }

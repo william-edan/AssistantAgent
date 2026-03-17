@@ -31,6 +31,7 @@ import com.alibaba.assistant.agent.runtime.interceptor.PolicyCheckModelIntercept
 import com.alibaba.assistant.agent.runtime.interceptor.PolicyGuardToolInterceptor;
 import com.alibaba.assistant.agent.runtime.intent.AssistantFastIntentHook;
 import com.alibaba.assistant.agent.runtime.registry.TenantAwareToolRegistry;
+import com.alibaba.assistant.agent.runtime.tool.react.AssistantReactToolConfiguration;
 import com.alibaba.cloud.ai.graph.CompileConfig;
 import com.alibaba.cloud.ai.graph.OverAllState;
 import com.alibaba.cloud.ai.graph.agent.hook.Hook;
@@ -73,41 +74,6 @@ public class AssistantAgentFactory {
 
 	private static final Logger logger = LoggerFactory.getLogger(AssistantAgentFactory.class);
 
-	private static final Set<String> BUILT_IN_REACT_TOOL_NAMES = Set.of(
-			"slot_collect",
-			"slot_confirm",
-			"artifact_execute");
-
-	private static final String SYSTEM_PROMPT_TEMPLATE = """
-			你是一个企业级智能助手（Enterprise Assistant Agent），专注于通过槽位收集和多步骤工作流执行来完成企业业务操作。
-
-			【核心能力】
-			- 理解用户业务意图，匹配对应的业务工具
-			- 通过多轮对话收集必要的参数（槽位）
-			- 调用业务API执行操作（如请假、审批等）
-			- 通过代码编写和执行完成复杂的数据处理任务
-
-			【工作流程】
-			1. 意图识别：理解用户需求，匹配当前上下文中的可用工具
-			2. 槽位收集：调用 slot_collect 工具，传入真实 toolCode（禁止自行编造）
-			3. 参数确认：槽位全部收集完成后，调用 slot_confirm 展示确认
-			4. 执行操作：用户明确确认后，必须调用 artifact_execute 执行，不要只回复文本
-			5. 结果反馈：向用户报告执行结果
-
-			【重要规则】
-			- 调用 slot_collect 时，toolCode 参数必须使用当前可用工具目录中的 toolCode，不要编造
-			- 不要自行构造 slotSchema，留空即可，系统会根据 toolCode 自动加载
-			- 确认执行时，调用 artifact_execute 工具参数里必须携带 confirmed=true
-			- 如果 slot_collect 返回 ERROR，不要重复调用同样的参数，应该向用户说明情况
-			- 如果用户的请求不匹配任何已注册工具，直接用 send_message 回复用户
-
-			【核心原则】
-			- 主动引导：根据槽位定义主动询问缺失参数
-			- 智能推断：利用上下文信息自动填充可推断的参数
-			- 安全执行：高风险操作需用户确认后才执行
-			- 完整反馈：每步操作都给用户清晰的状态反馈
-			""";
-
 	@Autowired(required = false)
 	private List<Hook> allHooks;
 
@@ -122,10 +88,16 @@ public class AssistantAgentFactory {
 
 		logger.info("AssistantAgentFactory#assistantCodeactAgent - reason=创建企业助手 CodeactAgent (migration profile)");
 
+		AgentPromptTemplateFactory promptTemplateFactory = new AgentPromptTemplateFactory();
+		AgentProfileResolver agentProfileResolver = new AgentProfileResolver(promptTemplateFactory);
+		AgentProfile profile = agentProfileResolver.resolve(Map.of());
+
 		List<CodeactTool> tools = codeactTools != null ? new ArrayList<>(codeactTools) : new ArrayList<>();
 		logger.info("AssistantAgentFactory#assistantCodeactAgent - reason=CodeactTool总数, count={}", tools.size());
-		List<CodeactTool> reactAccessibleCodeactTools = collectReactAccessibleCodeactTools(tools, tenantAwareToolRegistry);
-		List<ToolCallback> filteredReactCallbacks = filterReactToolCallbacks(reactToolCallbacks, tenantAwareToolRegistry);
+		List<CodeactTool> reactAccessibleCodeactTools =
+				collectReactAccessibleCodeactTools(profile, tools, tenantAwareToolRegistry);
+		List<ToolCallback> filteredReactCallbacks =
+				filterReactToolCallbacks(profile, reactToolCallbacks, tenantAwareToolRegistry);
 		ToolCallback[] reactTools = mergeReactAndCodeactToolCallbacks(filteredReactCallbacks, reactAccessibleCodeactTools);
 		logger.info("AssistantAgentFactory#assistantCodeactAgent - reason=React ToolCallback总数, count={}",
 				reactTools.length);
@@ -160,7 +132,7 @@ public class AssistantAgentFactory {
 		CodeactAgent.CodeactAgentBuilder builder = CodeactAgent.builder()
 				.name("AssistantAgent")
 				.description("Enterprise assistant agent with slot-collection workflow")
-				.systemPrompt(SYSTEM_PROMPT_TEMPLATE)
+				.systemPrompt(profile.systemPrompt())
 				.model(chatModel)
 				.codingChatModel(chatModel)
 				.language(Language.PYTHON)
@@ -197,23 +169,29 @@ public class AssistantAgentFactory {
 	static List<ToolCallback> filterReactToolCallbacks(
 			List<ToolCallback> reactToolCallbacks,
 			TenantAwareToolRegistry tenantAwareToolRegistry) {
+		return filterReactToolCallbacks(defaultFormFlowProfile(), reactToolCallbacks, tenantAwareToolRegistry);
+	}
+
+	static List<ToolCallback> filterReactToolCallbacks(
+			AgentProfile profile,
+			List<ToolCallback> reactToolCallbacks,
+			TenantAwareToolRegistry tenantAwareToolRegistry) {
 		if (reactToolCallbacks == null || reactToolCallbacks.isEmpty()) {
 			return List.of();
 		}
-		List<ToolCallback> filtered = new ArrayList<>();
+		List<ToolCallback> filtered = new AgentToolExposurePolicy()
+				.filterReactToolCallbacks(profile, reactToolCallbacks, tenantAwareToolRegistry);
 		Set<String> blockedToolNames = new LinkedHashSet<>();
 		for (ToolCallback callback : reactToolCallbacks) {
 			if (callback == null || callback.getToolDefinition() == null) {
 				continue;
 			}
 			String toolName = callback.getToolDefinition().name();
-			if (!shouldExposeReactToolCallback(toolName, tenantAwareToolRegistry)) {
+			if (!filtered.contains(callback)) {
 				if (StringUtils.hasText(toolName)) {
 					blockedToolNames.add(toolName);
 				}
-				continue;
 			}
-			filtered.add(callback);
 		}
 		if (!blockedToolNames.isEmpty()) {
 			logger.info("AssistantAgentFactory#filterReactToolCallbacks - reason=过滤内部工具回调, toolNames={}",
@@ -224,34 +202,15 @@ public class AssistantAgentFactory {
 
 	static List<CodeactTool> collectReactAccessibleCodeactTools(List<CodeactTool> codeactTools,
 			TenantAwareToolRegistry tenantAwareToolRegistry) {
-		List<CodeactTool> merged = new ArrayList<>();
-		if (codeactTools != null && !codeactTools.isEmpty()) {
-			merged.addAll(codeactTools);
-		}
-		if (tenantAwareToolRegistry != null) {
-			List<CodeactTool> tenantTools = tenantAwareToolRegistry.getReactAccessibleTools();
-			if (tenantTools != null && !tenantTools.isEmpty()) {
-				merged.addAll(tenantTools);
-			}
-		}
-		return merged;
+		return collectReactAccessibleCodeactTools(defaultFormFlowProfile(), codeactTools, tenantAwareToolRegistry);
 	}
 
-	private static boolean shouldExposeReactToolCallback(
-			String toolName,
+	static List<CodeactTool> collectReactAccessibleCodeactTools(
+			AgentProfile profile,
+			List<CodeactTool> codeactTools,
 			TenantAwareToolRegistry tenantAwareToolRegistry) {
-		if (!StringUtils.hasText(toolName)) {
-			return false;
-		}
-		String normalized = toolName.trim();
-		if (BUILT_IN_REACT_TOOL_NAMES.contains(normalized)) {
-			return true;
-		}
-		if (tenantAwareToolRegistry == null) {
-			return false;
-		}
-		Optional<CodeactTool> publishedTool = tenantAwareToolRegistry.getTool(normalized);
-		return publishedTool.isPresent();
+		return new AgentToolExposurePolicy()
+				.collectReactAccessibleCodeactTools(profile, codeactTools, tenantAwareToolRegistry);
 	}
 
 	private static void mergeToolCallbacks(Map<String, ToolCallback> merged, List<? extends ToolCallback> source) {
@@ -354,6 +313,14 @@ public class AssistantAgentFactory {
 			filtered.add(hook);
 		}
 		return filtered;
+	}
+
+	private static AgentProfile defaultFormFlowProfile() {
+		AgentPromptTemplateFactory promptTemplateFactory = new AgentPromptTemplateFactory();
+		return new AgentProfile(
+				AgentProfile.FORM_FLOW,
+				promptTemplateFactory.systemPromptFor(AgentProfile.FORM_FLOW),
+				AssistantReactToolConfiguration.builtInReactToolNames());
 	}
 
 }
