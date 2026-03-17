@@ -96,6 +96,28 @@ class ChatControllerArtifactExecutionEventsTest {
     }
 
     @Test
+    void shouldKeepExistingSseBoundaryAfterStrategyRefactor() {
+        ToolResponseMessageDTO message = new ToolResponseMessageDTO();
+        ToolResponseMessageDTO.ToolResponseDTO response = new ToolResponseMessageDTO.ToolResponseDTO();
+        response.setName("artifact_execute");
+        response.setResponseData("""
+                {"success":true,"artifactCode":"oa.leave.apply","executionEvents":[
+                  {"runId":"RUN-BOUNDARY-1","artifactCode":"oa.leave.apply","artifactType":"WORKFLOW","stepId":null,
+                   "sequence":1,"eventType":"RUN_STARTED","lifecycleStatus":"RUNNING","occurredAt":"2026-03-10T10:00:00Z","payload":{"source":"artifact-runtime"}},
+                  {"runId":"RUN-BOUNDARY-1","artifactCode":"oa.leave.apply","artifactType":"WORKFLOW","stepId":"submit_approval",
+                   "sequence":2,"eventType":"STEP_COMPLETED","lifecycleStatus":"COMPLETED","occurredAt":"2026-03-10T10:00:01Z","payload":{"stepName":"提交审批"}}
+                ]}
+                """);
+        message.setResponses(List.of(response));
+
+        List<FrontendEvent> events = controller.adaptToolResponseEvents("T-BOUNDARY-1", message);
+
+        assertEquals(1, events.size());
+        assertEquals(FrontendEventType.RESULT, events.get(0).eventType());
+        assertEquals(FrontendStage.DONE, events.get(0).stage());
+    }
+
+    @Test
     void shouldFilterInternalPlanningNarrationFromToolResponseEvents() {
         ToolResponseMessageDTO message = new ToolResponseMessageDTO();
 

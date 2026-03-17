@@ -49,6 +49,9 @@ class ChatThreadEventStreamControllerTest {
                 true,
                 false,
                 "mcp:data-agent",
+                null,
+                null,
+                null,
                 "TASK_CARD",
                 1,
                 0,
@@ -101,3 +104,5 @@ class ChatThreadEventStreamControllerTest {
                 List.of("assistant:chat"));
     }
 }
+
+

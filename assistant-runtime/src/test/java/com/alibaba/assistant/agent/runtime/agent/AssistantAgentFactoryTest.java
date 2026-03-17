@@ -31,7 +31,9 @@ import org.springframework.ai.tool.ToolCallback;
 import org.springframework.ai.tool.definition.DefaultToolDefinition;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -52,6 +54,38 @@ class AssistantAgentFactoryTest {
     void shouldHaveConfigurationAnnotation() {
         assertTrue(AssistantAgentFactory.class.isAnnotationPresent(
                 org.springframework.context.annotation.Configuration.class));
+    }
+
+    @Test
+    void shouldKeepFormFlowProfileUsingExistingBuiltInTools() {
+        AgentProfileResolver resolver = new AgentProfileResolver(new AgentPromptTemplateFactory());
+
+        AgentProfile profile = resolver.resolve(Map.of());
+
+        assertEquals(AgentProfile.FORM_FLOW, profile.profileCode());
+        assertEquals(Set.of("slot_collect", "slot_confirm", "artifact_execute"), profile.builtinReactTools());
+    }
+
+    @Test
+    void shouldBuildRoleProfileWithoutChangingArtifactExecuteExit() {
+        AgentProfileResolver resolver = new AgentProfileResolver(new AgentPromptTemplateFactory());
+        AgentProfile profile = resolver.resolve(Map.of("role_package_code", "digital_admin"));
+        ToolCallback artifactExecute = mockTool("artifact_execute");
+        ToolCallback publishedQuery = mockTool("office1_pending_approval_query");
+        TenantAwareToolRegistry registry = mock(TenantAwareToolRegistry.class);
+
+        List<ToolCallback> filtered = AssistantAgentFactory.filterReactToolCallbacks(
+                profile,
+                List.of(artifactExecute, publishedQuery),
+                registry);
+
+        List<String> names = filtered.stream()
+                .map(callback -> callback.getToolDefinition().name())
+                .collect(Collectors.toList());
+        assertEquals(1, filtered.size());
+        assertTrue(names.contains("artifact_execute"));
+        assertFalse(names.contains("office1_pending_approval_query"));
+        verifyNoInteractions(registry);
     }
 
     @Test

@@ -33,8 +33,11 @@ import org.springframework.util.MultiValueMap;
 import org.springframework.util.StringUtils;
 import org.springframework.web.client.RestTemplate;
 
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
@@ -182,18 +185,17 @@ public class HttpStepExecutor {
 			Map<String, String> resolvedHeaders,
 			String stepId) {
 		try {
-			String url = buildUrl(baseUrl, config.getEndpoint());
+			ResolvedRequest resolvedRequest = resolveRequest(config, params, resolvedHeaders);
+			String url = buildUrl(baseUrl, resolvedRequest.endpointWithQuery());
 			logger.info("HttpStepExecutor#executeResolvedStepRequest - stepId={}, method={}, url={}",
 					stepId, config.getMethod(), url);
 			HttpHeaders headers = createDefaultHeaders();
-			if (resolvedHeaders != null) {
-				for (Map.Entry<String, String> header : resolvedHeaders.entrySet()) {
-					if (StringUtils.hasText(header.getKey()) && header.getValue() != null) {
-						headers.set(header.getKey(), header.getValue());
-					}
+			for (Map.Entry<String, String> header : resolvedRequest.headers().entrySet()) {
+				if (StringUtils.hasText(header.getKey()) && header.getValue() != null) {
+					headers.set(header.getKey(), header.getValue());
 				}
 			}
-			HttpEntity<?> entity = buildRequestEntity(config, params, headers);
+			HttpEntity<?> entity = buildRequestEntity(config, resolvedRequest.body(), headers);
 			return exchange(config, url, entity);
 		}
 		catch (Exception e) {
@@ -248,9 +250,6 @@ public class HttpStepExecutor {
 
 			Optional<TokenLease> leaseOpt = tokenBroker.acquire(context.getAssistantUid(), context.getSystemCode());
 			String token = leaseOpt.map(TokenLease::accessToken).orElse(null);
-			String url = buildUrl(baseUrl, config.getEndpoint());
-			logger.info("HttpStepExecutor#executeViaSystemProfile - method={}, url={}", config.getMethod(), url);
-
 			HttpHeaders headers = createDefaultHeaders();
 			if (token != null) {
 				String headerName = systemAccessProfilePort.getTokenHeaderName(context.getSystemCode());
@@ -263,7 +262,16 @@ public class HttpStepExecutor {
 						context.getSystemCode(), context.getAssistantUid());
 			}
 
-			HttpEntity<?> entity = buildRequestEntity(config, params, headers);
+			ResolvedRequest resolvedRequest = resolveRequest(config, params, toSingleValueMap(headers));
+			String url = buildUrl(baseUrl, resolvedRequest.endpointWithQuery());
+			logger.info("HttpStepExecutor#executeViaSystemProfile - method={}, url={}", config.getMethod(), url);
+			HttpHeaders effectiveHeaders = createDefaultHeaders();
+			for (Map.Entry<String, String> header : resolvedRequest.headers().entrySet()) {
+				if (StringUtils.hasText(header.getKey()) && header.getValue() != null) {
+					effectiveHeaders.set(header.getKey(), header.getValue());
+				}
+			}
+			HttpEntity<?> entity = buildRequestEntity(config, resolvedRequest.body(), effectiveHeaders);
 			return exchange(config, url, entity);
 		}
 		catch (Exception e) {
@@ -279,19 +287,24 @@ public class HttpStepExecutor {
 		return headers;
 	}
 
-	private HttpEntity<?> buildRequestEntity(StepConfig config, Map<String, Object> params, HttpHeaders headers)
+	private HttpEntity<?> buildRequestEntity(StepConfig config, Object body, HttpHeaders headers)
 			throws Exception {
 		String contentType = config.getContentType();
 		if (MediaType.APPLICATION_FORM_URLENCODED_VALUE.equals(contentType)) {
 			headers.setContentType(MediaType.APPLICATION_FORM_URLENCODED);
-			MultiValueMap<String, String> formData = requestSerializer.toFormUrlEncoded(params);
+			Map<String, Object> formInput = body instanceof Map<?, ?> map ? castObjectMap(map) : Map.of();
+			MultiValueMap<String, String> formData = requestSerializer.toFormUrlEncoded(formInput);
 			formData.add("_ajax", "1");
 			logger.info("HttpStepExecutor#buildRequestEntity - form-urlencoded, paramCount={}, params={}",
 					formData.size(), formData);
 			return new HttpEntity<>(formData, headers);
 		}
 		headers.setContentType(MediaType.APPLICATION_JSON);
-		String requestBody = objectMapper.writeValueAsString(params);
+		if (body == null && isReadMethod(config.getMethod())) {
+			return new HttpEntity<>(headers);
+		}
+		Object requestPayload = body != null ? body : Map.of();
+		String requestBody = objectMapper.writeValueAsString(requestPayload);
 		logger.info("HttpStepExecutor#buildRequestEntity - JSON body, length={}, body={}",
 				requestBody.length(), requestBody);
 		return new HttpEntity<>(requestBody, headers);
@@ -321,6 +334,105 @@ public class HttpStepExecutor {
 			return normalizedBase + "/" + normalizedEndpoint;
 		}
 		return normalizedBase + normalizedEndpoint;
+	}
+
+	private ResolvedRequest resolveRequest(
+			StepConfig config,
+			Map<String, Object> params,
+			Map<String, String> inheritedHeaders) {
+		Map<String, Object> safeParams = params != null ? new LinkedHashMap<>(params) : new LinkedHashMap<>();
+		Map<String, Object> pathParams = extractGroup(safeParams.remove("path"));
+		Map<String, Object> queryParams = extractGroup(safeParams.remove("query"));
+		Map<String, Object> headerParams = extractGroup(safeParams.remove("headers"));
+		Object body = safeParams.containsKey("body") ? safeParams.remove("body") : null;
+		if (body == null && !safeParams.isEmpty()) {
+			body = safeParams;
+		}
+		Map<String, String> headers = new LinkedHashMap<>();
+		if (inheritedHeaders != null) {
+			headers.putAll(inheritedHeaders);
+		}
+		for (Map.Entry<String, Object> entry : headerParams.entrySet()) {
+			if (StringUtils.hasText(entry.getKey()) && entry.getValue() != null) {
+				headers.put(entry.getKey(), String.valueOf(entry.getValue()));
+			}
+		}
+		String endpointWithPath = applyPathParams(config.getEndpoint(), pathParams);
+		return new ResolvedRequest(appendQueryParams(endpointWithPath, queryParams), headers, body);
+	}
+
+	private String applyPathParams(String endpoint, Map<String, Object> pathParams) {
+		String resolvedEndpoint = endpoint != null ? endpoint : "";
+		for (Map.Entry<String, Object> entry : pathParams.entrySet()) {
+			if (!StringUtils.hasText(entry.getKey()) || entry.getValue() == null) {
+				continue;
+			}
+			resolvedEndpoint = resolvedEndpoint.replace("{" + entry.getKey() + "}", urlEncode(entry.getValue()));
+		}
+		return resolvedEndpoint;
+	}
+
+	private String appendQueryParams(String endpoint, Map<String, Object> queryParams) {
+		if (queryParams.isEmpty()) {
+			return endpoint;
+		}
+		StringBuilder builder = new StringBuilder(endpoint != null ? endpoint : "");
+		boolean hasQuery = builder.indexOf("?") >= 0;
+		for (Map.Entry<String, Object> entry : queryParams.entrySet()) {
+			if (!StringUtils.hasText(entry.getKey()) || entry.getValue() == null) {
+				continue;
+			}
+			List<?> values = entry.getValue() instanceof List<?> list ? list : List.of(entry.getValue());
+			for (Object value : values) {
+				if (value == null) {
+					continue;
+				}
+				builder.append(hasQuery ? '&' : '?');
+				builder.append(urlEncode(entry.getKey()))
+						.append('=')
+						.append(urlEncode(value));
+				hasQuery = true;
+			}
+		}
+		return builder.toString();
+	}
+
+	private String urlEncode(Object value) {
+		return URLEncoder.encode(String.valueOf(value), StandardCharsets.UTF_8).replace("+", "%20");
+	}
+
+	private boolean isReadMethod(String method) {
+		return HttpMethod.GET.matches(method) || HttpMethod.HEAD.matches(method);
+	}
+
+	private Map<String, Object> extractGroup(Object value) {
+		if (value instanceof Map<?, ?> map) {
+			return castObjectMap(map);
+		}
+		return Map.of();
+	}
+
+	private Map<String, Object> castObjectMap(Map<?, ?> source) {
+		Map<String, Object> normalized = new LinkedHashMap<>();
+		for (Map.Entry<?, ?> entry : source.entrySet()) {
+			if (entry.getKey() != null) {
+				normalized.put(String.valueOf(entry.getKey()), entry.getValue());
+			}
+		}
+		return normalized;
+	}
+
+	private Map<String, String> toSingleValueMap(HttpHeaders headers) {
+		Map<String, String> values = new LinkedHashMap<>();
+		if (headers == null || headers.isEmpty()) {
+			return values;
+		}
+		for (Map.Entry<String, List<String>> entry : headers.entrySet()) {
+			if (StringUtils.hasText(entry.getKey()) && entry.getValue() != null && !entry.getValue().isEmpty()) {
+				values.put(entry.getKey(), entry.getValue().get(0));
+			}
+		}
+		return values;
 	}
 
 	private boolean evaluateCondition(String condition, String responseBody) {
@@ -359,6 +471,9 @@ public class HttpStepExecutor {
 
 		String getTokenHeaderPrefix(String systemCode);
 
+	}
+
+	private record ResolvedRequest(String endpointWithQuery, Map<String, String> headers, Object body) {
 	}
 
 }

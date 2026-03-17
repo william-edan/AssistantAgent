@@ -133,6 +133,58 @@ class ChatTranscriptPersistenceServiceTest {
     }
 
     @Test
+    void shouldPersistRoleBindingIntoThreadSummaryAndMessageEnvelope() throws Exception {
+        when(chatThreadRecordService.findByThreadId("thread-role")).thenReturn(Optional.empty());
+        when(chatMessageRecordService.findBySourceKey("FORM_CARD:turn-role:gougu_oa.leave_application:CONFIRM"))
+                .thenReturn(Optional.empty());
+        Map<String, Object> roleBinding = Map.of(
+                "rolePackageCode", "digital-admin",
+                "rolePackageVersion", "v1",
+                "roleScenarioCode", "leave-approval");
+
+        transcriptPersistenceService.recordUserMessage(
+                "thread-role",
+                "1001",
+                "assistant-ui",
+                "gougu_oa",
+                "turn-role",
+                "发起请假申请",
+                roleBinding);
+
+        transcriptPersistenceService.recordFrontendEvent(
+                "thread-role",
+                "1001",
+                "assistant-ui",
+                "gougu_oa",
+                "turn-role",
+                new FrontendEvent(
+                        "2026-03-13",
+                        "evt-role",
+                        "thread-role",
+                        "2026-03-13T12:00:00Z",
+                        FrontendEventType.FORM_STATE,
+                        FrontendStage.CONFIRMING,
+                        new LinkedHashMap<>(Map.of(
+                                "mode", "CONFIRM",
+                                "status", "WAITING_CONFIRMATION",
+                                "toolCode", "gougu_oa.leave_application",
+                                "message", "请确认请假信息"))),
+                roleBinding);
+
+        ChatThreadRecord latestThread = threadCaptorFromLatestSave();
+        assertThat(latestThread.getRolePackageCode()).isEqualTo("digital-admin");
+        assertThat(latestThread.getRolePackageVersion()).isEqualTo("v1");
+        assertThat(latestThread.getRoleScenarioCode()).isEqualTo("leave-approval");
+
+        ArgumentCaptor<ChatMessageRecord> messageCaptor = ArgumentCaptor.forClass(ChatMessageRecord.class);
+        verify(chatMessageRecordService).saveOrUpdateBySourceKey(messageCaptor.capture());
+        Map<String, Object> persistedPayload = objectMapper.readValue(messageCaptor.getValue().getPayloadJson(), MAP_TYPE);
+        assertThat(persistedPayload).containsEntry("rolePackageCode", "digital-admin");
+        assertThat(persistedPayload).containsEntry("rolePackageVersion", "v1");
+        assertThat(persistedPayload).containsEntry("roleScenarioCode", "leave-approval");
+    }
+
+    @Test
     void shouldNormalizeReadyToConfirmFormStateBeforePersisting() throws Exception {
         when(chatThreadRecordService.findByThreadId("thread-ready-confirm")).thenReturn(Optional.empty());
         when(chatMessageRecordService.findBySourceKey("FORM_CARD:turn-ready-confirm:gougu_oa.leave_application:CONFIRM"))

@@ -165,6 +165,35 @@ class ChatConversationHistoryServiceTest {
     }
 
     @Test
+    void shouldExposeRoleBindingFromThreadProjection() {
+        ChatThreadRecord threadRecord = new ChatThreadRecord();
+        threadRecord.setThreadId("thread-role");
+        threadRecord.setAssistantUid("1001");
+        threadRecord.setStatus("WAITING_CONFIRMATION");
+        threadRecord.setPhase("CONFIRMING");
+        threadRecord.setUnfinished(true);
+        threadRecord.setCanResume(true);
+        threadRecord.setToolCode("gougu_oa.leave_application");
+        threadRecord.setPendingCardType("FORM_CARD");
+        threadRecord.setRolePackageCode("digital-admin");
+        threadRecord.setRolePackageVersion("v1");
+        threadRecord.setRoleScenarioCode("leave-approval");
+        threadRecord.setUpdatedAt(LocalDateTime.parse("2026-03-13T12:00:00"));
+
+        when(chatThreadRecordService.findByThreadId("thread-role")).thenReturn(Optional.of(threadRecord));
+        when(chatMessageRecordService.listByThreadId("thread-role", "1001", 200)).thenReturn(List.of());
+        when(agentTaskService.countActiveByAssistantUidAndThreadId("1001", "thread-role")).thenReturn(0);
+        when(userInboxNotificationService.countUnreadByAssistantUidAndThreadId("1001", "thread-role")).thenReturn(0);
+
+        Map<String, Object> snapshot = chatConversationHistoryService.findThreadStateSnapshot("1001", "thread-role")
+                .orElseThrow();
+
+        assertThat(snapshot).containsEntry("rolePackageCode", "digital-admin");
+        assertThat(snapshot).containsEntry("rolePackageVersion", "v1");
+        assertThat(snapshot).containsEntry("roleScenarioCode", "leave-approval");
+    }
+
+    @Test
     void shouldFlattenPersistedEnvelopeWhenListingMessages() throws Exception {
         ChatThreadRecord threadRecord = new ChatThreadRecord();
         threadRecord.setThreadId("thread-confirm");

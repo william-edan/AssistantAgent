@@ -21,7 +21,12 @@ import com.alibaba.assistant.agent.common.tools.CodeactTool;
 import com.alibaba.assistant.agent.common.tools.CodeactToolMetadata;
 import com.alibaba.assistant.agent.common.tools.DefaultCodeactToolMetadata;
 import com.alibaba.assistant.agent.common.tools.definition.CodeactToolDefinition;
+import com.alibaba.assistant.agent.controlplane.rolepackage.ResolvedRolePackageManagementView;
 import com.alibaba.assistant.agent.controlplane.space.PlatformSpaceService;
+import com.alibaba.assistant.agent.runtime.agent.AssistantStateKeys;
+import com.alibaba.assistant.agent.runtime.role.RoleContextResolver;
+import com.alibaba.assistant.agent.runtime.role.RoleToolScopeFilter;
+import com.alibaba.assistant.agent.runtime.role.ScenarioRouter;
 import com.alibaba.assistant.agent.execution.flow.FlowDefinition;
 import com.alibaba.assistant.agent.runtime.compiler.RuntimeArtifact;
 import com.alibaba.cloud.ai.graph.OverAllState;
@@ -258,6 +263,64 @@ class TenantAwareToolRegistryTest {
         verify(directProvider, never()).listPublishedTools(scope);
     }
 
+    @Test
+    void shouldResolveScopedPublicationUsingRoleBoundAgentApp() {
+        ToolPublicationProvider directProvider = mock(ToolPublicationProvider.class);
+        when(directProvider.providerId()).thenReturn("synthetic-direct");
+        ToolPublicationProviderSelector selector = new ToolPublicationProviderSelector();
+        ToolPublicationMaterializer materializer = new ToolPublicationMaterializer();
+        PublicationScopeResolver publicationScopeResolver = mock(PublicationScopeResolver.class);
+        RoleContextResolver roleContextResolver = mock(RoleContextResolver.class);
+        ScenarioRouter scenarioRouter = mock(ScenarioRouter.class);
+        RoleToolScopeFilter roleToolScopeFilter = new RoleToolScopeFilter(roleContextResolver, scenarioRouter);
+        ToolPublicationProvider.PublicationScope scope = new ToolPublicationProvider.PublicationScope(
+                "default", 9L, "prod", "finance-agent");
+        when(publicationScopeResolver.resolve(org.mockito.ArgumentMatchers.any(ToolContext.class))).thenReturn(scope);
+        CodeactTool allowedTool = mockCodeactTool("leave_application_execute");
+        CodeactTool blockedTool = mockCodeactTool("expense_submit_execute");
+        List<PublishedToolDescriptor> publishedDescriptors = List.of(
+                PublishedToolDescriptor.forDirectTool(
+                        "synthetic-direct",
+                        "synthetic-direct:leave_application_execute",
+                        "请假审批",
+                        allowedTool),
+                PublishedToolDescriptor.forDirectTool(
+                        "synthetic-direct",
+                        "synthetic-direct:expense_submit_execute",
+                        "费用提报",
+                        blockedTool));
+        when(directProvider.listPublishedTools(scope)).thenReturn(publishedDescriptors);
+        when(roleContextResolver.resolve(org.mockito.ArgumentMatchers.anyMap())).thenReturn(Optional.of(
+                new RoleContextResolver.RoleContext(
+                        9L,
+                        "finance-agent",
+                        "digital-admin",
+                        "v1",
+                        "数字行政助理",
+                        "负责审批、排期和通知。",
+                        null,
+                        List.of(),
+                        List.of(new ResolvedRolePackageManagementView.RoleToolScopeView(
+                                null,
+                                "leave_application_execute",
+                                "REQUIRED")))));
+
+        TenantAwareToolRegistry registry = new TenantAwareToolRegistry(
+                List.of(directProvider), materializer, publicationScopeResolver, selector, roleToolScopeFilter);
+        OverAllState state = new OverAllState();
+        state.updateState(Map.of(
+                AssistantStateKeys.AGENT_APP_CODE, "finance-agent",
+                AssistantStateKeys.SPACE_ID, 9L,
+                AssistantStateKeys.ROLE_PACKAGE_CODE, "digital-admin",
+                AssistantStateKeys.ROLE_PACKAGE_VERSION, "v1"));
+        ToolContext toolContext = new ToolContext(Map.of(ToolContextConstants.AGENT_STATE_CONTEXT_KEY, state));
+
+        List<String> toolNames = registry.scope(toolContext).getAllTools().stream()
+                .map(tool -> tool.getToolDefinition().name())
+                .toList();
+
+        assertEquals(List.of("leave_application_execute"), toolNames);
+    }
     private PublishedToolDescriptor artifactDescriptor(RuntimeArtifact artifact) {
         return PublishedToolDescriptor.forArtifact(
                 "tool-meta-catalog",
@@ -312,3 +375,7 @@ class TenantAwareToolRegistryTest {
         return tool;
     }
 }
+
+
+
+

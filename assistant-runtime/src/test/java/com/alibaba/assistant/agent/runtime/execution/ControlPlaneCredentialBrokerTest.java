@@ -23,6 +23,7 @@ import com.alibaba.assistant.agent.controlplane.identity.PrincipalBinding;
 import com.alibaba.assistant.agent.controlplane.identity.PrincipalBindingService;
 import com.alibaba.assistant.agent.controlplane.identity.TokenBroker;
 import com.alibaba.assistant.agent.controlplane.identity.TokenLease;
+import com.alibaba.assistant.agent.runtime.agent.AssistantStateKeys;
 import org.junit.jupiter.api.Test;
 
 import java.time.Instant;
@@ -145,5 +146,80 @@ class ControlPlaneCredentialBrokerTest {
         assertEquals("vault://erp/service-account", lease.headers().get("X-API-Key"));
         assertEquals("API_KEY", lease.credentialType());
         assertEquals("http://erp.internal", lease.baseUrl());
+    }
+
+    @Test
+    void shouldResolveCredentialByAuthProfileUsagePolicy() {
+        ConnectorService connectorService = mock(ConnectorService.class);
+        AuthProfileService authProfileService = mock(AuthProfileService.class);
+        PrincipalBindingService principalBindingService = mock(PrincipalBindingService.class);
+        TokenBroker systemTokenBroker = mock(TokenBroker.class);
+        ControlPlaneCredentialBroker broker = new ControlPlaneCredentialBroker(
+                connectorService,
+                authProfileService,
+                principalBindingService,
+                systemTokenBroker);
+
+        Connector connector = new Connector();
+        connector.setId(30L);
+        connector.setSpaceId(1L);
+        connector.setSystemCode("office1");
+        connector.setStatus("active");
+        connector.setBaseUrl("http://office1.internal");
+        when(connectorService.getById(30L)).thenReturn(connector);
+
+        AuthProfile delegatedProfile = new AuthProfile();
+        delegatedProfile.setConnectorId(30L);
+        delegatedProfile.setAuthProfileCode("office1-user");
+        delegatedProfile.setAuthType("token_exchange");
+        delegatedProfile.setUsagePolicy("delegated");
+        delegatedProfile.setTokenHeaderName("Authorization");
+        delegatedProfile.setTokenHeaderPrefix("Bearer ");
+
+        AuthProfile serviceProfile = new AuthProfile();
+        serviceProfile.setConnectorId(30L);
+        serviceProfile.setAuthProfileCode("office1-service");
+        serviceProfile.setAuthType("token_exchange");
+        serviceProfile.setUsagePolicy("service_account");
+        serviceProfile.setTokenHeaderName("Authorization");
+        serviceProfile.setTokenHeaderPrefix("Bearer ");
+        when(authProfileService.listActiveByConnector(30L)).thenReturn(List.of(delegatedProfile, serviceProfile));
+
+        PrincipalBinding binding = new PrincipalBinding();
+        binding.setId(41L);
+        binding.setPlatformPrincipalId("digital-admin-duty-bot");
+        binding.setPlatformPrincipalType("service_account");
+        binding.setTargetPrincipalType("service_account");
+        binding.setTargetPrincipalId("office1.bot");
+        when(principalBindingService.findHighestPriorityActiveBinding(1L, 30L, "digital-admin-duty-bot"))
+                .thenReturn(Optional.of(binding));
+
+        when(systemTokenBroker.acquire("office1.bot", "office1"))
+                .thenReturn(Optional.of(new TokenLease(
+                        "lease-office1-bot",
+                        "office1-token",
+                        "office1",
+                        "office1.bot",
+                        LocalDateTime.now().plusMinutes(30))));
+
+        ResolvedCredentialLease lease = broker.resolve(new CredentialResolutionRequest(
+                1L,
+                30L,
+                List.of("office1-user", "office1-service"),
+                "digital-admin-duty-bot",
+                "service_account",
+                List.of("calendar.write"),
+                "RUN-3",
+                "meeting_dispatch",
+                "admin-agent",
+                "digital-admin",
+                "v1",
+                "meeting_coordination",
+                "service_account",
+                "office1.bot"));
+
+        assertEquals("office1-service", lease.authProfileCode());
+        assertEquals("Bearer office1-token", lease.headers().get("Authorization"));
+        assertEquals("http://office1.internal", lease.baseUrl());
     }
 }

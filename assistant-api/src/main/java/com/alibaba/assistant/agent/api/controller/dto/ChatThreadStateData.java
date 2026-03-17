@@ -15,15 +15,15 @@
  */
 package com.alibaba.assistant.agent.api.controller.dto;
 
-import com.alibaba.assistant.agent.common.chat.FrontendTaskStateSupport;
 import com.alibaba.assistant.agent.api.service.ChatThreadActionSupport;
+import com.alibaba.assistant.agent.common.chat.FrontendTaskStateSupport;
 
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
 /**
- * 持久化聊天线程状态载荷。
+ * Persisted chat thread state payload.
  */
 public record ChatThreadStateData(
         String threadId,
@@ -33,6 +33,9 @@ public record ChatThreadStateData(
         boolean unfinished,
         boolean canResume,
         String toolCode,
+        String rolePackageCode,
+        String rolePackageVersion,
+        String roleScenarioCode,
         String pendingCardType,
         Integer activeTaskCount,
         Integer unreadNotificationCount,
@@ -84,6 +87,9 @@ public record ChatThreadStateData(
                 unfinished,
                 canResume,
                 asText(snapshot.get("toolCode")),
+                asText(snapshot.get("rolePackageCode")),
+                asText(snapshot.get("rolePackageVersion")),
+                asText(snapshot.get("roleScenarioCode")),
                 pendingCardType,
                 activeTaskCount,
                 unreadNotificationCount,

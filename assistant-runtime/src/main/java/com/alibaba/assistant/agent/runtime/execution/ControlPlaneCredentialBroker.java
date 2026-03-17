@@ -29,6 +29,7 @@ import org.springframework.util.StringUtils;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneId;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -66,13 +67,11 @@ public class ControlPlaneCredentialBroker implements CredentialBroker {
     @Override
     public ResolvedCredentialLease resolve(CredentialResolutionRequest request) {
         Connector connector = requireConnector(request);
-        AuthProfile authProfile = selectAuthProfile(request, authProfileService.listActiveByConnector(request.connectorId()));
-        PrincipalBinding binding = principalBindingService
-                .findHighestPriorityActiveBinding(request.spaceId(), request.connectorId(), request.platformPrincipalId())
-                .orElseThrow(() -> new IllegalStateException("principal_binding_not_found"));
+        PrincipalBinding binding = resolvePrincipalBinding(request);
+        AuthProfile authProfile = selectAuthProfile(request, authProfileService.listActiveByConnector(request.connectorId()), binding);
 
         String systemCode = normalize(connector.getSystemCode());
-        OptionalCredential optionalCredential = resolveCredentialValue(request, authProfile, systemCode);
+        OptionalCredential optionalCredential = resolveCredentialValue(request, authProfile, binding, systemCode);
 
         Map<String, String> headers = new LinkedHashMap<>();
         headers.put(resolveHeaderName(authProfile), resolveHeaderPrefix(authProfile) + optionalCredential.credentialValue());
@@ -101,42 +100,131 @@ public class ControlPlaneCredentialBroker implements CredentialBroker {
         return connector;
     }
 
-    private AuthProfile selectAuthProfile(CredentialResolutionRequest request, List<AuthProfile> candidates) {
+    private PrincipalBinding resolvePrincipalBinding(CredentialResolutionRequest request) {
+        String platformPrincipalId = firstNonBlank(request.platformPrincipalId(), request.executionSubjectId());
+        return principalBindingService
+                .findHighestPriorityActiveBinding(request.spaceId(), request.connectorId(), platformPrincipalId)
+                .orElseThrow(() -> new IllegalStateException("principal_binding_not_found"));
+    }
+
+    private AuthProfile selectAuthProfile(
+            CredentialResolutionRequest request,
+            List<AuthProfile> candidates,
+            PrincipalBinding binding) {
         if (candidates == null || candidates.isEmpty()) {
             throw new IllegalStateException("auth_profile_not_found");
         }
+        List<AuthProfile> filtered = candidates;
         if (!request.candidateAuthProfileCodes().isEmpty()) {
-            for (String authProfileCode : request.candidateAuthProfileCodes()) {
-                for (AuthProfile candidate : candidates) {
-                    if (authProfileCode.equalsIgnoreCase(candidate.getAuthProfileCode())) {
-                        return candidate;
-                    }
-                }
+            filtered = candidates.stream()
+                    .filter(candidate -> request.candidateAuthProfileCodes().stream()
+                            .anyMatch(code -> code.equalsIgnoreCase(candidate.getAuthProfileCode())))
+                    .toList();
+            if (filtered.isEmpty()) {
+                throw new IllegalStateException("auth_profile_candidate_not_found");
             }
-            throw new IllegalStateException("auth_profile_candidate_not_found");
         }
-        return candidates.get(0);
+        return filtered.stream()
+                .max(Comparator
+                        .comparingInt((AuthProfile candidate) -> scoreAuthProfile(candidate, request, binding))
+                        .thenComparingInt(candidate -> requestPreferenceOrder(request, candidate.getAuthProfileCode()))
+                        .thenComparingLong(candidate -> candidate.getId() != null ? -candidate.getId() : Long.MIN_VALUE))
+                .orElseThrow(() -> new IllegalStateException("auth_profile_not_found"));
+    }
+
+    private int requestPreferenceOrder(CredentialResolutionRequest request, String authProfileCode) {
+        if (request == null || request.candidateAuthProfileCodes().isEmpty() || !StringUtils.hasText(authProfileCode)) {
+            return 0;
+        }
+        int index = request.candidateAuthProfileCodes().size();
+        for (int i = 0; i < request.candidateAuthProfileCodes().size(); i++) {
+            if (authProfileCode.equalsIgnoreCase(request.candidateAuthProfileCodes().get(i))) {
+                index = request.candidateAuthProfileCodes().size() - i;
+                break;
+            }
+        }
+        return index;
+    }
+
+    private int scoreAuthProfile(AuthProfile authProfile, CredentialResolutionRequest request, PrincipalBinding binding) {
+        String usagePolicy = normalizeLower(authProfile.getUsagePolicy());
+        String authType = normalizeUpper(authProfile.getAuthType());
+        int score = 100;
+        if (isServiceAccountRequest(binding, request)) {
+            if ("service_account".equals(usagePolicy)) {
+                score += 400;
+            }
+            if (StringUtils.hasText(authProfile.getCredentialRef())) {
+                score += 40;
+            }
+        }
+        if (isDelegatedRequest(binding, request) && "delegated".equals(usagePolicy)) {
+            score += 320;
+        }
+        if (shouldUseTokenExchange(binding, request) && ("token_exchange".equals(usagePolicy) || "TOKEN_EXCHANGE".equals(authType))) {
+            score += 220;
+        }
+        if (!StringUtils.hasText(usagePolicy) || List.of("default", "read_only", "read_write", "write", "read-write").contains(usagePolicy)) {
+            score += 30;
+        }
+        return score;
     }
 
     private OptionalCredential resolveCredentialValue(
             CredentialResolutionRequest request,
             AuthProfile authProfile,
+            PrincipalBinding binding,
             String systemCode) {
-        if (StringUtils.hasText(authProfile.getCredentialRef())) {
+        String brokerPrincipalId = firstNonBlank(
+                normalize(binding.getTargetPrincipalId()),
+                request.executionSubjectId(),
+                request.platformPrincipalId());
+        if (isServiceAccountRequest(binding, request) && StringUtils.hasText(authProfile.getCredentialRef())) {
             return new OptionalCredential(
                     buildLeaseKey(request, authProfile.getAuthProfileCode(), "credential_ref"),
                     authProfile.getCredentialRef().trim(),
                     Instant.now().plus(Duration.ofMinutes(15)));
         }
-        if (StringUtils.hasText(systemCode) && systemTokenBroker != null) {
-            TokenLease lease = systemTokenBroker.acquire(request.platformPrincipalId(), systemCode)
+        if (StringUtils.hasText(systemCode) && systemTokenBroker != null && StringUtils.hasText(brokerPrincipalId)) {
+            TokenLease lease = systemTokenBroker.acquire(brokerPrincipalId, systemCode)
                     .orElseThrow(() -> new IllegalStateException("system_token_not_found"));
             return new OptionalCredential(
                     lease.leaseId(),
                     lease.accessToken(),
                     lease.expiresAt().atZone(ZoneId.systemDefault()).toInstant());
         }
+        if (StringUtils.hasText(authProfile.getCredentialRef())) {
+            return new OptionalCredential(
+                    buildLeaseKey(request, authProfile.getAuthProfileCode(), "credential_ref"),
+                    authProfile.getCredentialRef().trim(),
+                    Instant.now().plus(Duration.ofMinutes(15)));
+        }
         throw new IllegalStateException("credential_not_resolved");
+    }
+
+    private boolean isServiceAccountRequest(PrincipalBinding binding, CredentialResolutionRequest request) {
+        String bindingTargetType = normalizeLower(binding.getTargetPrincipalType());
+        String subjectType = normalizeLower(request.executionSubjectType());
+        String principalType = normalizeLower(request.platformPrincipalType());
+        return "service_account".equals(bindingTargetType)
+                || "service_account".equals(subjectType)
+                || "service_account".equals(principalType);
+    }
+
+    private boolean isDelegatedRequest(PrincipalBinding binding, CredentialResolutionRequest request) {
+        String bindingTargetType = normalizeLower(binding.getTargetPrincipalType());
+        String principalType = normalizeLower(request.platformPrincipalType());
+        return "delegated".equals(bindingTargetType)
+                || "delegated".equals(principalType)
+                || "local_user".equals(principalType)
+                || "user".equals(principalType);
+    }
+
+    private boolean shouldUseTokenExchange(PrincipalBinding binding, CredentialResolutionRequest request) {
+        return StringUtils.hasText(firstNonBlank(
+                normalize(binding.getTargetPrincipalId()),
+                request.executionSubjectId(),
+                request.platformPrincipalId()));
     }
 
     private String resolveHeaderName(AuthProfile authProfile) {
@@ -156,11 +244,34 @@ public class ControlPlaneCredentialBroker implements CredentialBroker {
     }
 
     private String buildLeaseKey(CredentialResolutionRequest request, String authProfileCode, String suffix) {
-        return request.runId() + ":" + request.stepId() + ":" + authProfileCode + ":" + suffix;
+        return firstNonBlank(request.runId(), "run")
+                + ":" + firstNonBlank(request.stepId(), "step")
+                + ":" + firstNonBlank(authProfileCode, "auth")
+                + ":" + firstNonBlank(suffix, "lease");
     }
 
     private String normalize(String value) {
         return StringUtils.hasText(value) ? value.trim() : null;
+    }
+
+    private String normalizeLower(String value) {
+        return StringUtils.hasText(value) ? value.trim().toLowerCase(Locale.ROOT) : null;
+    }
+
+    private String normalizeUpper(String value) {
+        return StringUtils.hasText(value) ? value.trim().toUpperCase(Locale.ROOT) : null;
+    }
+
+    private String firstNonBlank(String... values) {
+        if (values == null) {
+            return null;
+        }
+        for (String value : values) {
+            if (StringUtils.hasText(value)) {
+                return value.trim();
+            }
+        }
+        return null;
     }
 
     private record OptionalCredential(String leaseKey, String credentialValue, Instant expiresAt) {

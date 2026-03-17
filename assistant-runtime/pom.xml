@@ -36,6 +36,14 @@
             <groupId>com.alibaba.agent.assistant</groupId>
             <artifactId>assistant-infra</artifactId>
         </dependency>
+        <dependency>
+            <groupId>io.micrometer</groupId>
+            <artifactId>micrometer-observation</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.micrometer</groupId>
+            <artifactId>micrometer-tracing-bridge-otel</artifactId>
+        </dependency>
         <!-- Redis for TenantAwareToolRegistry cache + TokenBroker lease -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
@@ -60,3 +68,4 @@
         </dependency>
     </dependencies>
 </project>
+

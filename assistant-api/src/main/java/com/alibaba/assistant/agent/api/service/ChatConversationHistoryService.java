@@ -271,6 +271,8 @@ public class ChatConversationHistoryService {
         snapshot.put("pendingCardType", pendingCardType);
         snapshot.put("activeTaskCount", activeTaskCount);
         snapshot.put("unreadNotificationCount", unreadNotificationCount);
+        RoleBindingSnapshot roleBinding = resolveRoleBinding(threadRecord, messages);
+        roleBinding.applyTo(snapshot);
         snapshot.put("updatedAt", asText(firstNonNull(threadRecord.getLastMessageAt(), threadRecord.getUpdatedAt(), threadRecord.getCreatedAt())));
         snapshot.put("lastMessage", resolveLastMessagePreview(
                 status,
@@ -280,6 +282,24 @@ public class ChatConversationHistoryService {
                 latestTaskCard,
                 latestResultCard));
         return snapshot;
+    }
+
+    private RoleBindingSnapshot resolveRoleBinding(ChatThreadRecord threadRecord, List<ChatMessageRecord> messages) {
+        RoleBindingSnapshot threadBinding = RoleBindingSnapshot.fromThread(threadRecord);
+        if (!threadBinding.isEmpty()) {
+            return threadBinding;
+        }
+        if (messages == null || messages.isEmpty()) {
+            return RoleBindingSnapshot.empty();
+        }
+        for (int index = messages.size() - 1; index >= 0; index--) {
+            Map<String, Object> envelope = readMap(messages.get(index).getPayloadJson());
+            RoleBindingSnapshot envelopeBinding = RoleBindingSnapshot.fromEnvelope(envelope);
+            if (!envelopeBinding.isEmpty()) {
+                return envelopeBinding;
+            }
+        }
+        return RoleBindingSnapshot.empty();
     }
 
     private String resolveLastMessagePreview(
@@ -464,6 +484,65 @@ public class ChatConversationHistoryService {
             }
         }
         return null;
+    }
+
+    private record RoleBindingSnapshot(
+            String rolePackageCode,
+            String rolePackageVersion,
+            String roleScenarioCode) {
+
+        static RoleBindingSnapshot fromThread(ChatThreadRecord threadRecord) {
+            if (threadRecord == null) {
+                return empty();
+            }
+            return new RoleBindingSnapshot(
+                    threadRecord.getRolePackageCode(),
+                    threadRecord.getRolePackageVersion(),
+                    threadRecord.getRoleScenarioCode());
+        }
+
+        static RoleBindingSnapshot fromEnvelope(Map<String, Object> envelope) {
+            if (envelope == null || envelope.isEmpty()) {
+                return empty();
+            }
+            return new RoleBindingSnapshot(
+                    text(envelope.get("rolePackageCode")),
+                    text(envelope.get("rolePackageVersion")),
+                    text(envelope.get("roleScenarioCode")));
+        }
+
+        static RoleBindingSnapshot empty() {
+            return new RoleBindingSnapshot(null, null, null);
+        }
+
+        boolean isEmpty() {
+            return !StringUtils.hasText(rolePackageCode)
+                    && !StringUtils.hasText(rolePackageVersion)
+                    && !StringUtils.hasText(roleScenarioCode);
+        }
+
+        void applyTo(Map<String, Object> snapshot) {
+            if (snapshot == null || isEmpty()) {
+                return;
+            }
+            putIfText(snapshot, "rolePackageCode", rolePackageCode);
+            putIfText(snapshot, "rolePackageVersion", rolePackageVersion);
+            putIfText(snapshot, "roleScenarioCode", roleScenarioCode);
+        }
+
+        private static String text(Object value) {
+            if (value == null) {
+                return null;
+            }
+            String text = String.valueOf(value).trim();
+            return StringUtils.hasText(text) ? text : null;
+        }
+
+        private static void putIfText(Map<String, Object> snapshot, String key, String value) {
+            if (StringUtils.hasText(value)) {
+                snapshot.put(key, value);
+            }
+        }
     }
 }
 

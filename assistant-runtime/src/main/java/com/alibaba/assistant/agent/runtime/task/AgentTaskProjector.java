@@ -224,6 +224,10 @@ public class AgentTaskProjector {
         if (event == null || event.eventType() == null) {
             return 0;
         }
+        Integer payloadProgress = resolvePayloadProgressPercent(event);
+        if (payloadProgress != null) {
+            return payloadProgress;
+        }
         String eventType = event.eventType().name();
         if ("RUN_COMPLETED".equals(eventType) || "RUN_FAILED".equals(eventType)) {
             return 100;
@@ -245,6 +249,20 @@ public class AgentTaskProjector {
         return Math.min(90, (index * 100) / total);
     }
 
+
+    private Integer resolvePayloadProgressPercent(ExecutionEvent event) {
+        if (event == null || event.payload() == null || event.payload().isEmpty()) {
+            return null;
+        }
+        Object nested = event.payload().get("batchProgress");
+        if (nested instanceof Map<?, ?> batchProgress) {
+            Integer resolved = intValue(batchProgress.get("percent"), null);
+            if (resolved != null) {
+                return resolved;
+            }
+        }
+        return intValue(event.payload().get("progressPercent"), null);
+    }
     private String resolveExecutionTitle(PublishedToolDescriptor descriptor, ExecutionEvent event) {
         return firstText(
                 descriptor != null ? descriptor.displayName() : null,

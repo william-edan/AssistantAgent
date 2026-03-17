@@ -106,6 +106,17 @@ public class MigrationControlPlaneAuthorizationService {
     }
 
     /**
+     * Whether the authenticated user can manage role-package resources under an agent app.
+     */
+    public boolean canManageAgentAppRolePackages(
+            AuthenticatedUserContext authenticatedUser,
+            String spaceCode,
+            String environment,
+            String agentAppCode) {
+        return canManageAgentAppPublicationPolicy(authenticatedUser, spaceCode, environment, agentAppCode);
+    }
+
+    /**
      * Whether the authenticated user can manage approval queue operations in the target space.
      */
     public boolean canManageSpaceExecutionApprovals(
@@ -167,4 +178,3 @@ public class MigrationControlPlaneAuthorizationService {
         return StringUtils.hasText(value) ? value.trim() : "";
     }
 }
-

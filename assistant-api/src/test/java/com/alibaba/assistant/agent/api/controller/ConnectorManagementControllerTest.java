@@ -17,9 +17,12 @@ package com.alibaba.assistant.agent.api.controller;
 
 import com.alibaba.assistant.agent.api.security.AuthenticatedUserContext;
 import com.alibaba.assistant.agent.api.security.MigrationControlPlaneAuthorizationService;
+import com.alibaba.assistant.agent.controlplane.connector.ConnectorOpenApiImportResult;
+import com.alibaba.assistant.agent.controlplane.connector.ConnectorOpenApiOnboardingService;
 import com.alibaba.assistant.agent.controlplane.connector.ConnectorManagementService;
 import com.alibaba.assistant.agent.controlplane.connector.ConnectorUpsertCommand;
 import com.alibaba.assistant.agent.controlplane.connector.ResolvedConnectorView;
+import com.alibaba.assistant.agent.controlplane.toolregistry.ResolvedToolMetaManagementView;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -33,6 +36,7 @@ import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
 import java.security.Principal;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -42,6 +46,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -57,10 +62,16 @@ class ConnectorManagementControllerTest {
     @Mock
     private MigrationControlPlaneAuthorizationService authorizationService;
 
+    @Mock
+    private ConnectorOpenApiOnboardingService connectorOpenApiOnboardingService;
+
     @BeforeEach
     void setUp() {
         ConnectorManagementController controller =
-                new ConnectorManagementController(connectorManagementService, authorizationService);
+                new ConnectorManagementController(
+                        connectorManagementService,
+                        connectorOpenApiOnboardingService,
+                        authorizationService);
         mockMvc = MockMvcBuilders.standaloneSetup(controller)
                 .setControllerAdvice(new ControlPlaneErrorResponseAdvice())
                 .build();
@@ -194,6 +205,92 @@ class ConnectorManagementControllerTest {
                 .andExpect(status().isForbidden());
 
         verify(connectorManagementService, never()).listConnectors("enterprise-default", "prod", null);
+    }
+
+    @Test
+    void shouldImportOpenApiToolsThroughManagedConnectorEndpoint() throws Exception {
+        when(authorizationService.canManageSpaceCatalog(any(AuthenticatedUserContext.class), eq("enterprise-default"), eq("test")))
+                .thenReturn(true);
+        when(connectorOpenApiOnboardingService.importOpenApi(
+                eq("enterprise-default"),
+                eq("test"),
+                eq("oa-core"),
+                any()))
+                .thenReturn(Optional.of(new ConnectorOpenApiImportResult(
+                        "enterprise-default",
+                        "test",
+                        "oa-core",
+                        "gougu_oa",
+                        "http://oa.test",
+                        1,
+                        List.of(new ResolvedToolMetaManagementView(
+                                21L,
+                                "enterprise-default",
+                                "test",
+                                "oa-core",
+                                "gougu_oa.get_user",
+                                "查询用户",
+                                "查询用户",
+                                "gougu_oa",
+                                "QUERY",
+                                "PLANNER",
+                                "COMPOSABLE",
+                                "SYNC",
+                                "/users/{userId}",
+                                "GET",
+                                "application/json",
+                                Map.of("type", "object"),
+                                Map.of("steps", Map.of("invoke", Map.of("type", "HTTP"))),
+                                Map.of("toolType", "QUERY", "visibility", "PLANNER", "invocationPolicy", "COMPOSABLE", "executionMode", "SYNC"),
+                                "LOW",
+                                true,
+                                false,
+                                "READ",
+                                1,
+                                "enabled")),
+                        List.of("connector_base_url_applied:http://oa.test"))));
+
+        mockMvc.perform(post("/api/controlplane/spaces/enterprise-default/connectors/manage/oa-core/imports/openapi")
+                        .param("environment", "test")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "document": "{\\\"openapi\\\":\\\"3.0.3\\\",\\\"info\\\":{\\\"title\\\":\\\"OA API\\\",\\\"version\\\":\\\"1.0.0\\\"},\\\"paths\\\":{\\\"/users/{userId}\\\":{\\\"get\\\":{\\\"operationId\\\":\\\"getUser\\\",\\\"responses\\\":{\\\"200\\\":{\\\"description\\\":\\\"OK\\\"}}}}}}",
+                                  "baseUrl": "http://oa.test"
+                                }
+                                """)
+                        .principal(authenticatedPrincipal()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(0))
+                .andExpect(jsonPath("$.data.connectorCode").value("oa-core"))
+                .andExpect(jsonPath("$.data.resolvedBaseUrl").value("http://oa.test"))
+                .andExpect(jsonPath("$.data.importedCount").value(1))
+                .andExpect(jsonPath("$.data.tools[0].toolCode").value("gougu_oa.get_user"))
+                .andExpect(jsonPath("$.data.warnings[0]").value("connector_base_url_applied:http://oa.test"));
+    }
+
+    @Test
+    void shouldReturnBadRequestWhenOpenApiImportFailsValidation() throws Exception {
+        when(authorizationService.canManageSpaceCatalog(any(AuthenticatedUserContext.class), eq("enterprise-default"), eq("prod")))
+                .thenReturn(true);
+        when(connectorOpenApiOnboardingService.importOpenApi(
+                eq("enterprise-default"),
+                eq("prod"),
+                eq("oa-core"),
+                any()))
+                .thenThrow(new IllegalArgumentException("openapi_document_invalid"));
+
+        mockMvc.perform(post("/api/controlplane/spaces/enterprise-default/connectors/manage/oa-core/imports/openapi")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "document": "not-json"
+                                }
+                                """)
+                        .principal(authenticatedPrincipal()))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value(400))
+                .andExpect(jsonPath("$.msg").value("openapi_document_invalid"));
     }
 
     private Principal authenticatedPrincipal() {

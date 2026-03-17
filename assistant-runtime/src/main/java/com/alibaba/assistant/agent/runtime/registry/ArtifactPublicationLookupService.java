@@ -17,6 +17,8 @@ package com.alibaba.assistant.agent.runtime.registry;
 
 import com.alibaba.assistant.agent.common.tools.CodeactTool;
 import com.alibaba.assistant.agent.common.tools.CodeactToolMetadata;
+import com.alibaba.assistant.agent.runtime.role.RoleToolScopeFilter;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.ai.chat.model.ToolContext;
 import org.springframework.ai.tool.definition.ToolDefinition;
 import org.springframework.lang.Nullable;
@@ -29,7 +31,7 @@ import java.util.Map;
 import java.util.Optional;
 
 /**
- * 已发布业务工具查询服务。
+ * Lookup service for published business tools.
  */
 @Service
 public class ArtifactPublicationLookupService {
@@ -40,39 +42,50 @@ public class ArtifactPublicationLookupService {
 
     private final ToolPublicationProviderSelector toolPublicationProviderSelector;
 
+    @Nullable
+    private final RoleToolScopeFilter roleToolScopeFilter;
+
+    @Autowired
     public ArtifactPublicationLookupService(
             List<ToolPublicationProvider> toolPublicationProviders,
             PublicationScopeResolver publicationScopeResolver,
-            ToolPublicationProviderSelector toolPublicationProviderSelector) {
+            ToolPublicationProviderSelector toolPublicationProviderSelector,
+            @Nullable RoleToolScopeFilter roleToolScopeFilter) {
         this.toolPublicationProviders = toolPublicationProviders != null ? List.copyOf(toolPublicationProviders) : List.of();
         this.publicationScopeResolver = publicationScopeResolver;
         this.toolPublicationProviderSelector = toolPublicationProviderSelector;
+        this.roleToolScopeFilter = roleToolScopeFilter;
     }
-
     /**
-     * 列出面向用户目录可见的业务工具。
+     * List user-visible published artifacts.
      */
     public List<PublishedToolDescriptor> listPublishedArtifacts(Map<String, Object> attributes) {
-        return listPublishedArtifacts(publicationScopeResolver.resolve(attributes));
+        return listPublishedArtifacts(publicationScopeResolver.resolve(attributes), attributes);
     }
 
     /**
-     * 列出面向用户目录可见的业务工具。
+     * List user-visible published artifacts.
      */
     public List<PublishedToolDescriptor> listPublishedArtifacts(@Nullable ToolContext toolContext) {
-        return listPublishedArtifacts(publicationScopeResolver.resolve(toolContext));
+        Map<String, Object> attributes = toolContext != null && toolContext.getContext() != null
+                ? toolContext.getContext()
+                : Map.of();
+        return listPublishedArtifacts(publicationScopeResolver.resolve(toolContext), attributes);
     }
 
     /**
-     * 按工具编码解析单个已发布工具。内部依赖工具也允许被解析。
+     * Resolve a single published tool. Internal dependency tools remain resolvable.
      */
     public Optional<PublishedToolDescriptor> findPublishedArtifact(String artifactCode, @Nullable ToolContext toolContext) {
         if (!StringUtils.hasText(artifactCode)) {
             return Optional.empty();
         }
         String normalizedCode = artifactCode.trim();
+        Map<String, Object> attributes = toolContext != null && toolContext.getContext() != null
+                ? toolContext.getContext()
+                : Map.of();
         ToolPublicationProvider.PublicationScope scope = publicationScopeResolver.resolve(toolContext);
-        List<PublishedToolDescriptor> descriptors = listSelectedPublications(scope);
+        List<PublishedToolDescriptor> descriptors = listSelectedPublications(scope, attributes);
         return descriptors.stream()
                 .filter(this::isArtifactPublication)
                 .filter(descriptor -> matchesArtifactCode(descriptor, normalizedCode))
@@ -83,9 +96,11 @@ public class ArtifactPublicationLookupService {
                         .findFirst());
     }
 
-    private List<PublishedToolDescriptor> listPublishedArtifacts(ToolPublicationProvider.PublicationScope scope) {
+    private List<PublishedToolDescriptor> listPublishedArtifacts(
+            ToolPublicationProvider.PublicationScope scope,
+            Map<String, Object> attributes) {
         List<PublishedToolDescriptor> artifacts = new ArrayList<>();
-        for (PublishedToolDescriptor descriptor : listSelectedPublications(scope)) {
+        for (PublishedToolDescriptor descriptor : listSelectedPublications(scope, attributes)) {
             if (isUserVisibleArtifact(descriptor)) {
                 artifacts.add(descriptor);
             }
@@ -93,15 +108,18 @@ public class ArtifactPublicationLookupService {
         return List.copyOf(artifacts);
     }
 
-    private List<PublishedToolDescriptor> listSelectedPublications(ToolPublicationProvider.PublicationScope scope) {
+    private List<PublishedToolDescriptor> listSelectedPublications(
+            ToolPublicationProvider.PublicationScope scope,
+            Map<String, Object> attributes) {
         List<ToolPublicationProvider> selectedProviders = toolPublicationProviderSelector
                 .selectProviders(scope, toolPublicationProviders);
-        return listPublications(scope, selectedProviders);
+        return listPublications(scope, selectedProviders, attributes);
     }
 
     private List<PublishedToolDescriptor> listPublications(
             ToolPublicationProvider.PublicationScope scope,
-            List<ToolPublicationProvider> providers) {
+            List<ToolPublicationProvider> providers,
+            Map<String, Object> attributes) {
         List<PublishedToolDescriptor> descriptors = new ArrayList<>();
         for (ToolPublicationProvider provider : providers) {
             if (provider == null) {
@@ -117,7 +135,7 @@ public class ArtifactPublicationLookupService {
                 }
             }
         }
-        return List.copyOf(descriptors);
+        return roleToolScopeFilter != null ? roleToolScopeFilter.filter(attributes, descriptors) : List.copyOf(descriptors);
     }
 
     private boolean isUserVisibleArtifact(PublishedToolDescriptor descriptor) {
@@ -167,3 +185,4 @@ public class ArtifactPublicationLookupService {
                 && artifactCode.equalsIgnoreCase(definition.name().trim());
     }
 }
+

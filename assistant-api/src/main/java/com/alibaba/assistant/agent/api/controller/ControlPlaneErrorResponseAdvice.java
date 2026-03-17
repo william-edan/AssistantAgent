@@ -51,4 +51,11 @@ public class ControlPlaneErrorResponseAdvice {
         return ResponseEntity.status(ex.getStatusCode())
                 .body(ControlPlaneErrorResponse.of(ex.getStatusCode().value(), message));
     }
+
+    @ExceptionHandler(IllegalArgumentException.class)
+    public ResponseEntity<ControlPlaneErrorResponse> handleIllegalArgumentException(IllegalArgumentException ex) {
+        String message = StringUtils.hasText(ex.getMessage()) ? ex.getMessage() : "bad_request";
+        return ResponseEntity.badRequest()
+                .body(ControlPlaneErrorResponse.of(400, message));
+    }
 }

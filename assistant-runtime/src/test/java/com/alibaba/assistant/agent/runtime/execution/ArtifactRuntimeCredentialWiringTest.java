@@ -21,6 +21,7 @@ import com.alibaba.assistant.agent.execution.flow.FlowDefinition;
 import com.alibaba.assistant.agent.execution.flow.FlowExecutionResult;
 import com.alibaba.assistant.agent.execution.model.StepDefinition;
 import com.alibaba.assistant.agent.execution.model.StepType;
+import com.alibaba.assistant.agent.runtime.agent.AssistantStateKeys;
 import com.alibaba.assistant.agent.runtime.compiler.RuntimeArtifact;
 import com.alibaba.assistant.agent.runtime.registry.PublishedToolDescriptor;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -85,6 +86,57 @@ class ArtifactRuntimeCredentialWiringTest {
         assertEquals("Bearer token-123",
                 flowContextCaptor.getValue().getStepRequestHeaders("submit_approval").get("Authorization"));
         assertNotNull(flowContextCaptor.getValue().getRunId());
+    }
+
+    @Test
+    void shouldPropagateCredentialLeaseUsingPublishedRoleContext() {
+        DAGFlowExecutor dagFlowExecutor = mock(DAGFlowExecutor.class);
+        CredentialBroker credentialBroker = mock(CredentialBroker.class);
+        ArtifactRuntimeExecutor executor = new ArtifactRuntimeExecutor(dagFlowExecutor, credentialBroker, new ObjectMapper());
+        RuntimeArtifact artifact = runtimeArtifact("office1.approval_cleanup");
+        PublishedToolDescriptor descriptor = PublishedToolDescriptor.forArtifact(
+                "tool-meta-catalog",
+                "workflow:office1.approval_cleanup",
+                "审批清理",
+                null,
+                null,
+                false,
+                "office1",
+                artifact);
+
+        FlowExecutionResult flowExecutionResult = new FlowExecutionResult();
+        flowExecutionResult.setSuccess(true);
+        when(dagFlowExecutor.execute(same(artifact.getFlowDefinition()), any(FlowContext.class))).thenReturn(flowExecutionResult);
+        when(credentialBroker.resolve(any())).thenReturn(new ResolvedCredentialLease(
+                "lease-2",
+                "office1-service",
+                41L,
+                10L,
+                "BEARER",
+                Map.of("Authorization", "Bearer office1-token"),
+                Instant.now().plusSeconds(600),
+                "http://office1.internal"));
+
+        executor.execute(descriptor, Map.of(
+                AssistantStateKeys.AGENT_APP_CODE, "admin-agent",
+                AssistantStateKeys.ROLE_PACKAGE_CODE, "digital-admin",
+                AssistantStateKeys.ROLE_PACKAGE_VERSION, "v1",
+                AssistantStateKeys.ROLE_SCENARIO_CODE, "approval_cleanup",
+                "platform_principal_id", "digital-admin-duty-bot",
+                "platform_principal_type", "service_account",
+                "execution_subject_type", "service_account",
+                "execution_subject_id", "office1.bot"), null);
+
+        ArgumentCaptor<CredentialResolutionRequest> requestCaptor = ArgumentCaptor.forClass(CredentialResolutionRequest.class);
+        verify(credentialBroker).resolve(requestCaptor.capture());
+        assertEquals("admin-agent", requestCaptor.getValue().agentAppCode());
+        assertEquals("digital-admin", requestCaptor.getValue().rolePackageCode());
+        assertEquals("v1", requestCaptor.getValue().rolePackageVersion());
+        assertEquals("approval_cleanup", requestCaptor.getValue().scenarioCode());
+        assertEquals("service_account", requestCaptor.getValue().executionSubjectType());
+        assertEquals("office1.bot", requestCaptor.getValue().executionSubjectId());
+        assertEquals("digital-admin-duty-bot", requestCaptor.getValue().platformPrincipalId());
+        assertEquals("service_account", requestCaptor.getValue().platformPrincipalType());
     }
 
     private RuntimeArtifact runtimeArtifact(String artifactCode) {

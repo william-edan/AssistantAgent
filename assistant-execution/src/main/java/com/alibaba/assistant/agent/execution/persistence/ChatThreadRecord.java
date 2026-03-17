@@ -50,6 +50,12 @@ public class ChatThreadRecord {
 
     private String toolCode;
 
+    private String rolePackageCode;
+
+    private String rolePackageVersion;
+
+    private String roleScenarioCode;
+
     private String pendingCardType;
 
     private String lastUserMessage;
@@ -88,6 +94,12 @@ public class ChatThreadRecord {
     public void setCanResume(Boolean canResume) { this.canResume = canResume; }
     public String getToolCode() { return toolCode; }
     public void setToolCode(String toolCode) { this.toolCode = toolCode; }
+    public String getRolePackageCode() { return rolePackageCode; }
+    public void setRolePackageCode(String rolePackageCode) { this.rolePackageCode = rolePackageCode; }
+    public String getRolePackageVersion() { return rolePackageVersion; }
+    public void setRolePackageVersion(String rolePackageVersion) { this.rolePackageVersion = rolePackageVersion; }
+    public String getRoleScenarioCode() { return roleScenarioCode; }
+    public void setRoleScenarioCode(String roleScenarioCode) { this.roleScenarioCode = roleScenarioCode; }
     public String getPendingCardType() { return pendingCardType; }
     public void setPendingCardType(String pendingCardType) { this.pendingCardType = pendingCardType; }
     public String getLastUserMessage() { return lastUserMessage; }

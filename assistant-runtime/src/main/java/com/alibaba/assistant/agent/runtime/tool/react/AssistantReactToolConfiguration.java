@@ -20,6 +20,8 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Profile;
 import org.springframework.ai.tool.ToolCallback;
 
+import java.util.Set;
+
 /**
  * 迁移模式下的 React 工具注册配置。
  *
@@ -29,6 +31,15 @@ import org.springframework.ai.tool.ToolCallback;
 @Configuration
 @Profile("migration")
 public class AssistantReactToolConfiguration {
+
+    private static final Set<String> BUILT_IN_REACT_TOOL_NAMES = Set.of(
+            "slot_collect",
+            "slot_confirm",
+            "artifact_execute");
+
+    public static Set<String> builtInReactToolNames() {
+        return BUILT_IN_REACT_TOOL_NAMES;
+    }
 
     @Bean
     public ToolCallback slotCollectToolCallback(SlotCollectTool slotCollectTool) {

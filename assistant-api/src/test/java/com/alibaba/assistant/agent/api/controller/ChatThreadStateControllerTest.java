@@ -82,6 +82,9 @@ class ChatThreadStateControllerTest {
                 .id("cp-1")
                 .state(Map.of(
                         AssistantStateKeys.ASSISTANT_UID, "1001",
+                        AssistantStateKeys.ROLE_PACKAGE_CODE, "digital-admin",
+                        AssistantStateKeys.ROLE_PACKAGE_VERSION, "v1",
+                        AssistantStateKeys.ROLE_SCENARIO_CODE, "leave-approval",
                         AssistantStateKeys.FRONTEND_THREAD_STATE, Map.of(
                                 "status", "WAITING_CONFIRMATION",
                                 "phase", "CONFIRMING",
@@ -116,6 +119,9 @@ class ChatThreadStateControllerTest {
                 .andExpect(jsonPath("$.data.checkpointId").value("cp-1"))
                 .andExpect(jsonPath("$.data.status").value("WAITING_CONFIRMATION"))
                 .andExpect(jsonPath("$.data.unfinished").value(true))
+                .andExpect(jsonPath("$.data.rolePackageCode").value("digital-admin"))
+                .andExpect(jsonPath("$.data.rolePackageVersion").value("v1"))
+                .andExpect(jsonPath("$.data.roleScenarioCode").value("leave-approval"))
                 .andExpect(jsonPath("$.data.pendingForm.mode").value("CONFIRM"))
                 .andExpect(jsonPath("$.data.pendingForm.toolCode").value("gougu_oa.leave_application"));
     }
@@ -126,6 +132,9 @@ class ChatThreadStateControllerTest {
                 .id("cp-2")
                 .state(Map.of(
                         AssistantStateKeys.ASSISTANT_UID, "1001",
+                        AssistantStateKeys.ROLE_PACKAGE_CODE, "digital-admin",
+                        AssistantStateKeys.ROLE_PACKAGE_VERSION, "v1",
+                        AssistantStateKeys.ROLE_SCENARIO_CODE, "leave-approval",
                         AssistantStateKeys.CONVERSATION_PHASE, "COLLECTING",
                         AssistantStateKeys.MATCHED_TOOL_META, Map.of("toolCode", "gougu_oa.leave_application"),
                         AssistantStateKeys.COLLECTED_SLOTS, Map.of("reason", "个人事务"),
@@ -162,18 +171,21 @@ class ChatThreadStateControllerTest {
         when(checkpointSaver.get(any(RunnableConfig.class))).thenReturn(Optional.empty());
         when(chatTaskService.listThreadTasks("1001", "T-history", 10)).thenReturn(List.of());
         when(chatNotificationService.listThreadNotifications("1001", "T-history", 10)).thenReturn(List.of());
-        when(chatConversationHistoryService.findThreadStateSnapshot("1001", "T-history")).thenReturn(Optional.of(Map.of(
-                "status", "WAITING_CONFIRMATION",
-                "phase", "CONFIRMING",
-                "unfinished", true,
-                "canResume", true,
-                "toolCode", "gougu_oa.leave_application",
-                "updatedAt", "2026-03-13T12:00:05Z",
-                "pendingForm", Map.of(
+        when(chatConversationHistoryService.findThreadStateSnapshot("1001", "T-history")).thenReturn(Optional.of(Map.ofEntries(
+                Map.entry("status", "WAITING_CONFIRMATION"),
+                Map.entry("phase", "CONFIRMING"),
+                Map.entry("unfinished", true),
+                Map.entry("canResume", true),
+                Map.entry("toolCode", "gougu_oa.leave_application"),
+                Map.entry("rolePackageCode", "digital-admin"),
+                Map.entry("rolePackageVersion", "v1"),
+                Map.entry("roleScenarioCode", "leave-approval"),
+                Map.entry("updatedAt", "2026-03-13T12:00:05Z"),
+                Map.entry("pendingForm", Map.of(
                         "mode", "CONFIRM",
                         "toolCode", "gougu_oa.leave_application",
-                        "values", Map.of("types", 1, "check_uids", "4")),
-                "lastMessage", "请确认审批人"
+                        "values", Map.of("types", 1, "check_uids", "4"))),
+                Map.entry("lastMessage", "请确认审批人")
         )));
 
         mockMvc.perform(get("/api/chat/threads/T-history/state").principal(authenticatedPrincipal("1001")))
@@ -183,6 +195,9 @@ class ChatThreadStateControllerTest {
                 .andExpect(jsonPath("$.data.status").value("WAITING_CONFIRMATION"))
                 .andExpect(jsonPath("$.data.phase").value("CONFIRMING"))
                 .andExpect(jsonPath("$.data.unfinished").value(true))
+                .andExpect(jsonPath("$.data.rolePackageCode").value("digital-admin"))
+                .andExpect(jsonPath("$.data.rolePackageVersion").value("v1"))
+                .andExpect(jsonPath("$.data.roleScenarioCode").value("leave-approval"))
                 .andExpect(jsonPath("$.data.pendingForm.mode").value("CONFIRM"))
                 .andExpect(jsonPath("$.data.lastMessage").value("请确认审批人"));
     }
@@ -274,6 +289,9 @@ class ChatThreadStateControllerTest {
                 .id("cp-stale")
                 .state(Map.of(
                         AssistantStateKeys.ASSISTANT_UID, "1001",
+                        AssistantStateKeys.ROLE_PACKAGE_CODE, "digital-admin",
+                        AssistantStateKeys.ROLE_PACKAGE_VERSION, "v1",
+                        AssistantStateKeys.ROLE_SCENARIO_CODE, "leave-approval",
                         AssistantStateKeys.FRONTEND_THREAD_STATE, Map.of(
                                 "status", "WAITING_APPROVAL",
                                 "phase", "WAITING_APPROVAL",
@@ -351,6 +369,7 @@ class ChatThreadStateControllerTest {
                 List.of("assistant:chat"));
     }
 }
+
 
 
 
