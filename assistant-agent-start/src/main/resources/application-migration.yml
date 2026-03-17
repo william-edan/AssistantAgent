@@ -7,7 +7,7 @@
 spring:
   datasource:
     # 默认落到全新迁移库，仍可通过 MYSQL_DB 覆盖。
-    url: jdbc:mysql://${MYSQL_HOST:8.156.74.119}:${MYSQL_PORT:3306}/${MYSQL_DB:assistant_new_2}?useUnicode=true&characterEncoding=utf-8&useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Shanghai
+    url: jdbc:mysql://${MYSQL_HOST:8.156.74.119}:${MYSQL_PORT:3306}/${MYSQL_DB:assistant_new1}?useUnicode=true&characterEncoding=utf-8&useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Shanghai
     driver-class-name: com.mysql.cj.jdbc.Driver
     username: ${MYSQL_USER:root}
     password: ${MYSQL_PASSWORD:StrongRootPwd}
@@ -91,6 +91,7 @@ spring.ai.dashscope:
     options:
       model: qwen-plus
       incremental-output: true
+  api-key: sk-434f88b803e348b1b799b34b45360874
 
 
 # ============================================================================

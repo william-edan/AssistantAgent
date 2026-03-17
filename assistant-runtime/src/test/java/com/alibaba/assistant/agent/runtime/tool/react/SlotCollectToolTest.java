@@ -1116,6 +1116,98 @@ class SlotCollectToolTest {
         assertFalse(response.collected.containsKey("check_uids"));
     }
 
+    @Test
+    void shouldResolveDynamicMultiSelectOptionsFromExplicitFieldCue() {
+        ObjectMapper objectMapper = new ObjectMapper();
+        SlotEnricherService enricher = mock(SlotEnricherService.class);
+        when(enricher.enrichSlots(anyList(), anyString(), anyString())).thenReturn(new ArrayList<>());
+
+        SlotCollectTool tool = new SlotCollectTool(
+                new SlotCollectorService(),
+                enricher,
+                new ComputedFieldProcessor(List.of(new DatePeriodPresetFunction(), new DateRangeLabelFunction())),
+                new SlotSchemaParser(objectMapper),
+                objectMapper);
+
+        OverAllState state = stateWithSnapshot(snapshot("gougu_oa.meeting_room_booking", MEETING_SCHEMA, null));
+        state.updateState(Map.of(
+                AssistantStateKeys.SYSTEM_CODE, "oa",
+                AssistantStateKeys.ASSISTANT_UID, "u1",
+                AssistantStateKeys.ENRICHED_SLOTS, new ArrayList<>(List.of(
+                        enrichedSlot("requirement", "会议需求", List.of(
+                                new SlotOption("电子屏", "13"),
+                                new SlotOption("投影背景", "14"))))),
+                "input", "会议需求：电子屏和投影背景"));
+
+        SlotCollectTool.Response response = tool.apply(new SlotCollectTool.Request(), toolContext(state));
+
+        assertEquals(List.of("13", "14"), stringifyList(response.collected.get("requirement")));
+    }
+
+    @Test
+    void shouldKeepRecognizedDynamicMultiSelectOptionsWhenExplicitFieldCueContainsUnknownItem() {
+        ObjectMapper objectMapper = new ObjectMapper();
+        SlotEnricherService enricher = mock(SlotEnricherService.class);
+        when(enricher.enrichSlots(anyList(), anyString(), anyString())).thenReturn(new ArrayList<>());
+
+        SlotCollectTool tool = new SlotCollectTool(
+                new SlotCollectorService(),
+                enricher,
+                new ComputedFieldProcessor(List.of(new DatePeriodPresetFunction(), new DateRangeLabelFunction())),
+                new SlotSchemaParser(objectMapper),
+                objectMapper);
+
+        OverAllState state = stateWithSnapshot(snapshot("gougu_oa.meeting_room_booking", MEETING_SCHEMA, null));
+        state.updateState(Map.of(
+                AssistantStateKeys.SYSTEM_CODE, "oa",
+                AssistantStateKeys.ASSISTANT_UID, "u1",
+                AssistantStateKeys.ENRICHED_SLOTS, new ArrayList<>(List.of(
+                        enrichedSlot("requirement", "会议需求", List.of(
+                                new SlotOption("电子屏", "13"),
+                                new SlotOption("投影背景", "14"))))),
+                "input", "会议需求：购买水果和投影背景"));
+
+        SlotCollectTool.Response response = tool.apply(new SlotCollectTool.Request(), toolContext(state));
+
+        assertEquals(List.of("14"), stringifyList(response.collected.get("requirement")));
+    }
+
+    @Test
+    void shouldCollectExplicitMeetingPayloadWhenRequirementContainsMultipleValues() {
+        ObjectMapper objectMapper = new ObjectMapper();
+        SlotEnricherService enricher = mock(SlotEnricherService.class);
+        when(enricher.enrichSlots(anyList(), anyString(), anyString())).thenReturn(new ArrayList<>());
+
+        SlotCollectTool tool = new SlotCollectTool(
+                new SlotCollectorService(),
+                enricher,
+                new ComputedFieldProcessor(List.of(new DatePeriodPresetFunction(), new DateRangeLabelFunction())),
+                new SlotSchemaParser(objectMapper),
+                objectMapper);
+
+        OverAllState state = stateWithSnapshot(snapshot("gougu_oa.meeting_room_booking", MEETING_SCHEMA, null));
+        state.updateState(Map.of(
+                AssistantStateKeys.SYSTEM_CODE, "oa",
+                AssistantStateKeys.ASSISTANT_UID, "u1",
+                AssistantStateKeys.ENRICHED_SLOTS, new ArrayList<>(List.of(
+                        enrichedSlot("room_id", "会议室", List.of(
+                                new SlotOption("一号会议室", "1"),
+                                new SlotOption("二号会议室", "2"))),
+                        enrichedSlot("requirement", "会议需求", List.of(
+                                new SlotOption("电子屏", "13"),
+                                new SlotOption("投影背景", "14"))))),
+                "input", "会议室 1，会议主题 预订会议室，开始时间 2026-03-18 20:53，结束时间 2026-03-18 21:53，会议人数 12，会议需求 购买水果和投影背景"));
+
+        SlotCollectTool.Response response = tool.apply(new SlotCollectTool.Request(), toolContext(state));
+
+        assertEquals(1, response.collected.get("room_id"));
+        assertEquals("预订会议室", response.collected.get("title"));
+        assertEquals("2026-03-18 20:53", response.collected.get("start_date"));
+        assertEquals("2026-03-18 21:53", response.collected.get("end_date"));
+        assertEquals(12, response.collected.get("num"));
+        assertEquals(List.of("14"), stringifyList(response.collected.get("requirement")));
+    }
+
 
 
     @Test

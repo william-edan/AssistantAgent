@@ -1505,7 +1505,10 @@ public class SlotCollectTool implements BiFunction<SlotCollectTool.Request, Tool
             boolean hasFieldCue = Boolean.TRUE.equals(fieldCueBySlot.get(definition.getName()));
             Object existingValue = readCollectedValue(collectedSlots, definition.getName());
             Object currentValue = extracted.get(definition.getName());
-            Object normalizedValue = normalizeOptionValue(currentValue, enrichedSlot.getOptions());
+            Object normalizedValue = normalizeOptionValue(
+                    currentValue,
+                    enrichedSlot.getOptions(),
+                    isMultiValueSlot(definition));
             boolean explicitStructuredInput = explicitStructuredSlotNames != null
                     && explicitStructuredSlotNames.contains(definition.getName());
             if (currentValue != null) {
@@ -1604,6 +1607,10 @@ public class SlotCollectTool implements BiFunction<SlotCollectTool.Request, Tool
     }
 
     private Object normalizeOptionValue(Object rawValue, List<SlotOption> options) {
+        return normalizeOptionValue(rawValue, options, false);
+    }
+
+    private Object normalizeOptionValue(Object rawValue, List<SlotOption> options, boolean multiValueSlot) {
         if (rawValue == null || options == null || options.isEmpty()) {
             return null;
         }
@@ -1612,6 +1619,11 @@ public class SlotCollectTool implements BiFunction<SlotCollectTool.Request, Tool
             for (Object value : values) {
                 collectNormalizedOptionValues(normalizedValues, value, options);
             }
+            return normalizedValues.isEmpty() ? null : normalizedValues;
+        }
+        if (multiValueSlot) {
+            List<Object> normalizedValues = new ArrayList<>();
+            collectNormalizedOptionValues(normalizedValues, rawValue, options);
             return normalizedValues.isEmpty() ? null : normalizedValues;
         }
         return normalizeSingleOptionValue(rawValue, options);
@@ -1631,7 +1643,7 @@ public class SlotCollectTool implements BiFunction<SlotCollectTool.Request, Tool
         if (!StringUtils.hasText(rawText)) {
             return;
         }
-        String[] segments = rawText.split("[,，、]");
+        String[] segments = rawText.split("[,，、/|和及]");
         if (segments.length > 1) {
             for (String segment : segments) {
                 collectNormalizedOptionValues(target, segment.trim(), options);
