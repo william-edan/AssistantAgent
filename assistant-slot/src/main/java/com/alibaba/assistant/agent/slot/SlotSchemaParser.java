@@ -102,6 +102,7 @@ public class SlotSchemaParser {
 			aiHint = getTextOrNull(slotNode, "aiHint");
 		}
 		slot.setAiHint(aiHint);
+		slot.setAliases(parseAliases(slotNode));
 
 		String priority = getTextOrNull(slotNode, "priority");
 		if (priority != null) {
@@ -210,6 +211,35 @@ public class SlotSchemaParser {
 		}
 
 		return slot;
+	}
+
+	private List<String> parseAliases(JsonNode slotNode) {
+		if (slotNode == null || slotNode.isNull()) {
+			return null;
+		}
+		JsonNode aliasesNode = slotNode.get("aliases");
+		if (aliasesNode == null) {
+			aliasesNode = slotNode.get("alias");
+		}
+		if (aliasesNode == null || aliasesNode.isNull()) {
+			return null;
+		}
+		List<String> aliases = new ArrayList<>();
+		if (aliasesNode.isArray()) {
+			for (JsonNode aliasNode : aliasesNode) {
+				String alias = aliasNode != null ? aliasNode.asText(null) : null;
+				if (alias != null && !alias.isBlank()) {
+					aliases.add(alias.trim());
+				}
+			}
+		}
+		else {
+			String alias = aliasesNode.asText(null);
+			if (alias != null && !alias.isBlank()) {
+				aliases.add(alias.trim());
+			}
+		}
+		return aliases.isEmpty() ? null : aliases;
 	}
 
 	private SlotDisplayConfig parseDisplayConfig(JsonNode displayConfigNode) {

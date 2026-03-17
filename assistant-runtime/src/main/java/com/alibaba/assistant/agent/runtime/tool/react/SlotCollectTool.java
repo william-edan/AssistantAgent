@@ -18,6 +18,7 @@ package com.alibaba.assistant.agent.runtime.tool.react;
 import com.alibaba.assistant.agent.controlplane.toolregistry.ToolMeta;
 import com.alibaba.assistant.agent.controlplane.toolregistry.ToolMetaService;
 import com.alibaba.assistant.agent.runtime.agent.AssistantStateKeys;
+import com.alibaba.assistant.agent.runtime.agent.ConversationUserInputResolver;
 import com.alibaba.assistant.agent.runtime.registry.ArtifactPublicationLookupService;
 import com.alibaba.assistant.agent.runtime.registry.PublishedToolDescriptor;
 import com.alibaba.assistant.agent.runtime.planner.DependencyResolver;
@@ -45,8 +46,6 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.ai.chat.messages.Message;
-import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.ai.chat.model.ToolContext;
 import org.springframework.ai.tool.ToolCallback;
 import org.springframework.ai.tool.function.FunctionToolCallback;
@@ -106,11 +105,14 @@ public class SlotCollectTool implements BiFunction<SlotCollectTool.Request, Tool
                     + "(上午|中午|下午|晚上)?\\s*([零一二两三四五六七八九十\\d]{1,2})(?:点|时)(半|一刻|三刻|[0-5]?\\d分?)?"
                     + "\\s*(?:到|至|\\-|~|～)\\s*"
                     + "(上午|中午|下午|晚上)?\\s*([零一二两三四五六七八九十\\d]{1,2})(?:点|时)(半|一刻|三刻|[0-5]?\\d分?)?");
+    private static final Pattern RELATIVE_TIME_POINT_PATTERN =
+            Pattern.compile("(上午|中午|下午|晚上)?\\s*([零一二两三四五六七八九十\\d]{1,2})(?:点|时)(半|一刻|三刻|[0-5]?\\d分?)?");
+    private static final Pattern CLOCK_TIME_PATTERN = Pattern.compile("(?<!\\d)(\\d{1,2}):(\\d{2})(?!\\d)");
 
     private static final DateTimeFormatter DATETIME_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
 
     private static final Pattern EXPLICIT_REASON_PATTERN =
-            Pattern.compile("(?:请假原因(?:是|为)?|原因(?:是|为)?|因为|由于)\\s*([^，。；,;\\n]{1,40})");
+            Pattern.compile("(?:请假原因(?:是|为)?|原因(?:是|为)?|因为|由于)\\s*[:：]?\\s*([^，。；,;\\n]{1,40})");
 
     private static final Pattern GENERIC_PRIVATE_REASON_PATTERN =
             Pattern.compile("有[^，。；,;\\n]{0,6}事");
@@ -383,6 +385,7 @@ public class SlotCollectTool implements BiFunction<SlotCollectTool.Request, Tool
         }
 
         LocalDate anchorDate = resolveAnchorDate(state);
+        applyStructuredSlotPatch(merged, slotDefinitions, userInput, anchorDate, collectedSlots);
         applyDateFallback(merged, slotDefinitions, userInput, anchorDate, collectedSlots);
         applyEnumOptionFallbacks(merged, slotDefinitions, userInput, collectedSlots);
         applyLeaveTypeFallback(merged, slotDefinitions, userInput, collectedSlots);
@@ -415,6 +418,266 @@ public class SlotCollectTool implements BiFunction<SlotCollectTool.Request, Tool
             }
         }
         return filtered;
+    }
+
+    private void applyStructuredSlotPatch(Map<String, Object> extracted,
+                                          List<SlotDefinition> slotDefinitions,
+                                          String userInput,
+                                          LocalDate anchorDate,
+                                          Map<String, SlotValue> collectedSlots) {
+        if (extracted == null || slotDefinitions == null || slotDefinitions.isEmpty()
+                || !StringUtils.hasText(userInput)) {
+            return;
+        }
+        for (SlotDefinition definition : slotDefinitions) {
+            if (definition == null || !StringUtils.hasText(definition.getName())) {
+                continue;
+            }
+            String explicitValue = extractExplicitFieldValue(userInput, buildStructuredPatchAliases(definition));
+            if (!StringUtils.hasText(explicitValue)) {
+                continue;
+            }
+            Object normalizedValue = normalizeStructuredPatchValue(definition, explicitValue, anchorDate, collectedSlots);
+            if (normalizedValue != null) {
+                extracted.put(definition.getName(), normalizedValue);
+            }
+        }
+    }
+
+    private List<String> buildStructuredPatchAliases(SlotDefinition definition) {
+        if (definition == null) {
+            return List.of();
+        }
+        java.util.LinkedHashSet<String> aliases = new java.util.LinkedHashSet<>();
+        addStructuredPatchAlias(aliases, definition.getTitle());
+        addStructuredPatchAlias(aliases, definition.getName());
+        if (definition.getAliases() != null) {
+            for (String alias : definition.getAliases()) {
+                addStructuredPatchAlias(aliases, alias);
+            }
+        }
+        addSemanticStructuredPatchAliases(aliases, definition);
+        List<String> ordered = new ArrayList<>(aliases);
+        ordered.sort((left, right) -> Integer.compare(right.length(), left.length()));
+        return ordered;
+    }
+
+    private void addStructuredPatchAlias(java.util.LinkedHashSet<String> aliases, String rawAlias) {
+        if (aliases == null || !StringUtils.hasText(rawAlias)) {
+            return;
+        }
+        aliases.add(rawAlias.trim());
+    }
+
+    private void addSemanticStructuredPatchAliases(java.util.LinkedHashSet<String> aliases, SlotDefinition definition) {
+        if (aliases == null || definition == null) {
+            return;
+        }
+        String normalizedName = normalizeOptionText(definition.getName());
+        String normalizedTitle = normalizeOptionText(definition.getTitle());
+        String loweredName = normalizedName != null ? normalizedName.toLowerCase(Locale.ROOT) : "";
+        String loweredTitle = normalizedTitle != null ? normalizedTitle.toLowerCase(Locale.ROOT) : "";
+
+        if (isTemporalStartSlot(definition, normalizedTitle, loweredName, loweredTitle)) {
+            aliases.addAll(List.of("开始时间", "开始日期", "开始", "起始时间", "起始日期", "起始"));
+        }
+        if (isTemporalEndSlot(definition, normalizedTitle, loweredName, loweredTitle)) {
+            aliases.addAll(List.of("结束时间", "结束日期", "结束", "截至时间", "截至日期", "截至", "截止时间", "截止日期", "截止"));
+        }
+        if (isReasonSlot(definition, loweredName, loweredTitle)) {
+            aliases.addAll(List.of("原因", "请假原因", "事由", "备注"));
+        }
+        if (isTopicSlot(loweredName, loweredTitle)) {
+            aliases.addAll(List.of("主题", "标题", "会议主题"));
+        }
+        if (isCountSlot(loweredName, loweredTitle)) {
+            aliases.addAll(List.of("人数", "数量", "人次"));
+        }
+        if (isTypedOptionSlot(definition, loweredName, loweredTitle)) {
+            aliases.addAll(List.of("类型", "请假类型", "类别"));
+        }
+    }
+
+    private boolean isTemporalStartSlot(SlotDefinition definition,
+                                        String normalizedTitle,
+                                        String loweredName,
+                                        String loweredTitle) {
+        return isTemporalSlot(definition)
+                && (containsAny(normalizedTitle, "开始", "起始")
+                || loweredName.contains("start")
+                || loweredName.contains("from")
+                || loweredTitle.contains("start")
+                || loweredTitle.contains("from"));
+    }
+
+    private boolean isTemporalEndSlot(SlotDefinition definition,
+                                      String normalizedTitle,
+                                      String loweredName,
+                                      String loweredTitle) {
+        return isTemporalSlot(definition)
+                && (containsAny(normalizedTitle, "结束", "截至", "截止")
+                || loweredName.contains("end")
+                || loweredName.contains("to")
+                || loweredName.contains("until")
+                || loweredTitle.contains("end")
+                || loweredTitle.contains("until"));
+    }
+
+    private boolean isTemporalSlot(SlotDefinition definition) {
+        return definition != null && (isDateTimeSlot(definition) || isDateSlot(definition));
+    }
+
+    private boolean isDateSlot(SlotDefinition definition) {
+        if (definition == null) {
+            return false;
+        }
+        return "date".equalsIgnoreCase(definition.getType())
+                || "date".equalsIgnoreCase(definition.getUiComponent());
+    }
+
+    private boolean isReasonSlot(SlotDefinition definition, String loweredName, String loweredTitle) {
+        return containsAny(normalizeOptionText(definition != null ? definition.getTitle() : null), "原因", "事由", "备注")
+                || loweredName.contains("reason")
+                || loweredName.contains("memo")
+                || loweredName.contains("remark")
+                || loweredName.contains("note")
+                || loweredTitle.contains("reason")
+                || loweredTitle.contains("memo")
+                || loweredTitle.contains("remark")
+                || loweredTitle.contains("note");
+    }
+
+    private boolean isTopicSlot(String loweredName, String loweredTitle) {
+        return loweredName.contains("title")
+                || loweredName.contains("topic")
+                || loweredName.contains("subject")
+                || loweredTitle.contains("title")
+                || loweredTitle.contains("topic")
+                || loweredTitle.contains("subject");
+    }
+
+    private boolean isCountSlot(String loweredName, String loweredTitle) {
+        return loweredName.contains("count")
+                || loweredName.contains("headcount")
+                || loweredName.contains("num")
+                || loweredTitle.contains("count")
+                || loweredTitle.contains("headcount")
+                || loweredTitle.contains("num");
+    }
+
+    private boolean isTypedOptionSlot(SlotDefinition definition, String loweredName, String loweredTitle) {
+        return definition != null
+                && definition.getOptions() != null
+                && (loweredName.contains("type")
+                || loweredName.contains("kind")
+                || loweredName.contains("category")
+                || loweredTitle.contains("type")
+                || loweredTitle.contains("kind")
+                || loweredTitle.contains("category"));
+    }
+
+    private Object normalizeStructuredPatchValue(SlotDefinition definition,
+                                                 String explicitValue,
+                                                 LocalDate anchorDate,
+                                                 Map<String, SlotValue> collectedSlots) {
+        if (definition == null || !StringUtils.hasText(explicitValue)) {
+            return null;
+        }
+        String trimmedValue = explicitValue.trim();
+        List<SlotOption> staticOptions = resolveStaticOptions(definition);
+        if (!staticOptions.isEmpty()) {
+            Object normalizedOptionValue = normalizeStructuredOptionValue(definition, trimmedValue, staticOptions);
+            if (normalizedOptionValue != null) {
+                return normalizedOptionValue;
+            }
+        }
+        if (isDateTimeSlot(definition)) {
+            return parseExplicitDateTimeValue(trimmedValue, anchorDate, collectedSlots, definition.getName(), null);
+        }
+        if (isDateSlot(definition)) {
+            LocalDate date = resolveDateToken(trimmedValue, anchorDate);
+            if (date == null) {
+                date = extractSingleDate(trimmedValue, anchorDate);
+            }
+            return date != null ? date.toString() : null;
+        }
+        if (isNumericSlot(definition)) {
+            return extractExplicitIntegerValue(trimmedValue);
+        }
+        if (isReasonSlot(definition, normalizeOptionText(definition.getName()), normalizeOptionText(definition.getTitle()))) {
+            String sanitized = sanitizeReason(trimmedValue);
+            return StringUtils.hasText(sanitized) ? sanitized : trimmedValue;
+        }
+        return trimmedValue;
+    }
+
+    private boolean isNumericSlot(SlotDefinition definition) {
+        if (definition == null) {
+            return false;
+        }
+        return "integer".equalsIgnoreCase(definition.getType())
+                || "number".equalsIgnoreCase(definition.getType())
+                || "integer".equalsIgnoreCase(definition.getUiComponent())
+                || "number".equalsIgnoreCase(definition.getUiComponent());
+    }
+
+    private Integer extractExplicitIntegerValue(String rawValue) {
+        if (!StringUtils.hasText(rawValue)) {
+            return null;
+        }
+        Matcher matcher = Pattern.compile("-?\\d+").matcher(rawValue);
+        if (matcher.find()) {
+            return Integer.parseInt(matcher.group());
+        }
+        String normalized = rawValue.replace("个", "")
+                .replace("位", "")
+                .replace("人", "")
+                .replace("名", "")
+                .trim();
+        return parseLocalizedInteger(normalized);
+    }
+
+    private Object normalizeStructuredOptionValue(SlotDefinition definition,
+                                                  String explicitValue,
+                                                  List<SlotOption> options) {
+        if (definition == null || !StringUtils.hasText(explicitValue) || options == null || options.isEmpty()) {
+            return null;
+        }
+        if (!isMultiValueSlot(definition)) {
+            return normalizeSingleOptionValue(explicitValue, options);
+        }
+        List<Object> normalized = new ArrayList<>();
+        for (String segment : explicitValue.split("[,，、/|和及]")) {
+            Object optionValue = normalizeSingleOptionValue(segment.trim(), options);
+            addDistinctValue(normalized, optionValue);
+        }
+        return normalized.isEmpty() ? null : normalized;
+    }
+
+    private List<SlotOption> resolveStaticOptions(SlotDefinition definition) {
+        if (definition == null || definition.getOptions() == null) {
+            return List.of();
+        }
+        List<SlotOption> options = new ArrayList<>();
+        if (definition.getOptions().getValues() != null) {
+            for (SlotOptions.OptionValue optionValue : definition.getOptions().getValues()) {
+                if (optionValue == null || optionValue.getValue() == null) {
+                    continue;
+                }
+                String label = StringUtils.hasText(optionValue.getLabel())
+                        ? optionValue.getLabel()
+                        : String.valueOf(optionValue.getValue());
+                options.add(new SlotOption(label, optionValue.getValue()));
+            }
+        }
+        if (definition.getOptions().getEnumMapping() != null) {
+            for (Map.Entry<String, Object> entry : definition.getOptions().getEnumMapping().entrySet()) {
+                if (StringUtils.hasText(entry.getKey()) && entry.getValue() != null) {
+                    options.add(new SlotOption(entry.getKey(), entry.getValue()));
+                }
+            }
+        }
+        return options;
     }
 
     private boolean shouldSuppressModelExtraction(OverAllState state, String userInput) {
@@ -504,6 +767,38 @@ public class SlotCollectTool implements BiFunction<SlotCollectTool.Request, Tool
             }
         }
 
+        if (!hasStart) {
+            String explicitStart = extractExplicitTemporalValue(
+                    userInput,
+                    startSlot,
+                    anchorDate,
+                    collectedSlots,
+                    startSlotName,
+                    endSlotName,
+                    true);
+            if (hasTextValue(explicitStart)) {
+                extracted.put(startSlotName, explicitStart);
+                hasStart = true;
+            }
+        }
+        if (!hasEnd) {
+            String explicitEnd = extractExplicitTemporalValue(
+                    userInput,
+                    endSlot,
+                    anchorDate,
+                    collectedSlots,
+                    endSlotName,
+                    startSlotName,
+                    false);
+            if (hasTextValue(explicitEnd)) {
+                extracted.put(endSlotName, explicitEnd);
+                hasEnd = true;
+            }
+        }
+        if (hasStart && hasEnd) {
+            return;
+        }
+
         Matcher rangeMatcher = RELATIVE_DATE_RANGE_PATTERN.matcher(userInput);
         if (rangeMatcher.find()) {
             LocalDate start = parseRelativeDateToken(rangeMatcher.group(1), anchorDate);
@@ -589,6 +884,132 @@ public class SlotCollectTool implements BiFunction<SlotCollectTool.Request, Tool
         return new DateTimeRange(
                 baseDate.atTime(startTime).format(DATETIME_FORMATTER),
                 baseDate.atTime(endTime).format(DATETIME_FORMATTER));
+    }
+
+    private String extractExplicitTemporalValue(String userInput,
+                                                SlotDefinition definition,
+                                                LocalDate anchorDate,
+                                                Map<String, SlotValue> collectedSlots,
+                                                String slotName,
+                                                String peerSlotName,
+                                                boolean startSlot) {
+        String explicitValue = extractExplicitFieldValue(userInput, buildTemporalFieldAliases(definition, startSlot));
+        if (!StringUtils.hasText(explicitValue)) {
+            return null;
+        }
+        if (isDateTimeSlot(definition)) {
+            return parseExplicitDateTimeValue(explicitValue, anchorDate, collectedSlots, slotName, peerSlotName);
+        }
+        LocalDate explicitDate = resolveDateToken(explicitValue, anchorDate);
+        if (explicitDate == null) {
+            explicitDate = extractSingleDate(explicitValue, anchorDate);
+        }
+        return explicitDate != null ? explicitDate.toString() : null;
+    }
+
+    private String extractExplicitFieldValue(String userInput, List<String> aliases) {
+        if (!StringUtils.hasText(userInput) || aliases == null || aliases.isEmpty()) {
+            return null;
+        }
+        for (String alias : aliases) {
+            if (!StringUtils.hasText(alias)) {
+                continue;
+            }
+            Pattern pattern = Pattern.compile(
+                    "(?:^|[，,；;\\s])" + Pattern.quote(alias.trim())
+                            + "\\s*(?:是|为|改成|改为|填写|填成|写成|写)?\\s*[:：]?\\s*([^，。；;\\n]+)");
+            Matcher matcher = pattern.matcher(userInput);
+            if (matcher.find()) {
+                String value = matcher.group(1);
+                if (StringUtils.hasText(value)) {
+                    return value.trim();
+                }
+            }
+        }
+        return null;
+    }
+
+    private List<String> buildTemporalFieldAliases(SlotDefinition definition, boolean startSlot) {
+        List<String> aliases = new ArrayList<>();
+        if (definition != null) {
+            if (StringUtils.hasText(definition.getTitle())) {
+                aliases.add(definition.getTitle().trim());
+            }
+            if (StringUtils.hasText(definition.getName())) {
+                aliases.add(definition.getName().trim());
+            }
+        }
+        if (startSlot) {
+            aliases.addAll(List.of("开始时间", "开始日期", "开始", "起始时间", "起始日期", "起始"));
+        }
+        else {
+            aliases.addAll(List.of("结束时间", "结束日期", "结束", "截至时间", "截至日期", "截至", "截止时间", "截止日期", "截止"));
+        }
+        aliases.sort((left, right) -> Integer.compare(right.length(), left.length()));
+        return aliases;
+    }
+
+    private String parseExplicitDateTimeValue(String explicitValue,
+                                              LocalDate anchorDate,
+                                              Map<String, SlotValue> collectedSlots,
+                                              String slotName,
+                                              String peerSlotName) {
+        if (!StringUtils.hasText(explicitValue)) {
+            return null;
+        }
+        String normalized = explicitValue.trim().replace('T', ' ');
+        if (normalized.matches("20\\d{2}-\\d{1,2}-\\d{1,2}\\s+\\d{1,2}:\\d{2}")) {
+            try {
+                return LocalDateTime.parse(normalized, DATETIME_FORMATTER).format(DATETIME_FORMATTER);
+            }
+            catch (DateTimeParseException ignored) {
+                // fall through to tolerant parsing below
+            }
+        }
+
+        LocalTime time = extractSingleTime(normalized);
+        LocalDate date = resolveDateToken(normalized, anchorDate);
+        if (date == null) {
+            date = extractSingleDate(normalized, anchorDate);
+        }
+        if (date == null) {
+            date = resolveDateFromCollectedSlot(collectedSlots, slotName);
+        }
+        if (date == null) {
+            date = resolveDateFromCollectedSlot(collectedSlots, peerSlotName);
+        }
+        if (date == null && time != null) {
+            date = anchorDate;
+        }
+        if (date != null && time != null) {
+            return date.atTime(time).format(DATETIME_FORMATTER);
+        }
+        if (date != null) {
+            return date.toString();
+        }
+        return null;
+    }
+
+    private LocalTime extractSingleTime(String input) {
+        if (!StringUtils.hasText(input)) {
+            return null;
+        }
+        Matcher clockMatcher = CLOCK_TIME_PATTERN.matcher(input);
+        if (clockMatcher.find()) {
+            int hour = Integer.parseInt(clockMatcher.group(1));
+            int minute = Integer.parseInt(clockMatcher.group(2));
+            if (hour >= 0 && hour <= 23 && minute >= 0 && minute <= 59) {
+                return LocalTime.of(hour, minute);
+            }
+        }
+        Matcher relativeTimeMatcher = RELATIVE_TIME_POINT_PATTERN.matcher(input);
+        if (!relativeTimeMatcher.find()) {
+            return null;
+        }
+        return parseTimeValue(
+                relativeTimeMatcher.group(1),
+                relativeTimeMatcher.group(2),
+                relativeTimeMatcher.group(3));
     }
 
     private LocalDate resolveDateToken(String rawToken, LocalDate anchorDate) {
@@ -1263,6 +1684,11 @@ public class SlotCollectTool implements BiFunction<SlotCollectTool.Request, Tool
             return List.of();
         }
         java.util.LinkedHashSet<String> aliases = new java.util.LinkedHashSet<>();
+        if (definition.getAliases() != null) {
+            for (String alias : definition.getAliases()) {
+                addFieldAlias(aliases, alias);
+            }
+        }
         addFieldAlias(aliases, definition.getTitle());
         addFieldAlias(aliases, definition.getName());
         String normalizedTitle = normalizeOptionText(definition.getTitle());
@@ -1561,58 +1987,7 @@ public class SlotCollectTool implements BiFunction<SlotCollectTool.Request, Tool
     }
 
     private String resolveUserInput(OverAllState state) {
-        return firstNonEmpty(
-                readStringState(state, "input"),
-                readLooseStateText(state, "input"),
-                readLooseStateText(state, "query"),
-                resolveLatestUserMessage(state));
-    }
-
-    @SuppressWarnings("unchecked")
-    private String resolveLatestUserMessage(OverAllState state) {
-        if (state == null) {
-            return null;
-        }
-        Object rawMessages = state.value("messages", Object.class).orElse(null);
-        if (!(rawMessages instanceof List<?> messages) || messages.isEmpty()) {
-            return null;
-        }
-
-        for (int i = messages.size() - 1; i >= 0; i--) {
-            Object item = messages.get(i);
-            if (item instanceof UserMessage userMessage && StringUtils.hasText(userMessage.getText())) {
-                return userMessage.getText();
-            }
-            if (item instanceof Message message
-                    && message instanceof UserMessage
-                    && StringUtils.hasText(message.getText())) {
-                return message.getText();
-            }
-            if (item instanceof Map<?, ?> rawMap) {
-                Map<String, Object> map = objectMapper.convertValue(rawMap, Map.class);
-                String role = firstNonEmpty(
-                        asText(map.get("messageType")),
-                        asText(map.get("type")),
-                        asText(map.get("role")),
-                        asText(map.get("messageRole")),
-                        asText(map.get("message_role")));
-                String text = firstNonEmpty(
-                        asText(map.get("text")),
-                        asText(map.get("content")));
-                if (StringUtils.hasText(text) && isUserRole(role)) {
-                    return text;
-                }
-            }
-        }
-        return null;
-    }
-
-    private boolean isUserRole(String role) {
-        if (!StringUtils.hasText(role)) {
-            return false;
-        }
-        String normalized = role.trim().toUpperCase(Locale.ROOT);
-        return "USER".equals(normalized) || "HUMAN".equals(normalized);
+        return ConversationUserInputResolver.resolve(state);
     }
 
     private LocalDate resolveAnchorDate(OverAllState state) {

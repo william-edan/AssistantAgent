@@ -247,6 +247,55 @@ class SlotCollectToolTest {
             }
             """;
 
+    private static final String ALIAS_DRIVEN_LEAVE_SCHEMA = """
+            {
+              "slots": [
+                {
+                  "name": "leave_kind",
+                  "type": "enum",
+                  "title": "类型",
+                  "aliases": ["请假类型"],
+                  "priority": "CORE",
+                  "required": true,
+                  "ask_mode": "BATCH",
+                  "options": {
+                    "source": "ENUM",
+                    "enum_mapping": {
+                      "事假": "1",
+                      "年假": "2",
+                      "病假": "4"
+                    }
+                  }
+                },
+                {
+                  "name": "leave_from",
+                  "type": "date",
+                  "aliases": ["开始日期"],
+                  "priority": "CORE",
+                  "required": true,
+                  "ask_mode": "BATCH"
+                },
+                {
+                  "name": "leave_to",
+                  "type": "date",
+                  "aliases": ["结束日期"],
+                  "priority": "CORE",
+                  "required": true,
+                  "ask_mode": "BATCH"
+                },
+                {
+                  "name": "memo",
+                  "type": "string",
+                  "title": "备注",
+                  "aliases": ["请假原因", "原因"],
+                  "priority": "OPTIONAL",
+                  "required": false,
+                  "ask_mode": "BATCH"
+                }
+              ]
+            }
+            """;
+
     private static final String DEPENDENCY_SCHEMA = """
             {
               "slots": [
@@ -290,6 +339,48 @@ class SlotCollectToolTest {
                 {"name": "requirement", "type": "array", "title": "会议需求", "priority": "CORE", "required": true, "ask_mode": "BATCH", "ui_component": "checkbox"},
                 {"name": "join_uids", "type": "array", "title": "参会人员", "priority": "SUPPLEMENTARY", "required": false, "ask_mode": "AUTO", "ui_component": "select"},
                 {"name": "check_uids", "type": "string", "title": "审批人", "priority": "OPTIONAL", "required": false, "ask_mode": "AUTO", "ui_component": "select"}
+              ]
+            }
+            """;
+
+    private static final String ALIAS_DRIVEN_MEETING_SCHEMA = """
+            {
+              "slots": [
+                {
+                  "name": "topic",
+                  "type": "string",
+                  "title": "会议主题",
+                  "aliases": ["主题"],
+                  "priority": "CORE",
+                  "required": true,
+                  "ask_mode": "BATCH"
+                },
+                {
+                  "name": "from_at",
+                  "type": "string",
+                  "aliases": ["开始时间"],
+                  "priority": "CORE",
+                  "required": true,
+                  "ask_mode": "BATCH",
+                  "ui_component": "datetime"
+                },
+                {
+                  "name": "to_at",
+                  "type": "string",
+                  "aliases": ["结束时间"],
+                  "priority": "CORE",
+                  "required": true,
+                  "ask_mode": "BATCH",
+                  "ui_component": "datetime"
+                },
+                {
+                  "name": "attendee_count",
+                  "type": "integer",
+                  "aliases": ["人数"],
+                  "priority": "CORE",
+                  "required": true,
+                  "ask_mode": "BATCH"
+                }
               ]
             }
             """;
@@ -783,6 +874,74 @@ class SlotCollectToolTest {
     }
 
     @Test
+    void shouldPreferTrailingUserMessageOverStaleInputWhenContinuingLeaveCollection() {
+        ObjectMapper objectMapper = new ObjectMapper();
+        SlotEnricherService enricher = mock(SlotEnricherService.class);
+        when(enricher.enrichSlots(anyList(), anyString(), anyString())).thenReturn(new ArrayList<>());
+
+        SlotCollectTool tool = new SlotCollectTool(
+                new SlotCollectorService(),
+                enricher,
+                new ComputedFieldProcessor(List.of(new DatePeriodPresetFunction(), new DateRangeLabelFunction())),
+                new SlotSchemaParser(objectMapper),
+                objectMapper);
+
+        OverAllState state = stateWithSnapshot(snapshot("gougu_oa.leave_application", LEAVE_SCHEMA, null));
+        state.updateState(Map.of(
+                AssistantStateKeys.SYSTEM_CODE, "oa",
+                AssistantStateKeys.ASSISTANT_UID, "u1",
+                AssistantStateKeys.CONVERSATION_PHASE, "COLLECTING",
+                AssistantStateKeys.LAST_COLLECT_USER_INPUT, "我要请假",
+                "input", "我要请假",
+                "messages", List.of(
+                        org.springframework.ai.chat.messages.AssistantMessage.builder()
+                                .content("请补充结束日期")
+                                .build(),
+                        new UserMessage("请假类型：事假，开始日期：2026-03-17，结束日期：2026-03-18，请假原因：123123")),
+                AssistantStateKeys.COLLECTED_SLOTS, Map.of(
+                        "leave_type", SlotValue.resolved("leave_type", "1", "1", "1"),
+                        "start_date", SlotValue.resolved("start_date", "2026-03-17", "2026-03-17", "2026-03-17"))));
+
+        SlotCollectTool.Response response = tool.apply(new SlotCollectTool.Request(), toolContext(state));
+
+        assertEquals("COMPLETE", response.status);
+        assertEquals("2026-03-18", response.collected.get("end_date"));
+        assertEquals("123123", response.collected.get("reason"));
+    }
+
+    @Test
+    void shouldExtractExplicitStartAndEndDateTimeFromTrailingUserMessage() {
+        ObjectMapper objectMapper = new ObjectMapper();
+        SlotEnricherService enricher = mock(SlotEnricherService.class);
+        when(enricher.enrichSlots(anyList(), anyString(), anyString())).thenReturn(new ArrayList<>());
+
+        SlotCollectTool tool = new SlotCollectTool(
+                new SlotCollectorService(),
+                enricher,
+                new ComputedFieldProcessor(List.of(new DatePeriodPresetFunction(), new DateRangeLabelFunction())),
+                new SlotSchemaParser(objectMapper),
+                objectMapper);
+
+        OverAllState state = stateWithSnapshot(snapshot("gougu_oa.meeting_room_booking", MEETING_SCHEMA, null));
+        state.updateState(Map.of(
+                AssistantStateKeys.SYSTEM_CODE, "oa",
+                AssistantStateKeys.ASSISTANT_UID, "u1",
+                AssistantStateKeys.CONVERSATION_PHASE, "COLLECTING",
+                AssistantStateKeys.LAST_COLLECT_USER_INPUT, "我要订会议室",
+                "input", "我要订会议室",
+                "messages", List.of(
+                        org.springframework.ai.chat.messages.AssistantMessage.builder()
+                                .content("请补充开始时间和结束时间")
+                                .build(),
+                        new UserMessage("开始时间：2026-03-16 14:00，结束时间：2026-03-16 15:00，主题：项目评审，5个人"))));
+
+        SlotCollectTool.Response response = tool.apply(new SlotCollectTool.Request(), toolContext(state));
+
+        assertEquals("2026-03-16 14:00", response.collected.get("start_date"));
+        assertEquals("2026-03-16 15:00", response.collected.get("end_date"));
+    }
+
+    @Test
     void shouldUpdateApproverAndMirrorSingleDateWhenEditingConfirmedLeaveForm() {
         ObjectMapper objectMapper = new ObjectMapper();
         SlotEnricherService enricher = mock(SlotEnricherService.class);
@@ -823,7 +982,7 @@ class SlotCollectToolTest {
         assertEquals("5", response.collected.get("check_uids"));
         assertEquals("2026-03-17", response.collected.get("start_date"));
         assertEquals("2026-03-17", response.collected.get("end_date"));
-        assertEquals("改成处理家事", response.collected.get("reason"));
+        assertEquals("处理家事", response.collected.get("reason"));
     }
 
 
@@ -854,6 +1013,64 @@ class SlotCollectToolTest {
         assertEquals("2026-03-16 15:00", response.collected.get("end_date"));
         assertEquals("项目评审", response.collected.get("title"));
         assertEquals(5, response.collected.get("num"));
+    }
+
+    @Test
+    void shouldResolveAliasDrivenLeavePatchFromCurrentTurnInput() {
+        ObjectMapper objectMapper = new ObjectMapper();
+        SlotEnricherService enricher = mock(SlotEnricherService.class);
+        when(enricher.enrichSlots(anyList(), anyString(), anyString())).thenReturn(new ArrayList<>());
+
+        SlotCollectTool tool = new SlotCollectTool(
+                new SlotCollectorService(),
+                enricher,
+                new ComputedFieldProcessor(List.of(new DatePeriodPresetFunction(), new DateRangeLabelFunction())),
+                new SlotSchemaParser(objectMapper),
+                objectMapper);
+
+        OverAllState state = stateWithSnapshot(snapshot("gougu_oa.leave_alias", ALIAS_DRIVEN_LEAVE_SCHEMA, null));
+        state.updateState(Map.of(
+                AssistantStateKeys.SYSTEM_CODE, "oa",
+                AssistantStateKeys.ASSISTANT_UID, "u1",
+                "input", "请假类型：事假，开始日期：2026-03-17，结束日期：2026-03-18，请假原因：123123",
+                "current_date", "2026-03-15"));
+
+        SlotCollectTool.Response response = tool.apply(new SlotCollectTool.Request(), toolContext(state));
+
+        assertEquals("COMPLETE", response.status);
+        assertEquals("1", response.collected.get("leave_kind"));
+        assertEquals("2026-03-17", response.collected.get("leave_from"));
+        assertEquals("2026-03-18", response.collected.get("leave_to"));
+        assertEquals("123123", response.collected.get("memo"));
+    }
+
+    @Test
+    void shouldResolveAliasDrivenMeetingPatchFromCurrentTurnInput() {
+        ObjectMapper objectMapper = new ObjectMapper();
+        SlotEnricherService enricher = mock(SlotEnricherService.class);
+        when(enricher.enrichSlots(anyList(), anyString(), anyString())).thenReturn(new ArrayList<>());
+
+        SlotCollectTool tool = new SlotCollectTool(
+                new SlotCollectorService(),
+                enricher,
+                new ComputedFieldProcessor(List.of(new DatePeriodPresetFunction(), new DateRangeLabelFunction())),
+                new SlotSchemaParser(objectMapper),
+                objectMapper);
+
+        OverAllState state = stateWithSnapshot(snapshot("gougu_oa.meeting_alias", ALIAS_DRIVEN_MEETING_SCHEMA, null));
+        state.updateState(Map.of(
+                AssistantStateKeys.SYSTEM_CODE, "oa",
+                AssistantStateKeys.ASSISTANT_UID, "u1",
+                "input", "开始时间：2026-03-16 14:00，结束时间：2026-03-16 15:00，主题：项目评审，人数：5",
+                "current_date", "2026-03-15"));
+
+        SlotCollectTool.Response response = tool.apply(new SlotCollectTool.Request(), toolContext(state));
+
+        assertEquals("COMPLETE", response.status);
+        assertEquals("2026-03-16 14:00", response.collected.get("from_at"));
+        assertEquals("2026-03-16 15:00", response.collected.get("to_at"));
+        assertEquals("项目评审", response.collected.get("topic"));
+        assertEquals(5, response.collected.get("attendee_count"));
     }
 
     @Test

@@ -17,6 +17,7 @@ package com.alibaba.assistant.agent.runtime.interceptor;
 
 import com.alibaba.assistant.agent.common.constant.CodeactStateKeys;
 import com.alibaba.assistant.agent.runtime.agent.AssistantStateKeys;
+import com.alibaba.assistant.agent.runtime.agent.ConversationUserInputResolver;
 import com.alibaba.cloud.ai.graph.OverAllState;
 import com.alibaba.cloud.ai.graph.agent.interceptor.ModelCallHandler;
 import com.alibaba.cloud.ai.graph.agent.interceptor.ModelInterceptor;
@@ -446,68 +447,7 @@ public class PolicyCheckModelInterceptor extends ModelInterceptor {
 	}
 
 	private String resolveCurrentUserInput(OverAllState state) {
-		return firstNonBlank(
-				readStateString(state, "input"),
-				readStateString(state, "query"),
-				resolveLatestUserMessage(state));
-	}
-
-	@SuppressWarnings("unchecked")
-	private String resolveLatestUserMessage(OverAllState state) {
-		if (state == null) {
-			return null;
-		}
-		Object rawMessages = state.value("messages", Object.class).orElse(null);
-		if (!(rawMessages instanceof List<?> messages) || messages.isEmpty()) {
-			return null;
-		}
-		for (int i = messages.size() - 1; i >= 0; i--) {
-			Object item = messages.get(i);
-			if (item instanceof UserMessage userMessage && StringUtils.hasText(userMessage.getText())) {
-				return userMessage.getText();
-			}
-			if (item instanceof Message message
-					&& message instanceof UserMessage
-					&& StringUtils.hasText(message.getText())) {
-				return message.getText();
-			}
-			if (item instanceof Map<?, ?> rawMap) {
-				String role = asText(readMapValue(rawMap, "messageType", "type", "role", "messageRole", "message_role"));
-				String text = asText(readMapValue(rawMap, "text", "content"));
-				if (StringUtils.hasText(text) && isUserRole(role)) {
-					return text;
-				}
-			}
-		}
-		return null;
-	}
-
-	private Object readMapValue(Map<?, ?> map, String... keys) {
-		if (map == null || map.isEmpty() || keys == null || keys.length == 0) {
-			return null;
-		}
-		for (String key : keys) {
-			if (!StringUtils.hasText(key)) {
-				continue;
-			}
-			if (map.containsKey(key)) {
-				return map.get(key);
-			}
-			for (Map.Entry<?, ?> entry : map.entrySet()) {
-				if (entry.getKey() != null && key.equalsIgnoreCase(String.valueOf(entry.getKey()))) {
-					return entry.getValue();
-				}
-			}
-		}
-		return null;
-	}
-
-	private boolean isUserRole(String role) {
-		if (!StringUtils.hasText(role)) {
-			return false;
-		}
-		String normalized = role.trim().toUpperCase(Locale.ROOT);
-		return "USER".equals(normalized) || "HUMAN".equals(normalized);
+		return ConversationUserInputResolver.resolve(state);
 	}
 
 	private String firstNonBlank(String... values) {

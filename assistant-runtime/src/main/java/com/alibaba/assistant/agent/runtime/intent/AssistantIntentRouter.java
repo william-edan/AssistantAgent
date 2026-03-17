@@ -22,12 +22,12 @@ import com.alibaba.assistant.agent.extension.experience.model.ExperienceQuery;
 import com.alibaba.assistant.agent.extension.experience.model.ExperienceQueryContext;
 import com.alibaba.assistant.agent.extension.experience.model.ExperienceType;
 import com.alibaba.assistant.agent.extension.experience.spi.ExperienceProvider;
+import com.alibaba.assistant.agent.runtime.agent.ConversationUserInputResolver;
 import com.alibaba.assistant.agent.runtime.config.RuntimeConfigView;
 import com.alibaba.cloud.ai.graph.OverAllState;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.messages.Message;
-import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
@@ -116,24 +116,7 @@ public class AssistantIntentRouter {
 	}
 
 	private String resolveInput(String input, OverAllState state, List<Message> messages) {
-		if (StringUtils.hasText(input)) {
-			return input;
-		}
-		if (state != null) {
-			String stateInput = state.value("input", String.class).orElse(null);
-			if (StringUtils.hasText(stateInput)) {
-				return stateInput;
-			}
-		}
-		if (messages != null) {
-			for (int i = messages.size() - 1; i >= 0; i--) {
-				Message message = messages.get(i);
-				if (message instanceof UserMessage userMessage && StringUtils.hasText(userMessage.getText())) {
-					return userMessage.getText();
-				}
-			}
-		}
-		return null;
+		return ConversationUserInputResolver.resolve(input, state, messages);
 	}
 
 	private ExperienceQueryContext buildQueryContext(

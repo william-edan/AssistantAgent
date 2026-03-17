@@ -36,6 +36,8 @@ public class SlotDefinition {
 
     private String aiHint;
 
+    private List<String> aliases;
+
     private SlotPriority priority;
 
     private boolean required;
@@ -127,6 +129,14 @@ public class SlotDefinition {
 
     public void setAiHint(String aiHint) {
         this.aiHint = aiHint;
+    }
+
+    public List<String> getAliases() {
+        return aliases;
+    }
+
+    public void setAliases(List<String> aliases) {
+        this.aliases = aliases;
     }
 
     public SlotPriority getPriority() {
