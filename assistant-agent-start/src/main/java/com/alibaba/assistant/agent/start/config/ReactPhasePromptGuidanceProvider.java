@@ -31,7 +31,7 @@ import org.springframework.util.StringUtils;
  * <p>根据 React 阶段的评估结果生成 prompt 指导：
  * <ul>
  *   <li>is_fuzzy=模糊：需要让用户明确需求</li>
- *   <li>is_fuzzy=清晰：按照用户的要求进行操作</li>
+ *   <li>is_fuzzy=清晰：按照用户的要求进行操作；若是明确操作请求，仍需遵循表单流</li>
  * </ul>
  *
  * <p><b>实现说明</b>：由于当前 Hook 机制的限制（{@code PromptContributorModelHook}，
@@ -99,6 +99,13 @@ public class ReactPhasePromptGuidanceProvider extends EvaluationBasedPromptContr
             sb.append("3. 可以提供几个可能的理解方向，让用户选择\n");
             sb.append("4. 等用户明确需求后，再进行下一步操作\n\n");
             sb.append("示例回复：「我注意到您的需求还不太明确，请问您是想要...还是...？」\n");
+        } else if ("清晰".equals(isFuzzy) && operationIntent) {
+            sb.append("【清晰操作请求处理策略】\n");
+            sb.append("当前用户意图被识别为**清晰**，且属于**操作请求**，请按以下策略处理：\n\n");
+            sb.append("1. 不要直接输出自然语言版的参数清单或执行说明\n");
+            sb.append("2. 先调用 slot_collect 收集和补全槽位，不要跳过表单流\n");
+            sb.append("3. 槽位收集完整后调用 slot_confirm，等待用户确认\n");
+            sb.append("4. 只有在用户明确确认后，才能调用 artifact_execute 执行\n");
         } else if ("清晰".equals(isFuzzy)) {
             sb.append("【清晰意图处理策略】\n");
             sb.append("当前用户意图被识别为**清晰**，请按以下策略处理：\n\n");

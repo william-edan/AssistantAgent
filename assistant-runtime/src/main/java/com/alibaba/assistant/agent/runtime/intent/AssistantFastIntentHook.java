@@ -418,38 +418,10 @@ public class AssistantFastIntentHook extends AgentHook implements Prioritized {
 		if (!StringUtils.hasText(matchedToolCode)) {
 			return Map.of();
 		}
-		try {
-			Map<String, Object> collectArgs = new LinkedHashMap<>();
-			collectArgs.put("toolCode", matchedToolCode);
-			collectArgs.put("extractedSlots", Collections.emptyMap());
-
-			String toolCallId = "assistant_collect_continue_" + UUID.randomUUID().toString().substring(0, 8);
-			AssistantMessage assistantMessage = AssistantMessage.builder()
-					.content("")
-					.toolCalls(List.of(new AssistantMessage.ToolCall(
-							toolCallId,
-							"function",
-							SLOT_COLLECT_TOOL,
-							toJson(collectArgs))))
-					.build();
-
-			Map<String, Object> fastIntentState = new LinkedHashMap<>();
-			fastIntentState.put("hit", true);
-			fastIntentState.put("route_type", "COLLECTION_CONTINUE");
-			fastIntentState.put("tool_code", matchedToolCode);
-
-			Map<String, Object> updates = new LinkedHashMap<>();
-			updates.put("messages", List.of(assistantMessage));
-			updates.put("jump_to", JumpTo.tool);
-			updates.put("fast_intent", fastIntentState);
-			updates.put("current_date", LocalDate.now().toString());
-			return updates;
-		}
-		catch (Exception e) {
-			logger.warn("AssistantFastIntentHook#tryBuildCollectionContinuationUpdates - build failed, error={}",
-					e.getMessage());
-			return Map.of();
-		}
+				return buildFormExtractionUpdates(
+				matchedToolCode,
+				resolveMatchedToolMetaSnapshot(state, matchedToolCode),
+				"COLLECTION_CONTINUE");
 	}
 
 	private Map<String, Object> tryBuildOperationCollectUpdates(OverAllState state, String input) {
@@ -471,41 +443,62 @@ public class AssistantFastIntentHook extends AgentHook implements Prioritized {
 			return Map.of();
 		}
 
-		try {
-			Map<String, Object> collectArgs = new LinkedHashMap<>();
-			collectArgs.put("toolCode", matchedTool.toolCode());
-			collectArgs.put("extractedSlots", Collections.emptyMap());
-
-			String toolCallId = "assistant_op_collect_" + UUID.randomUUID().toString().substring(0, 8);
-			AssistantMessage assistantMessage = AssistantMessage.builder()
-					.content("")
-					.toolCalls(List.of(new AssistantMessage.ToolCall(
-							toolCallId,
-							"function",
-							SLOT_COLLECT_TOOL,
-							toJson(collectArgs))))
-					.build();
-
-			Map<String, Object> fastIntentState = new LinkedHashMap<>();
-			fastIntentState.put("hit", true);
-			fastIntentState.put("route_type", "OPERATION_COLLECT");
-			fastIntentState.put("tool_code", matchedTool.toolCode());
-
-			Map<String, Object> updates = new LinkedHashMap<>();
-			updates.put("messages", List.of(assistantMessage));
-			updates.put("jump_to", JumpTo.tool);
-			updates.put("fast_intent", fastIntentState);
-			updates.put("current_date", LocalDate.now().toString());
-			updates.put(AssistantStateKeys.MATCHED_TOOL_META, matchedTool.snapshot());
-			return updates;
-		}
-		catch (Exception e) {
-			logger.warn("AssistantFastIntentHook#tryBuildOperationCollectUpdates - build failed, error={}",
-					e.getMessage());
-			return Map.of();
-		}
+				return buildFormExtractionUpdates(
+				matchedTool.toolCode(),
+				matchedTool.snapshot(),
+				"OPERATION_COLLECT");
 	}
 
+	private Map<String, Object> buildFormExtractionUpdates(
+			String matchedToolCode,
+			Map<String, Object> matchedSnapshot,
+			String routeType) {
+		if (!StringUtils.hasText(matchedToolCode)) {
+			return Map.of();
+		}
+		Map<String, Object> fastIntentState = new LinkedHashMap<>();
+		fastIntentState.put("hit", true);
+		fastIntentState.put("route_type", routeType);
+		fastIntentState.put("tool_code", matchedToolCode);
+
+		Map<String, Object> updates = new LinkedHashMap<>();
+		updates.put("jump_to", JumpTo.model);
+		updates.put("fast_intent", fastIntentState);
+		updates.put("current_date", LocalDate.now().toString());
+		updates.put(AssistantStateKeys.FORM_FLOW_EXTRACTION_PENDING, Boolean.TRUE);
+		if (matchedSnapshot != null && !matchedSnapshot.isEmpty()) {
+			updates.put(AssistantStateKeys.MATCHED_TOOL_META, matchedSnapshot);
+		}
+		return updates;
+	}
+
+	private Map<String, Object> resolveMatchedToolMetaSnapshot(OverAllState state, String matchedToolCode) {
+		Map<String, Object> snapshot = new LinkedHashMap<>();
+		Object raw = state != null ? state.value(AssistantStateKeys.MATCHED_TOOL_META, Object.class).orElse(null) : null;
+		if (raw instanceof Map<?, ?> rawMap) {
+			rawMap.forEach((key, value) -> {
+				if (key != null) {
+					snapshot.put(String.valueOf(key), value);
+				}
+			});
+		}
+		else if (raw != null) {
+			try {
+				@SuppressWarnings("unchecked")
+				Map<String, Object> converted = objectMapper.convertValue(raw, Map.class);
+				if (converted != null) {
+					snapshot.putAll(converted);
+				}
+			}
+			catch (IllegalArgumentException ignored) {
+				// Ignore and fallback to toolCode only.
+			}
+		}
+		if (!snapshot.containsKey("toolCode") && StringUtils.hasText(matchedToolCode)) {
+			snapshot.put("toolCode", matchedToolCode);
+		}
+		return snapshot;
+	}
 	private OperationTarget resolveBestOperationTarget(OverAllState state, String input) {
 		if (!StringUtils.hasText(input)) {
 			return null;
@@ -647,10 +640,17 @@ public class AssistantFastIntentHook extends AgentHook implements Prioritized {
 		return descriptor != null
 				&& descriptor.artifact() != null
 				&& descriptor.isUserVisible()
+				&& hasPublishedSlotSchema(descriptor)
 				&& !"QUERY".equalsIgnoreCase(descriptor.toolType())
 				&& !isLikelyQueryArtifact(descriptor);
 	}
 
+	private boolean hasPublishedSlotSchema(PublishedToolDescriptor descriptor) {
+		RuntimeArtifact.Interaction interaction = descriptor != null && descriptor.artifact() != null
+				? descriptor.artifact().getInteraction()
+				: null;
+		return interaction != null && StringUtils.hasText(interaction.slotSchemaJson());
+	}
 	private int scoreDescriptorTermMatches(PublishedToolDescriptor descriptor, String normalizedInput) {
 		if (!StringUtils.hasText(normalizedInput)) {
 			return 0;
@@ -1243,8 +1243,5 @@ public class AssistantFastIntentHook extends AgentHook implements Prioritized {
 	}
 
 }
-
-
-
 
 

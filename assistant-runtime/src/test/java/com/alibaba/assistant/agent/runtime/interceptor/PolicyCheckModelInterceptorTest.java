@@ -22,6 +22,7 @@ import com.alibaba.cloud.ai.graph.agent.interceptor.ModelCallHandler;
 import com.alibaba.cloud.ai.graph.agent.interceptor.ModelRequest;
 import com.alibaba.cloud.ai.graph.agent.interceptor.ModelResponse;
 import com.alibaba.cloud.ai.graph.agent.tools.ToolContextConstants;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.ai.chat.messages.AssistantMessage;
@@ -342,6 +343,63 @@ class PolicyCheckModelInterceptorTest {
 		assertTrue(sanitizedMessages.stream().noneMatch(ToolResponseMessage.class::isInstance));
 	}
 
+	@Test
+	void shouldRewritePendingFormExtractionJsonResponseToSlotCollectToolCall() throws Exception {
+		PolicyCheckModelInterceptor interceptor = new PolicyCheckModelInterceptor();
+		ModelCallHandler handler = mock(ModelCallHandler.class);
+		when(handler.call(any())).thenReturn(ModelResponse.of(AssistantMessage.builder()
+				.content("{\"extractedSlots\":{\"start_date\":\"2026-03-20\"},\"displayMessage\":\"还需要补充结束日期和请假原因。\"}")
+				.build()));
+
+		OverAllState state = new OverAllState();
+		state.updateState(Map.of(
+				AssistantStateKeys.FORM_FLOW_EXTRACTION_PENDING, true,
+				AssistantStateKeys.MATCHED_TOOL_META, Map.of("toolCode", "gougu_oa.leave_application"),
+				CodeactStateKeys.AVAILABLE_TOOL_NAMES, List.of("slot_collect", "slot_confirm")));
+
+		ModelRequest request = buildRequest(state, Map.of(
+				"slot_collect", "slot collect",
+				"slot_confirm", "slot confirm"));
+		ModelResponse response = interceptor.interceptModel(request, handler);
+
+		ArgumentCaptor<ModelRequest> captor = ArgumentCaptor.forClass(ModelRequest.class);
+		verify(handler, times(1)).call(captor.capture());
+		assertTrue(captor.getValue().getToolDescriptions().isEmpty());
+
+		AssistantMessage message = (AssistantMessage) response.getMessage();
+		assertTrue(message.hasToolCalls());
+		assertEquals("slot_collect", message.getToolCalls().get(0).name());
+		@SuppressWarnings("unchecked")
+		Map<String, Object> args = new ObjectMapper().readValue(message.getToolCalls().get(0).arguments(), Map.class);
+		assertEquals("gougu_oa.leave_application", args.get("toolCode"));
+		assertEquals("还需要补充结束日期和请假原因。", args.get("displayMessage"));
+		assertEquals("2026-03-20", ((Map<?, ?>) args.get("extractedSlots")).get("start_date"));
+		assertFalse(state.value(AssistantStateKeys.FORM_FLOW_EXTRACTION_PENDING, Boolean.class).orElse(false));
+	}
+
+	@Test
+	void shouldFallbackToDisplayMessageWhenPendingFormExtractionReturnsPlainText() throws Exception {
+		PolicyCheckModelInterceptor interceptor = new PolicyCheckModelInterceptor();
+		ModelCallHandler handler = mock(ModelCallHandler.class);
+		when(handler.call(any())).thenReturn(ModelResponse.of(AssistantMessage.builder()
+				.content("请补充结束日期和请假原因")
+				.build()));
+
+		OverAllState state = new OverAllState();
+		state.updateState(Map.of(
+				AssistantStateKeys.FORM_FLOW_EXTRACTION_PENDING, true,
+				AssistantStateKeys.MATCHED_TOOL_META, Map.of("toolCode", "gougu_oa.leave_application"),
+				CodeactStateKeys.AVAILABLE_TOOL_NAMES, List.of("slot_collect")));
+
+		ModelResponse response = interceptor.interceptModel(buildRequest(state, Map.of("slot_collect", "slot collect")), handler);
+
+		AssistantMessage message = (AssistantMessage) response.getMessage();
+		assertTrue(message.hasToolCalls());
+		@SuppressWarnings("unchecked")
+		Map<String, Object> args = new ObjectMapper().readValue(message.getToolCalls().get(0).arguments(), Map.class);
+		assertEquals(Map.of(), args.get("extractedSlots"));
+		assertEquals("请补充结束日期和请假原因", args.get("displayMessage"));
+	}
 	private ModelRequest buildRequest(OverAllState state) {
 		return buildRequest(state, Map.of(
 				"slot_collect", "slot collect",

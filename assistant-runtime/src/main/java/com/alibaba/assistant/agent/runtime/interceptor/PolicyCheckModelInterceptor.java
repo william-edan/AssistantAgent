@@ -24,8 +24,10 @@ import com.alibaba.cloud.ai.graph.agent.interceptor.ModelInterceptor;
 import com.alibaba.cloud.ai.graph.agent.interceptor.ModelRequest;
 import com.alibaba.cloud.ai.graph.agent.interceptor.ModelResponse;
 import com.alibaba.cloud.ai.graph.agent.tools.ToolContextConstants;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Component;
 import org.springframework.ai.tool.ToolCallback;
@@ -44,6 +46,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
 import java.util.Locale;
 
 /**
@@ -61,6 +64,17 @@ public class PolicyCheckModelInterceptor extends ModelInterceptor {
 	private static final String WAITING_FOR_USER_INPUT_MESSAGE = "我已记录当前信息，请先补充缺失的必填内容，我收到你的输入后继续处理。";
 	private static final String WAITING_FOR_CONFIRM_INPUT_MESSAGE = "请先明确回复“确认提交”或“取消”，我再继续执行。";
 
+    private final ObjectMapper objectMapper;
+
+    public PolicyCheckModelInterceptor() {
+        this(new ObjectMapper());
+    }
+
+    @Autowired
+    public PolicyCheckModelInterceptor(ObjectMapper objectMapper) {
+        this.objectMapper = objectMapper;
+    }
+
 	@Override
 	public ModelResponse interceptModel(ModelRequest request, ModelCallHandler handler) {
 		OverAllState state = resolveState(request);
@@ -68,11 +82,20 @@ public class PolicyCheckModelInterceptor extends ModelInterceptor {
 		Set<String> allowlist = allowlistPolicy.allowlist();
 		ExecutionGate executionGate = resolveExecutionGate(state);
 		StaleInputMode staleInputMode = resolveStaleInputMode(state);
+		boolean formFlowExtractionPending = isFormFlowExtractionPending(state);
 		if (staleInputMode != StaleInputMode.NONE) {
 			clearStaleToolJump(state);
 		}
-		ModelRequest sanitizedRequest = sanitizeRequest(request, allowlistPolicy, executionGate, staleInputMode);
+		ModelRequest sanitizedRequest = sanitizeRequest(
+				request,
+				allowlistPolicy,
+				executionGate,
+				staleInputMode,
+				formFlowExtractionPending);
 		ModelResponse response = handler.call(sanitizedRequest);
+		if (formFlowExtractionPending) {
+			response = rewriteFormFlowExtractionResponse(response, state);
+		}
 		if (staleInputMode != StaleInputMode.NONE) {
 			response = sanitizeStaleInputResponse(response, staleInputMode);
 		}
@@ -86,6 +109,134 @@ public class PolicyCheckModelInterceptor extends ModelInterceptor {
 	@Override
 	public String getName() {
 		return "PolicyCheckModelInterceptor";
+	}
+
+	private boolean isFormFlowExtractionPending(OverAllState state) {
+		return Boolean.TRUE.equals(readStateBoolean(state, AssistantStateKeys.FORM_FLOW_EXTRACTION_PENDING));
+	}
+
+	private ModelResponse rewriteFormFlowExtractionResponse(ModelResponse response, OverAllState state) {
+		clearFormFlowExtractionPending(state);
+		String matchedToolCode = resolveMatchedToolCode(state);
+		if (!StringUtils.hasText(matchedToolCode)) {
+			return response;
+		}
+		FormFlowExtractionPayload payload = parseFormFlowExtractionPayload(response);
+		Map<String, Object> args = new LinkedHashMap<>();
+		args.put("toolCode", matchedToolCode);
+		args.put("extractedSlots", payload.extractedSlots());
+		if (StringUtils.hasText(payload.displayMessage())) {
+			args.put("displayMessage", payload.displayMessage());
+		}
+		AssistantMessage assistantMessage = AssistantMessage.builder()
+				.content("")
+				.toolCalls(List.of(new AssistantMessage.ToolCall(
+						"form_flow_extract_" + UUID.randomUUID().toString().substring(0, 8),
+						"function",
+						"slot_collect",
+						toJson(args))))
+				.build();
+		return ModelResponse.of(assistantMessage);
+	}
+
+	private void clearFormFlowExtractionPending(OverAllState state) {
+		if (state == null) {
+			return;
+		}
+		state.updateState(Map.of(AssistantStateKeys.FORM_FLOW_EXTRACTION_PENDING, Boolean.FALSE));
+	}
+
+	private FormFlowExtractionPayload parseFormFlowExtractionPayload(ModelResponse response) {
+		if (response == null || !(response.getMessage() instanceof AssistantMessage assistantMessage)) {
+			return new FormFlowExtractionPayload(Collections.emptyMap(), null);
+		}
+		String rawText = asText(assistantMessage.getText());
+		if (!StringUtils.hasText(rawText)) {
+			return new FormFlowExtractionPayload(Collections.emptyMap(), null);
+		}
+		String jsonText = extractJsonPayloadText(rawText);
+		try {
+			@SuppressWarnings("unchecked")
+			Map<String, Object> payload = objectMapper.readValue(jsonText, Map.class);
+			return new FormFlowExtractionPayload(
+					normalizeObjectMap(payload.get("extractedSlots")),
+					firstNonBlank(asText(payload.get("displayMessage")), asText(payload.get("display_message"))));
+		}
+		catch (Exception ex) {
+			logger.warn(
+					"PolicyCheckModelInterceptor#rewriteFormFlowExtractionResponse - invalid extraction payload, error={}",
+					ex.getMessage());
+			return new FormFlowExtractionPayload(Collections.emptyMap(), rawText);
+		}
+	}
+
+	private String extractJsonPayloadText(String rawText) {
+		if (!StringUtils.hasText(rawText)) {
+			return rawText;
+		}
+		String trimmed = rawText.trim();
+		if (trimmed.startsWith("```")) {
+			int firstLineBreak = trimmed.indexOf('\n');
+			int lastFence = trimmed.lastIndexOf("```");
+			if (firstLineBreak >= 0 && lastFence > firstLineBreak) {
+				trimmed = trimmed.substring(firstLineBreak + 1, lastFence).trim();
+			}
+		}
+		int firstBrace = trimmed.indexOf('{');
+		int lastBrace = trimmed.lastIndexOf('}');
+		if (firstBrace >= 0 && lastBrace > firstBrace) {
+			return trimmed.substring(firstBrace, lastBrace + 1);
+		}
+		return trimmed;
+	}
+
+	private Map<String, Object> normalizeObjectMap(Object raw) {
+		if (!(raw instanceof Map<?, ?> rawMap) || rawMap.isEmpty()) {
+			return Collections.emptyMap();
+		}
+		Map<String, Object> normalized = new LinkedHashMap<>();
+		rawMap.forEach((key, value) -> {
+			if (key != null) {
+				normalized.put(String.valueOf(key), value);
+			}
+		});
+		return normalized;
+	}
+
+	private String resolveMatchedToolCode(OverAllState state) {
+		Object raw = state != null ? state.value(AssistantStateKeys.MATCHED_TOOL_META, Object.class).orElse(null) : null;
+		if (raw instanceof Map<?, ?> rawMap) {
+			String toolCode = asText(rawMap.get("toolCode"));
+			if (!StringUtils.hasText(toolCode)) {
+				toolCode = asText(rawMap.get("tool_code"));
+			}
+			return toolCode;
+		}
+		if (raw != null) {
+			try {
+				@SuppressWarnings("unchecked")
+				Map<String, Object> converted = objectMapper.convertValue(raw, Map.class);
+				String toolCode = asText(converted.get("toolCode"));
+				if (!StringUtils.hasText(toolCode)) {
+					toolCode = asText(converted.get("tool_code"));
+				}
+				return toolCode;
+			}
+			catch (IllegalArgumentException ignored) {
+				// Ignore and fallback.
+			}
+		}
+		return null;
+	}
+
+	private String toJson(Map<String, Object> value) {
+		try {
+			return objectMapper.writeValueAsString(value != null ? value : Collections.emptyMap());
+		}
+		catch (Exception ex) {
+			logger.warn("PolicyCheckModelInterceptor#toJson - fallback to empty json, error={}", ex.getMessage());
+			return "{}";
+		}
 	}
 
 	private OverAllState resolveState(ModelRequest request) {
@@ -130,9 +281,10 @@ public class PolicyCheckModelInterceptor extends ModelInterceptor {
 			ModelRequest request,
 			AllowlistPolicy allowlistPolicy,
 			ExecutionGate executionGate,
-			StaleInputMode staleInputMode) {
+			StaleInputMode staleInputMode,
+			boolean formFlowExtractionPending) {
 		List<Message> sanitizedMessages = sanitizeMessages(request.getMessages());
-		boolean blockTools = staleInputMode != StaleInputMode.NONE;
+		boolean blockTools = staleInputMode != StaleInputMode.NONE || formFlowExtractionPending;
 		Map<String, String> filteredToolDescriptions = blockTools
 				? Collections.emptyMap()
 				: filterToolDescriptions(
@@ -549,6 +701,9 @@ public class PolicyCheckModelInterceptor extends ModelInterceptor {
 			return false;
 		}
 		return null;
+	}
+
+	private record FormFlowExtractionPayload(Map<String, Object> extractedSlots, String displayMessage) {
 	}
 
 	private record AssistantToolPairSanitizeResult(

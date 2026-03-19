@@ -161,20 +161,16 @@ class AssistantFastIntentHookTest {
 
         Map<String, Object> updates = hook.beforeAgent(state, RunnableConfig.builder().build()).join();
 
-        assertEquals(JumpTo.tool, updates.get("jump_to"));
+        assertEquals(JumpTo.model, updates.get("jump_to"));
         assertEquals(LocalDate.now().toString(), updates.get("current_date"));
+        assertEquals(Boolean.TRUE, updates.get(AssistantStateKeys.FORM_FLOW_EXTRACTION_PENDING));
         @SuppressWarnings("unchecked")
         Map<String, Object> matchedToolMeta = (Map<String, Object>) updates.get(AssistantStateKeys.MATCHED_TOOL_META);
         assertEquals("oa.leave.apply", matchedToolMeta.get("toolCode"));
         assertEquals("请假申请", matchedToolMeta.get("toolName"));
         assertEquals("HIGH", matchedToolMeta.get("riskLevel"));
         assertEquals(Boolean.TRUE, matchedToolMeta.get("requiresConfirm"));
-
-        AssistantMessage assistantMessage = firstAssistantMessage(updates);
-        assertEquals("slot_collect", assistantMessage.getToolCalls().get(0).name());
-        @SuppressWarnings("unchecked")
-        Map<String, Object> args = new ObjectMapper().readValue(assistantMessage.getToolCalls().get(0).arguments(), Map.class);
-        assertEquals("oa.leave.apply", args.get("toolCode"));
+        assertFalse(updates.containsKey("messages"));
         verify(router, never()).route(any(), any(), any());
     }
 
@@ -235,9 +231,9 @@ class AssistantFastIntentHookTest {
 
         Map<String, Object> updates = hook.beforeAgent(state, RunnableConfig.builder().build()).join();
 
-        assertEquals(JumpTo.tool, updates.get("jump_to"));
-        AssistantMessage assistantMessage = firstAssistantMessage(updates);
-        assertEquals("slot_collect", assistantMessage.getToolCalls().get(0).name());
+        assertEquals(JumpTo.model, updates.get("jump_to"));
+        assertEquals(Boolean.TRUE, updates.get(AssistantStateKeys.FORM_FLOW_EXTRACTION_PENDING));
+        assertFalse(updates.containsKey("messages"));
         verify(router, never()).route(any(), any(), any());
     }
 
@@ -260,9 +256,9 @@ class AssistantFastIntentHookTest {
 
         Map<String, Object> updates = hook.beforeAgent(state, RunnableConfig.builder().build()).join();
 
-        assertEquals(JumpTo.tool, updates.get("jump_to"));
-        AssistantMessage assistantMessage = firstAssistantMessage(updates);
-        assertEquals("slot_collect", assistantMessage.getToolCalls().get(0).name());
+        assertEquals(JumpTo.model, updates.get("jump_to"));
+        assertEquals(Boolean.TRUE, updates.get(AssistantStateKeys.FORM_FLOW_EXTRACTION_PENDING));
+        assertFalse(updates.containsKey("messages"));
         verify(router, never()).route(any(), any(), any());
     }
 
@@ -278,6 +274,57 @@ class AssistantFastIntentHookTest {
         OverAllState state = new OverAllState();
         state.updateState(Map.of(
                 "input", "帮我查询一下请假政策",
+                AssistantStateKeys.SYSTEM_CODE, "gougu_oa",
+                CodeactStateKeys.AVAILABLE_TOOL_NAMES, List.of("slot_collect", "slot_confirm")));
+
+        Map<String, Object> updates = hook.beforeAgent(state, RunnableConfig.builder().build()).join();
+
+        assertTrue(updates.isEmpty());
+        verify(router, times(1)).route(any(), any(), any());
+    }
+
+    @Test
+    void shouldFallbackToMainFlowWhenPublishedOperationHasNoSlotSchema() {
+        AssistantIntentRouter router = mock(AssistantIntentRouter.class);
+        when(router.route(any(), any(), any())).thenReturn(AssistantIntentRouter.IntentResult.mainFlow());
+        ArtifactPublicationLookupService lookupService = mock(ArtifactPublicationLookupService.class);
+        when(lookupService.listPublishedArtifacts(any(ToolContext.class))).thenReturn(List.of(
+                publishedArtifact(
+                        "oa.leave.apply",
+                        "请假申请",
+                        "提交请假申请",
+                        "gougu_oa",
+                        null,
+                        null,
+                        null,
+                        null)));
+
+        AssistantFastIntentHook hook = new AssistantFastIntentHook(router, new ObjectMapper(), false, lookupService);
+        OverAllState state = new OverAllState();
+        state.updateState(Map.of(
+                "input", "我要请假",
+                AssistantStateKeys.SYSTEM_CODE, "gougu_oa",
+                CodeactStateKeys.AVAILABLE_TOOL_NAMES, List.of("slot_collect", "slot_confirm")));
+
+        Map<String, Object> updates = hook.beforeAgent(state, RunnableConfig.builder().build()).join();
+
+        assertTrue(updates.isEmpty());
+        verify(router, times(1)).route(any(), any(), any());
+    }
+
+    @Test
+    void shouldFallbackToMainFlowWhenPublishedOperationMatchIsAmbiguous() {
+        AssistantIntentRouter router = mock(AssistantIntentRouter.class);
+        when(router.route(any(), any(), any())).thenReturn(AssistantIntentRouter.IntentResult.mainFlow());
+        ArtifactPublicationLookupService lookupService = mock(ArtifactPublicationLookupService.class);
+        when(lookupService.listPublishedArtifacts(any(ToolContext.class))).thenReturn(List.of(
+                publishedArtifact("oa.leave.apply", "请假申请", "提交请假申请", "gougu_oa", null, null, null),
+                publishedArtifact("oa.leave.cancel", "请假销假", "提交请假申请", "gougu_oa", null, null, null)));
+
+        AssistantFastIntentHook hook = new AssistantFastIntentHook(router, new ObjectMapper(), false, lookupService);
+        OverAllState state = new OverAllState();
+        state.updateState(Map.of(
+                "input", "我要请假",
                 AssistantStateKeys.SYSTEM_CODE, "gougu_oa",
                 CodeactStateKeys.AVAILABLE_TOOL_NAMES, List.of("slot_collect", "slot_confirm")));
 
@@ -304,19 +351,13 @@ class AssistantFastIntentHookTest {
 
         Map<String, Object> updates = hook.beforeAgent(state, RunnableConfig.builder().build()).join();
 
-        assertEquals(JumpTo.tool, updates.get("jump_to"));
+        assertEquals(JumpTo.model, updates.get("jump_to"));
         assertEquals(LocalDate.now().toString(), updates.get("current_date"));
+        assertEquals(Boolean.TRUE, updates.get(AssistantStateKeys.FORM_FLOW_EXTRACTION_PENDING));
         @SuppressWarnings("unchecked")
         Map<String, Object> matchedToolMeta = (Map<String, Object>) updates.get(AssistantStateKeys.MATCHED_TOOL_META);
         assertEquals("gougu_oa.work_report", matchedToolMeta.get("toolCode"));
-
-        AssistantMessage assistantMessage = firstAssistantMessage(updates);
-        assertEquals("slot_collect", assistantMessage.getToolCalls().get(0).name());
-        assertFalse(org.springframework.util.StringUtils.hasText(assistantMessage.getText()));
-
-        @SuppressWarnings("unchecked")
-        Map<String, Object> args = new ObjectMapper().readValue(assistantMessage.getToolCalls().get(0).arguments(), Map.class);
-        assertEquals("gougu_oa.work_report", args.get("toolCode"));
+        assertFalse(updates.containsKey("messages"));
         verify(router, never()).route(any(), any(), any());
     }
 
@@ -423,6 +464,63 @@ class AssistantFastIntentHookTest {
                 1L,
                 artifactCode + ".interaction",
                 "{\"slots\":[{\"name\":\"reason\",\"type\":\"string\",\"required\":true}]}",
+                null,
+                confirmationPolicyJson);
+        Map<String, RuntimeArtifact.ActionBinding> actions = Map.of();
+        if (riskLevel != null || approvalPolicyId != null) {
+            actions = Map.of("submit", new RuntimeArtifact.ActionBinding(
+                    1L,
+                    artifactCode + ".submit",
+                    1L,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    riskLevel,
+                    approvalPolicyId,
+                    null,
+                    1));
+        }
+        RuntimeArtifact artifact = new RuntimeArtifact(
+                1L,
+                artifactCode,
+                RuntimeArtifact.ArtifactType.WORKFLOW,
+                displayName,
+                1,
+                null,
+                null,
+                null,
+                null,
+                interaction,
+                new FlowDefinition(),
+                actions,
+                Map.of());
+        return PublishedToolDescriptor.forArtifact(
+                "tool-meta-catalog",
+                "tool:" + artifactCode,
+                displayName,
+                null,
+                description,
+                false,
+                systemCode,
+                artifact);
+    }
+
+    private PublishedToolDescriptor publishedArtifact(
+            String artifactCode,
+            String displayName,
+            String description,
+            String systemCode,
+            String confirmationPolicyJson,
+            String riskLevel,
+            Long approvalPolicyId,
+            String slotSchemaJson) {
+        RuntimeArtifact.Interaction interaction = new RuntimeArtifact.Interaction(
+                1L,
+                artifactCode + ".interaction",
+                slotSchemaJson,
                 null,
                 confirmationPolicyJson);
         Map<String, RuntimeArtifact.ActionBinding> actions = Map.of();

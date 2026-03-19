@@ -1262,6 +1262,32 @@ class SlotCollectToolTest {
         assertEquals(List.of("1", "2", "7"), stringifyList(response.collected.get("join_uids")));
     }
 
+    @Test
+    void shouldPreferDisplayMessageFromRequestWhenSlotsStillMissing() {
+        SlotCollectorService collectorService = new SlotCollectorService();
+        ObjectMapper objectMapper = new ObjectMapper();
+        SlotEnricherService enricher = new SlotEnricherService(
+                objectMapper,
+                mock(com.alibaba.assistant.agent.slot.port.OptionCachePort.class),
+                mock(com.alibaba.assistant.agent.slot.ToolBackedSlotOptionResolver.class));
+        SlotCollectTool tool = new SlotCollectTool(
+                collectorService,
+                enricher,
+                new ComputedFieldProcessor(List.of(new DatePeriodPresetFunction(), new DateRangeLabelFunction())),
+                new SlotSchemaParser(objectMapper),
+                objectMapper);
+
+        OverAllState state = stateWithSnapshot(snapshot("gougu_oa.leave_application", LEAVE_SCHEMA, null));
+        state.updateState(Map.of("input", "我要请假"));
+
+        SlotCollectTool.Request request = new SlotCollectTool.Request();
+        request.displayMessage = "我先为您发起请假申请，还需要补充开始日期、结束日期和请假原因。";
+
+        SlotCollectTool.Response response = tool.apply(request, toolContext(state));
+
+        assertEquals("COLLECTING", response.phase);
+        assertEquals(request.displayMessage, response.message);
+    }
     private static List<String> stringifyList(Object rawValue) {
         if (!(rawValue instanceof List<?> values)) {
             return List.of();
@@ -1335,6 +1361,3 @@ class SlotCollectToolTest {
         }
     }
 }
-
-
-

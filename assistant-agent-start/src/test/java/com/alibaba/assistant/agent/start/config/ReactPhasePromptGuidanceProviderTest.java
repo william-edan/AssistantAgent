@@ -71,6 +71,32 @@ class ReactPhasePromptGuidanceProviderTest {
 		assertTrue(userMessage.getText().contains("先向用户澄清具体的需求和意图"));
 	}
 
+	@Test
+	void shouldGuideFormFlowWhenClearAndOperationIntent() {
+		ReactPhasePromptGuidanceProvider provider = new ReactPhasePromptGuidanceProvider();
+		OverAllState state = new OverAllState();
+		state.updateState(Map.of(
+				OverAllStateEvaluationResultStore.EVALUATION_RESULTS_KEY,
+				Map.of(
+						"react-phase-suite",
+						buildEvaluationResult(
+								"清晰",
+								"请帮我起草一份正式的请假申请，需包含请假人姓名、所在部门、请假事由、具体起止时间和审批流程说明"))));
+
+		OverAllStatePromptContributorContext context =
+				new OverAllStatePromptContributorContext(state, null, "REACT");
+
+		assertTrue(provider.shouldContribute(context));
+		PromptContribution contribution = provider.contribute(context);
+
+		assertFalse(contribution.isEmpty());
+		UserMessage userMessage = (UserMessage) contribution.messagesToAppend().get(0);
+		assertTrue(userMessage.getText().contains("先调用 slot_collect 收集和补全槽位"));
+		assertTrue(userMessage.getText().contains("调用 slot_confirm"));
+		assertTrue(userMessage.getText().contains("调用 artifact_execute"));
+		assertFalse(userMessage.getText().contains("无需额外澄清，直接执行"));
+	}
+
 	private EvaluationResult buildEvaluationResult(String isFuzzy, String enhancedInput) {
 		EvaluationResult result = new EvaluationResult();
 		result.setSuiteId("react-phase-suite");

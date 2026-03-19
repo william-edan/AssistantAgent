@@ -343,7 +343,8 @@ public class SlotCollectTool implements BiFunction<SlotCollectTool.Request, Tool
                     buildMissingSlots(nextSlots, enrichedSlots),
                     nextRound,
                     enrichedSlots,
-                    status.name());
+                    status.name(),
+                    effectiveRequest.displayMessage);
         }
         catch (Exception e) {
             logger.error("SlotCollectTool#apply - execution failed", e);
@@ -3253,6 +3254,9 @@ public class SlotCollectTool implements BiFunction<SlotCollectTool.Request, Tool
         @JsonPropertyDescription("Extracted slot values from current user turn")
         public Map<String, Object> extractedSlots = new HashMap<>();
 
+        @JsonPropertyDescription("Optional user-facing follow-up message drafted by the model")
+        public String displayMessage;
+
         @JsonPropertyDescription("Optional system code override")
         public String systemCode;
 
@@ -3283,6 +3287,16 @@ public class SlotCollectTool implements BiFunction<SlotCollectTool.Request, Tool
                                           Integer round,
                                           List<EnrichedSlot> enrichedSlots,
                                           String status) {
+            return collecting(toolCode, collected, missing, round, enrichedSlots, status, null);
+        }
+
+        public static Response collecting(String toolCode,
+                                          Map<String, Object> collected,
+                                          List<MissingSlot> missing,
+                                          Integer round,
+                                          List<EnrichedSlot> enrichedSlots,
+                                          String status,
+                                          String displayMessage) {
             Response response = new Response();
             response.status = status;
             response.phase = "COLLECTING";
@@ -3291,7 +3305,9 @@ public class SlotCollectTool implements BiFunction<SlotCollectTool.Request, Tool
             response.missing = missing;
             response.round = round;
             response.enrichedSlots = enrichedSlots;
-            response.message = "Missing required slots, continue collecting.";
+            response.message = StringUtils.hasText(displayMessage)
+                    ? displayMessage
+                    : "Missing required slots, continue collecting.";
             return response;
         }
 
@@ -3335,10 +3351,3 @@ public class SlotCollectTool implements BiFunction<SlotCollectTool.Request, Tool
         public String options;
     }
 }
-
-
-
-
-
-
-
