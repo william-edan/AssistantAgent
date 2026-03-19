@@ -152,6 +152,7 @@ public class ArtifactRuntimeExecutor {
             FlowContext flowContext,
             boolean resumed) {
         String runId = flowContext.getRunId();
+        // 快速定位：所有已发布动作/工作流最终都会在这里进入 DAGFlowExecutor，并在这里汇总事件、审批态和持久化。
         RuntimeExecutionEventCollector executionEventCollector = new RuntimeExecutionEventCollector(
                 runId,
                 descriptor,
@@ -203,6 +204,7 @@ public class ArtifactRuntimeExecutor {
             Map<String, Object> arguments,
             @Nullable ToolContext toolContext,
             String runId) {
+        // 对话态、空间信息、线程信息会在这里折叠成执行引擎可消费的 FlowContext。
         Map<String, Object> safeArguments = arguments != null ? new LinkedHashMap<>(arguments) : new LinkedHashMap<>();
         if (isInternalDependencyCall(toolContext, safeArguments)) {
             safeArguments.put(ToolExecutor.INTERNAL_DEPENDENCY_CALL_KEY, true);

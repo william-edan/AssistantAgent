@@ -253,6 +253,7 @@ public class ChatController {
 			return Flux.error(new ResponseStatusException(HttpStatus.BAD_REQUEST, "newMessage cannot be null"));
 		}
 		try {
+			// 快速定位：对话主链从这里开始，先装载 Agent，再把用户输入和状态一起送进图运行时。
 			Agent agent = agentLoader.loadAgent(appName);
 			UserMessage userMessage = newMessage.toUserMessage();
 			Map<String, Object> effectiveStateDelta = resolveRoleBindingState(stateDelta, userMessage.getText());
@@ -382,6 +383,7 @@ public class ChatController {
 			String turnId,
 			@Nullable Map<String, Object> roleBindingState)
 			throws GraphRunnerException {
+		// 快速定位：这里把 Agent 图输出、内部执行事件流、聊天持久化三条支路汇总成前端最终看到的 SSE。
 		Flux<FrontendEvent> eventFlux = executeAgentEvents(
 				agentInput,
 				executionSource,
@@ -1274,6 +1276,7 @@ public class ChatController {
 		return merged.isEmpty() ? null : merged;
 	}
 
+	// 快速定位：run_sse / resume_sse 最终都在这里把会话输入转换成 Graph 的输入状态。
 	// 结构化表单值必须直接进入图输入状态，不能只挂在 RunnableConfig metadata 上。
 	private Map<String, Object> buildAgentInput(
 			@Nullable UserMessage userMessage,
@@ -1305,6 +1308,7 @@ public class ChatController {
 				|| StringUtils.hasText(asString(resolved.get(AssistantStateKeys.ROLE_SCENARIO_CODE)))) {
 			return resolved;
 		}
+		// 岗位包模式下，场景自动补全就发生在这里；后续 slot_collect / artifact_execute 都依赖这个状态。
 		scenarioRouter.resolveScenario(resolved, latestInput)
 				.ifPresent(scenarioCode -> resolved.put(AssistantStateKeys.ROLE_SCENARIO_CODE, scenarioCode));
 		return resolved;

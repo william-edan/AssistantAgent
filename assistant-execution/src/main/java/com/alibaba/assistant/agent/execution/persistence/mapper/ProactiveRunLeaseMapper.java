@@ -18,6 +18,7 @@ import org.apache.ibatis.annotations.Update;
 import org.springframework.util.StringUtils;
 
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Optional;
 
 @Mapper
@@ -41,7 +42,11 @@ public interface ProactiveRunLeaseMapper extends BaseMapper<ProactiveRunLease> {
         LambdaQueryWrapper<ProactiveRunLease> query = new LambdaQueryWrapper<>();
         query.eq(ProactiveRunLease::getTaskKey, taskKey.trim());
         query.orderByDesc(ProactiveRunLease::getScheduledAt);
-        ProactiveRunLease lease = selectOne(query);
+        query.orderByDesc(ProactiveRunLease::getId);
+        // proactive_run_lease 会为同一个 taskKey 累积每次 scheduledAt 的历史行，不能再用 selectOne。
+        query.last("LIMIT 1");
+        List<ProactiveRunLease> leases = selectList(query);
+        ProactiveRunLease lease = leases.isEmpty() ? null : leases.get(0);
         return Optional.ofNullable(lease != null ? lease.getScheduledAt() : null);
     }
 

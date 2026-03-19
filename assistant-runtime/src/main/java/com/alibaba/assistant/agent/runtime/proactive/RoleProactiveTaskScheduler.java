@@ -65,10 +65,12 @@ public class RoleProactiveTaskScheduler {
         LocalDateTime now = LocalDateTime.ofInstant(clock.instant(), ZoneId.systemDefault());
         for (RoleProactiveTaskQueryService.PublishedRoleProactiveTask task : queryService.listPublishedTasks()) {
             CronExpression cron = CronExpression.parse(task.cronExpr());
+            // 快速定位：主动任务补偿扫描从这里决定“上次跑到哪里”，异常栈里的 startup 报错就卡在这一步。
             LocalDateTime cursor = leaseService.findLatestScheduledAt(task.taskKey()).orElse(now.minus(recoveryWindow));
             int dispatched = 0;
             LocalDateTime next = cron.next(cursor);
             while (next != null && !next.isAfter(now) && dispatched < maxCatchUpRuns) {
+                // acquire 成功才会真正进入 RoleProactiveTaskDispatcher -> ArtifactRunDispatcher -> ArtifactRuntimeExecutor。
                 leaseService.acquire(task.taskKey(), next, leaseOwner, leaseDuration).ifPresent(lease -> dispatcher.dispatch(task, lease));
                 next = cron.next(next);
                 dispatched++;

@@ -76,6 +76,7 @@ public class ProactiveRunLeaseService {
     }
 
     public Optional<LocalDateTime> findLatestScheduledAt(String taskKey) {
+        // 快速定位：主动任务扫描的“游标时间”统一从这里读取。
         return proactiveRunLeaseMapper.findLatestScheduledAt(taskKey);
     }
 

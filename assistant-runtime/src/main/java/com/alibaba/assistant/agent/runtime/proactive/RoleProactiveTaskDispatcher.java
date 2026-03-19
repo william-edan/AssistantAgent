@@ -66,6 +66,7 @@ public class RoleProactiveTaskDispatcher {
             }
         }
 
+        // 快速定位：主动任务不会经过 ChatController，而是从这里直接桥接到 ArtifactRunDispatcher / ArtifactRuntimeExecutor。
         artifactRunDispatcher.dispatch(
                 task.artifactCode(),
                 arguments,

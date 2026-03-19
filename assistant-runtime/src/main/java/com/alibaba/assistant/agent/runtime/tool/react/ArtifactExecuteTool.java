@@ -112,6 +112,7 @@ public class ArtifactExecuteTool implements BiFunction<ArtifactExecuteTool.Reque
             return Map.of("success", false, "error", "Published artifact descriptor is missing");
         }
         Map<String, Object> executionParams = resolveExecutionParams(request, toolContext);
+        // 快速定位：用户确认后的真正执行出口在这里，artifact publication 会统一进入 ArtifactRuntimeExecutor。
         if (descriptor.isArtifactPublication()) {
             return artifactRuntimeExecutor.execute(descriptor, executionParams, toolContext);
         }
