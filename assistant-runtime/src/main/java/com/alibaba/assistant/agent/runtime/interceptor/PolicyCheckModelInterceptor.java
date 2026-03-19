@@ -23,6 +23,7 @@ import com.alibaba.cloud.ai.graph.agent.interceptor.ModelCallHandler;
 import com.alibaba.cloud.ai.graph.agent.interceptor.ModelInterceptor;
 import com.alibaba.cloud.ai.graph.agent.interceptor.ModelRequest;
 import com.alibaba.cloud.ai.graph.agent.interceptor.ModelResponse;
+import com.alibaba.cloud.ai.graph.agent.hook.JumpTo;
 import com.alibaba.cloud.ai.graph.agent.tools.ToolContextConstants;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
@@ -121,6 +122,7 @@ public class PolicyCheckModelInterceptor extends ModelInterceptor {
 		if (!StringUtils.hasText(matchedToolCode)) {
 			return response;
 		}
+		switchJumpToTool(state);
 		FormFlowExtractionPayload payload = parseFormFlowExtractionPayload(response);
 		Map<String, Object> args = new LinkedHashMap<>();
 		args.put("toolCode", matchedToolCode);
@@ -144,6 +146,13 @@ public class PolicyCheckModelInterceptor extends ModelInterceptor {
 			return;
 		}
 		state.updateState(Map.of(AssistantStateKeys.FORM_FLOW_EXTRACTION_PENDING, Boolean.FALSE));
+	}
+
+	private void switchJumpToTool(OverAllState state) {
+		if (state == null) {
+			return;
+		}
+		state.updateState(Map.of("jump_to", JumpTo.tool));
 	}
 
 	private FormFlowExtractionPayload parseFormFlowExtractionPayload(ModelResponse response) {

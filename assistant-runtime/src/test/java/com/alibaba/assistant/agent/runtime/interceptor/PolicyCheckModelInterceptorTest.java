@@ -400,6 +400,31 @@ class PolicyCheckModelInterceptorTest {
 		assertEquals(Map.of(), args.get("extractedSlots"));
 		assertEquals("请补充结束日期和请假原因", args.get("displayMessage"));
 	}
+
+	@Test
+	void shouldSwitchJumpToToolWhenPendingFormExtractionRewritesToolCall() {
+		PolicyCheckModelInterceptor interceptor = new PolicyCheckModelInterceptor();
+		ModelCallHandler handler = mock(ModelCallHandler.class);
+		when(handler.call(any())).thenReturn(ModelResponse.of(AssistantMessage.builder()
+				.content("{\"extractedSlots\":{\"types\":\"1\"},\"displayMessage\":\"请补充日期。\"}")
+				.build()));
+
+		OverAllState state = new OverAllState();
+		state.updateState(Map.of(
+				"jump_to", "model",
+				AssistantStateKeys.FORM_FLOW_EXTRACTION_PENDING, true,
+				AssistantStateKeys.MATCHED_TOOL_META, Map.of("toolCode", "gougu_oa.leave_application"),
+				CodeactStateKeys.AVAILABLE_TOOL_NAMES, List.of("slot_collect", "slot_confirm")));
+
+		ModelResponse response = interceptor.interceptModel(
+				buildRequest(state, Map.of("slot_collect", "slot collect", "slot_confirm", "slot confirm")),
+				handler);
+
+		AssistantMessage message = (AssistantMessage) response.getMessage();
+		assertTrue(message.hasToolCalls());
+		assertEquals("slot_collect", message.getToolCalls().get(0).name());
+		assertEquals("tool", String.valueOf(state.value("jump_to", Object.class).orElse(null)));
+	}
 	private ModelRequest buildRequest(OverAllState state) {
 		return buildRequest(state, Map.of(
 				"slot_collect", "slot collect",
