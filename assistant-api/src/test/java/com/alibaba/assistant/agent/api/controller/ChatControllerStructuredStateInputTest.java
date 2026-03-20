@@ -15,7 +15,9 @@
  */
 package com.alibaba.assistant.agent.api.controller;
 
+import com.alibaba.assistant.agent.api.controller.dto.ChatThreadStateData;
 import com.alibaba.assistant.agent.api.security.AuthenticatedUserContext;
+import com.alibaba.assistant.agent.api.service.ChatThreadStateService;
 import com.alibaba.assistant.agent.runtime.agent.AssistantStateKeys;
 import com.alibaba.assistant.agent.runtime.role.ScenarioRouter;
 import com.alibaba.cloud.ai.agent.studio.dto.AgentResumeRequest;
@@ -45,6 +47,7 @@ import static org.mockito.ArgumentMatchers.anyMap;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -54,7 +57,20 @@ class ChatControllerStructuredStateInputTest {
 
     private final Agent agent = mock(Agent.class);
 
-    private final ChatController controller = new ChatController(agentLoader, "grayscale_agent", "");
+    private final ChatThreadStateService chatThreadStateService = mock(ChatThreadStateService.class);
+
+    private final ChatController controller = new ChatController(
+            agentLoader,
+            "grayscale_agent",
+            "",
+            "",
+            "prod",
+            null,
+            null,
+            null,
+            chatThreadStateService,
+            null,
+            null);
 
     @AfterEach
     void tearDown() {
@@ -165,6 +181,86 @@ class ChatControllerStructuredStateInputTest {
         ArgumentCaptor<Map<String, Object>> inputCaptor = ArgumentCaptor.forClass(Map.class);
         verify(agent).stream(inputCaptor.capture(), any(RunnableConfig.class));
         assertEquals("leave-approval", inputCaptor.getValue().get(AssistantStateKeys.ROLE_SCENARIO_CODE));
+    }
+
+    @Test
+    void shouldReplayPendingFormDuringRunSseWhenIncomingTextEchoesCurrentPrompt() throws Exception {
+        authenticate();
+        when(chatThreadStateService.getThreadState("thread-form-echo", "1001"))
+                .thenReturn(pendingFormThreadState("thread-form-echo"));
+
+        AgentRunRequest request = new AgentRunRequest();
+        request.threadId = "thread-form-echo";
+        request.userId = "ignored-user";
+        request.newMessage = new UserMessageDTO("请提供请假的起止时间、事由，以及是否需要审批人知晓。");
+        request.stateDelta = new LinkedHashMap<>();
+
+        List<String> payloads = controller.runSse(request, null, null, null)
+                .map(event -> event.data() != null ? event.data() : "")
+                .collectList()
+                .block();
+
+        assertEquals(2, payloads.size());
+        assertTrue(payloads.stream().anyMatch(data -> data.contains("\"eventType\":\"FORM_STATE\"")));
+        assertTrue(payloads.stream().anyMatch(data -> data.contains("\"source\":\"run_sse\"")));
+        verify(agentLoader, never()).loadAgent(anyString());
+        verify(agent, never()).stream(anyMap(), any(RunnableConfig.class));
+    }
+
+    @Test
+    void shouldContinueAgentRunWhenPendingFormEchoAlsoContainsExplicitSlotInputs() throws Exception {
+        authenticate();
+        when(chatThreadStateService.getThreadState("thread-form-submit", "1001"))
+                .thenReturn(pendingFormThreadState("thread-form-submit"));
+        when(agentLoader.loadAgent("grayscale_agent")).thenReturn(agent);
+        when(agent.stream(anyMap(), any(RunnableConfig.class))).thenReturn(Flux.empty());
+
+        AgentRunRequest request = new AgentRunRequest();
+        request.threadId = "thread-form-submit";
+        request.userId = "ignored-user";
+        request.newMessage = new UserMessageDTO("请提供请假的起止时间、事由，以及是否需要审批人知晓。");
+        request.stateDelta = new LinkedHashMap<>();
+        request.stateDelta.put("types", 2);
+        request.stateDelta.put(AssistantStateKeys.ROLE_PACKAGE_CODE, "digital-admin");
+
+        controller.runSse(request, null, null, null).blockLast();
+
+        verify(agentLoader).loadAgent("grayscale_agent");
+        verify(agent).stream(anyMap(), any(RunnableConfig.class));
+    }
+
+    private static ChatThreadStateData pendingFormThreadState(String threadId) {
+        return new ChatThreadStateData(
+                threadId,
+                null,
+                "WAITING_INPUT",
+                "COLLECTING",
+                true,
+                true,
+                "gougu_oa.leave_application",
+                null,
+                null,
+                null,
+                "FORM_CARD",
+                0,
+                0,
+                null,
+                "请提供请假的起止时间、事由，以及是否需要审批人知晓。",
+                Map.of(
+                        "mode", "COLLECT",
+                        "status", "WAITING_INPUT",
+                        "phase", "COLLECTING",
+                        "message", "请提供请假的起止时间、事由，以及是否需要审批人知晓。",
+                        "toolCode", "gougu_oa.leave_application",
+                        "values", Map.of("check_uids", "4"),
+                        "fields", List.of(Map.of("name", "types", "title", "请假类型")),
+                        "missingFields", List.of(Map.of("name", "types")),
+                        "summary", Map.of(),
+                        "canSubmit", false),
+                Map.of(),
+                List.of(),
+                List.of(),
+                Map.of());
     }
 
     private static void authenticate() {
