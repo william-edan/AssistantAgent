@@ -247,6 +247,53 @@ class SlotCollectToolTest {
             }
             """;
 
+    private static final String LEAVE_FOLLOW_UP_SCHEMA = """
+            {
+              "slots": [
+                {
+                  "name": "leave_type",
+                  "type": "enum",
+                  "title": "请假类型",
+                  "priority": "CORE",
+                  "required": true,
+                  "ask_mode": "BATCH",
+                  "options": {
+                    "source": "ENUM",
+                    "enum_mapping": {
+                      "事假": "1",
+                      "年假": "2",
+                      "病假": "4"
+                    }
+                  }
+                },
+                {
+                  "name": "start_date",
+                  "type": "date",
+                  "title": "开始日期",
+                  "priority": "CORE",
+                  "required": true,
+                  "ask_mode": "BATCH"
+                },
+                {
+                  "name": "end_date",
+                  "type": "date",
+                  "title": "结束日期",
+                  "priority": "CORE",
+                  "required": true,
+                  "ask_mode": "BATCH"
+                },
+                {
+                  "name": "reason",
+                  "type": "string",
+                  "title": "请假原因",
+                  "priority": "CORE",
+                  "required": true,
+                  "ask_mode": "BATCH"
+                }
+              ]
+            }
+            """;
+
     private static final String ALIAS_DRIVEN_LEAVE_SCHEMA = """
             {
               "slots": [
@@ -861,6 +908,7 @@ class SlotCollectToolTest {
                 AssistantStateKeys.ASSISTANT_UID, "u1",
                 AssistantStateKeys.CONVERSATION_PHASE, "CONFIRMING",
                 AssistantStateKeys.LAST_COLLECT_USER_INPUT, "本周完成了需求评审",
+                AssistantStateKeys.CURRENT_TURN_USER_INPUT, "本周完成了需求评审",
                 "input", "本周完成了需求评审"));
 
         SlotCollectTool.Request request = new SlotCollectTool.Request();
@@ -1288,6 +1336,42 @@ class SlotCollectToolTest {
         assertEquals("COLLECTING", response.phase);
         assertEquals(request.displayMessage, response.message);
     }
+
+    @Test
+    void shouldReturnChineseFollowUpMessageWhenContinuingCollectionWithoutDisplayMessage() {
+        ObjectMapper objectMapper = new ObjectMapper();
+        SlotEnricherService enricher = mock(SlotEnricherService.class);
+        when(enricher.enrichSlots(anyList(), anyString(), anyString())).thenReturn(new ArrayList<>());
+
+        SlotCollectTool tool = new SlotCollectTool(
+                new SlotCollectorService(),
+                enricher,
+                new ComputedFieldProcessor(List.of(new DatePeriodPresetFunction(), new DateRangeLabelFunction())),
+                new SlotSchemaParser(objectMapper),
+                objectMapper);
+
+        OverAllState state = stateWithSnapshot(snapshot("gougu_oa.leave_application", LEAVE_FOLLOW_UP_SCHEMA, null));
+        state.updateState(Map.of(
+                AssistantStateKeys.SYSTEM_CODE, "oa",
+                AssistantStateKeys.ASSISTANT_UID, "u1",
+                AssistantStateKeys.CONVERSATION_PHASE, "COLLECTING",
+                AssistantStateKeys.LAST_COLLECT_USER_INPUT, "我要请假",
+                "input", "我要请假",
+                "messages", List.of(
+                        org.springframework.ai.chat.messages.AssistantMessage.builder()
+                                .content("请补充请假时间")
+                                .build(),
+                        new UserMessage("明天")),
+                AssistantStateKeys.COLLECTED_SLOTS, Map.of(
+                        "leave_type", SlotValue.resolved("leave_type", "1", "1", "1"))));
+
+        SlotCollectTool.Response response = tool.apply(new SlotCollectTool.Request(), toolContext(state));
+
+        assertEquals("COLLECTING", response.phase);
+        assertTrue(response.message.contains("还需要补充"));
+        assertTrue(response.message.contains("请假原因"));
+        assertFalse(response.message.contains("Missing required slots"));
+    }
     private static List<String> stringifyList(Object rawValue) {
         if (!(rawValue instanceof List<?> values)) {
             return List.of();
@@ -1361,3 +1445,6 @@ class SlotCollectToolTest {
         }
     }
 }
+
+
+

@@ -89,9 +89,9 @@ assistant:
 spring.ai.dashscope:
   chat:
     options:
-      model: qwen-plus
+      model: deepseek-v3
       incremental-output: true
-  api-key: sk-434f88b803e348b1b799b34b45360874
+  api-key: sk-8ae125796fc6476cb1062e2eabe5b43a
 
 
 # ============================================================================

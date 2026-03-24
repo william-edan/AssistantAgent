@@ -38,141 +38,154 @@ import java.util.Map;
  */
 public final class ConversationUserInputResolver {
 
-	private ConversationUserInputResolver() {
-	}
+    private ConversationUserInputResolver() {
+    }
 
-	public static String resolve(@Nullable OverAllState state) {
-		return resolve(null, state, null);
-	}
+    public static String resolve(@Nullable OverAllState state) {
+        return resolve(null, state, null);
+    }
 
-	public static String resolve(
-			@Nullable String explicitInput,
-			@Nullable OverAllState state,
-			@Nullable List<? extends Message> messages) {
-		String currentInput = firstNonBlank(
-				explicitInput,
-				readStateText(state, "input"));
-		String query = readStateText(state, "query");
-		String lastCollectInput = readStateText(state, AssistantStateKeys.LAST_COLLECT_USER_INPUT);
-		Object rawMessages = messages != null ? messages : readStateValue(state, "messages");
+    public static String resolve(
+            @Nullable String explicitInput,
+            @Nullable OverAllState state,
+            @Nullable List<? extends Message> messages) {
+        String currentTurnInput = readStateText(state, AssistantStateKeys.CURRENT_TURN_USER_INPUT);
+        if (StringUtils.hasText(currentTurnInput)) {
+            return currentTurnInput;
+        }
 
-		String trailingUserMessage = resolveTrailingUserMessage(rawMessages);
-		if (shouldPreferTrailingUserMessage(trailingUserMessage, currentInput, lastCollectInput)) {
-			return trailingUserMessage;
-		}
+        String persistedInput = firstNonBlank(explicitInput, readStateText(state, "input"));
+        String query = readStateText(state, "query");
+        String lastCollectInput = readStateText(state, AssistantStateKeys.LAST_COLLECT_USER_INPUT);
+        Object rawMessages = messages != null ? messages : readStateValue(state, "messages");
 
-		return firstNonBlank(
-				currentInput,
-				query,
-				resolveLatestUserMessage(rawMessages));
-	}
+        String trailingUserMessage = resolveTrailingUserMessage(rawMessages);
+        if (shouldPreferTrailingUserMessage(trailingUserMessage, persistedInput, lastCollectInput)) {
+            return trailingUserMessage;
+        }
 
-	private static boolean shouldPreferTrailingUserMessage(
-			@Nullable String trailingUserMessage,
-			@Nullable String currentInput,
-			@Nullable String lastCollectInput) {
-		if (!StringUtils.hasText(trailingUserMessage)) {
-			return false;
-		}
-		if (!StringUtils.hasText(currentInput)) {
-			return true;
-		}
-		if (equalsNormalized(trailingUserMessage, currentInput)) {
-			return true;
-		}
-		return StringUtils.hasText(lastCollectInput)
-				&& equalsNormalized(currentInput, lastCollectInput)
-				&& !equalsNormalized(trailingUserMessage, lastCollectInput);
-	}
+        String latestUserMessage = resolveLatestUserMessage(rawMessages);
+        persistedInput = dropConsumedCandidate(persistedInput, lastCollectInput);
+        query = dropConsumedCandidate(query, lastCollectInput);
+        latestUserMessage = dropConsumedCandidate(latestUserMessage, lastCollectInput);
 
-	private static String resolveTrailingUserMessage(@Nullable Object rawMessages) {
-		if (!(rawMessages instanceof List<?> messages) || messages.isEmpty()) {
-			return null;
-		}
-		return extractUserText(messages.get(messages.size() - 1));
-	}
+        return firstNonBlank(
+                persistedInput,
+                query,
+                latestUserMessage);
+    }
 
-	private static String resolveLatestUserMessage(@Nullable Object rawMessages) {
-		if (!(rawMessages instanceof List<?> messages) || messages.isEmpty()) {
-			return null;
-		}
-		for (int index = messages.size() - 1; index >= 0; index--) {
-			String text = extractUserText(messages.get(index));
-			if (StringUtils.hasText(text)) {
-				return text;
-			}
-		}
-		return null;
-	}
+    private static boolean shouldPreferTrailingUserMessage(
+            @Nullable String trailingUserMessage,
+            @Nullable String persistedInput,
+            @Nullable String lastCollectInput) {
+        if (!StringUtils.hasText(trailingUserMessage)) {
+            return false;
+        }
+        if (!StringUtils.hasText(persistedInput)) {
+            return !equalsNormalized(trailingUserMessage, lastCollectInput);
+        }
+        return StringUtils.hasText(lastCollectInput)
+                && equalsNormalized(persistedInput, lastCollectInput)
+                && !equalsNormalized(trailingUserMessage, lastCollectInput);
+    }
 
-	private static String extractUserText(@Nullable Object rawMessage) {
-		if (rawMessage instanceof UserMessage userMessage) {
-			return textOf(userMessage.getText());
-		}
-		if (rawMessage instanceof Map<?, ?> rawMap) {
-			String role = firstNonBlank(
-					textOf(rawMap.get("messageType")),
-					textOf(rawMap.get("type")),
-					textOf(rawMap.get("role")),
-					textOf(rawMap.get("messageRole")),
-					textOf(rawMap.get("message_role")));
-			if (!isUserRole(role)) {
-				return null;
-			}
-			return firstNonBlank(
-					textOf(rawMap.get("text")),
-					textOf(rawMap.get("content")));
-		}
-		return null;
-	}
+    private static String dropConsumedCandidate(@Nullable String candidate, @Nullable String lastCollectInput) {
+        if (!StringUtils.hasText(candidate)) {
+            return null;
+        }
+        return equalsNormalized(candidate, lastCollectInput) ? null : candidate;
+    }
 
-	private static boolean isUserRole(@Nullable String role) {
-		if (!StringUtils.hasText(role)) {
-			return false;
-		}
-		String normalized = role.trim().toUpperCase(Locale.ROOT);
-		return "USER".equals(normalized) || "HUMAN".equals(normalized);
-	}
+    private static String resolveTrailingUserMessage(@Nullable Object rawMessages) {
+        if (!(rawMessages instanceof List<?> messages) || messages.isEmpty()) {
+            return null;
+        }
+        return extractUserText(messages.get(messages.size() - 1));
+    }
 
-	private static boolean equalsNormalized(@Nullable String left, @Nullable String right) {
-		return normalize(left).equals(normalize(right));
-	}
+    private static String resolveLatestUserMessage(@Nullable Object rawMessages) {
+        if (!(rawMessages instanceof List<?> messages) || messages.isEmpty()) {
+            return null;
+        }
+        for (int index = messages.size() - 1; index >= 0; index--) {
+            String text = extractUserText(messages.get(index));
+            if (StringUtils.hasText(text)) {
+                return text;
+            }
+        }
+        return null;
+    }
 
-	private static String normalize(@Nullable String text) {
-		if (!StringUtils.hasText(text)) {
-			return "";
-		}
-		return text.replaceAll("\\s+", "").trim();
-	}
+    private static String extractUserText(@Nullable Object rawMessage) {
+        if (rawMessage instanceof UserMessage userMessage) {
+            return textOf(userMessage.getText());
+        }
+        if (rawMessage instanceof Map<?, ?> rawMap) {
+            String role = firstNonBlank(
+                    textOf(rawMap.get("messageType")),
+                    textOf(rawMap.get("type")),
+                    textOf(rawMap.get("role")),
+                    textOf(rawMap.get("messageRole")),
+                    textOf(rawMap.get("message_role")));
+            if (!isUserRole(role)) {
+                return null;
+            }
+            return firstNonBlank(
+                    textOf(rawMap.get("text")),
+                    textOf(rawMap.get("content")));
+        }
+        return null;
+    }
 
-	private static String readStateText(@Nullable OverAllState state, String key) {
-		return textOf(readStateValue(state, key));
-	}
+    private static boolean isUserRole(@Nullable String role) {
+        if (!StringUtils.hasText(role)) {
+            return false;
+        }
+        String normalized = role.trim().toUpperCase(Locale.ROOT);
+        return "USER".equals(normalized) || "HUMAN".equals(normalized);
+    }
 
-	private static Object readStateValue(@Nullable OverAllState state, String key) {
-		if (state == null || !StringUtils.hasText(key)) {
-			return null;
-		}
-		return state.value(key, Object.class).orElse(null);
-	}
+    private static boolean equalsNormalized(@Nullable String left, @Nullable String right) {
+        return normalize(left).equals(normalize(right));
+    }
 
-	private static String textOf(@Nullable Object value) {
-		if (value == null) {
-			return null;
-		}
-		String text = String.valueOf(value).trim();
-		return StringUtils.hasText(text) ? text : null;
-	}
+    private static String normalize(@Nullable String text) {
+        if (!StringUtils.hasText(text)) {
+            return "";
+        }
+        return text.replaceAll("\\s+", "").trim();
+    }
 
-	private static String firstNonBlank(String... values) {
-		if (values == null) {
-			return null;
-		}
-		for (String value : values) {
-			if (StringUtils.hasText(value)) {
-				return value;
-			}
-		}
-		return null;
-	}
+    private static String readStateText(@Nullable OverAllState state, String key) {
+        return textOf(readStateValue(state, key));
+    }
+
+    private static Object readStateValue(@Nullable OverAllState state, String key) {
+        if (state == null || !StringUtils.hasText(key)) {
+            return null;
+        }
+        return state.value(key, Object.class).orElse(null);
+    }
+
+    private static String textOf(@Nullable Object value) {
+        if (value == null) {
+            return null;
+        }
+        String text = String.valueOf(value).trim();
+        return StringUtils.hasText(text) ? text : null;
+    }
+
+    private static String firstNonBlank(String... values) {
+        if (values == null) {
+            return null;
+        }
+        for (String value : values) {
+            if (StringUtils.hasText(value)) {
+                return value;
+            }
+        }
+        return null;
+    }
 }
+

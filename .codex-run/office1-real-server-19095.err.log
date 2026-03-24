@@ -1,0 +1,358 @@
+[Thu Mar 19 12:16:33 2026] PHP 8.0.2 Development Server (http://127.0.0.1:19095) started
+[Thu Mar 19 12:16:46 2026] 127.0.0.1:64249 Accepted
+[Thu Mar 19 12:16:51 2026] 127.0.0.1:64249 [500]: POST /api/oa_integration/get_token
+[Thu Mar 19 12:16:51 2026] 127.0.0.1:64249 Closing
+[Thu Mar 19 12:16:51 2026] 127.0.0.1:64250 Accepted
+[Thu Mar 19 12:16:56 2026] 127.0.0.1:64250 [500]: GET /api/oa_integration/test
+[Thu Mar 19 12:16:56 2026] 127.0.0.1:64250 Closing
+[Thu Mar 19 12:30:12 2026] 127.0.0.1:63174 Accepted
+[Thu Mar 19 12:30:12 2026] 127.0.0.1:63174 Closed without sending a request; it was probably just an unused speculative preconnection
+[Thu Mar 19 12:30:12 2026] 127.0.0.1:63174 Closing
+[Thu Mar 19 12:30:12 2026] 127.0.0.1:63175 Accepted
+[Thu Mar 19 12:30:12 2026] 127.0.0.1:63175 Closed without sending a request; it was probably just an unused speculative preconnection
+[Thu Mar 19 12:30:12 2026] 127.0.0.1:63175 Closing
+[Thu Mar 19 12:30:13 2026] 127.0.0.1:63176 Accepted
+[Thu Mar 19 12:30:14 2026] 127.0.0.1:63176 [200]: GET /api/oa_integration/test
+[Thu Mar 19 12:30:14 2026] 127.0.0.1:63176 Closing
+[Thu Mar 19 12:30:30 2026] 127.0.0.1:63188 Accepted
+[Thu Mar 19 12:30:30 2026] 127.0.0.1:63188 [200]: POST /api/oa_integration/get_token
+[Thu Mar 19 12:30:30 2026] 127.0.0.1:63188 Closing
+[Thu Mar 19 12:30:30 2026] 127.0.0.1:63189 Accepted
+[Thu Mar 19 12:30:30 2026] 127.0.0.1:63190 Accepted
+[Thu Mar 19 12:30:30 2026] 127.0.0.1:63189 [200]: GET /api/oa_integration/get_employees?keyword=&page=1&limit=5
+[Thu Mar 19 12:30:30 2026] 127.0.0.1:63189 Closing
+[Thu Mar 19 12:30:30 2026] 127.0.0.1:63190 [200]: GET /api/oa_integration/get_meeting_rooms?page=1&limit=5
+[Thu Mar 19 12:30:30 2026] 127.0.0.1:63190 Closing
+[Thu Mar 19 12:30:47 2026] 127.0.0.1:51931 Accepted
+[Thu Mar 19 12:30:47 2026] 127.0.0.1:51931 [200]: POST /api/oa_integration/get_token
+[Thu Mar 19 12:30:47 2026] 127.0.0.1:51931 Closing
+[Thu Mar 19 12:30:47 2026] 127.0.0.1:51932 Accepted
+[Thu Mar 19 12:30:47 2026] 127.0.0.1:51933 Accepted
+[Thu Mar 19 12:30:48 2026] 127.0.0.1:51932 [200]: POST /api/oa_integration/get_token
+[Thu Mar 19 12:30:48 2026] 127.0.0.1:51932 Closing
+[Thu Mar 19 12:30:48 2026] 127.0.0.1:51936 Accepted
+[Thu Mar 19 12:30:48 2026] 127.0.0.1:51933 [200]: POST /api/oa_integration/get_token
+[Thu Mar 19 12:30:48 2026] 127.0.0.1:51933 Closing
+[Thu Mar 19 12:30:48 2026] 127.0.0.1:51939 Accepted
+[Thu Mar 19 12:30:48 2026] 127.0.0.1:51936 [200]: GET /api/oa_integration/get_my_leader
+[Thu Mar 19 12:30:48 2026] 127.0.0.1:51936 Closing
+[Thu Mar 19 12:30:48 2026] 127.0.0.1:51942 Accepted
+[Thu Mar 19 12:30:48 2026] 127.0.0.1:51939 [200]: POST /api/oa_integration/book_meeting
+[Thu Mar 19 12:30:48 2026] 127.0.0.1:51939 Closing
+[Thu Mar 19 12:30:48 2026] 127.0.0.1:51942 [200]: GET /api/oa_integration/get_employees?page=1&limit=5
+[Thu Mar 19 12:30:48 2026] 127.0.0.1:51942 Closing
+[Thu Mar 19 12:31:19 2026] 127.0.0.1:51966 Accepted
+[Thu Mar 19 12:31:19 2026] 127.0.0.1:51966 [200]: POST /api/oa_integration/get_token
+[Thu Mar 19 12:31:19 2026] 127.0.0.1:51966 Closing
+[Thu Mar 19 12:31:19 2026] 127.0.0.1:51967 Accepted
+[Thu Mar 19 12:31:19 2026] 127.0.0.1:51968 Accepted
+[Thu Mar 19 12:31:19 2026] 127.0.0.1:51967 [200]: POST /api/oa_integration/get_token
+[Thu Mar 19 12:31:19 2026] 127.0.0.1:51967 Closing
+[Thu Mar 19 12:31:19 2026] 127.0.0.1:51971 Accepted
+[Thu Mar 19 12:31:20 2026] 127.0.0.1:51968 [200]: POST /api/oa_integration/get_token
+[Thu Mar 19 12:31:20 2026] 127.0.0.1:51968 Closing
+[Thu Mar 19 12:31:20 2026] 127.0.0.1:51974 Accepted
+[Thu Mar 19 12:31:21 2026] 127.0.0.1:51971 [200]: GET /api/oa_integration/get_pending_approvals?categories=leave,expense&pending_hours_gte=1&risk_policy=HIGH_AMOUNT_TO_LEADER
+[Thu Mar 19 12:31:21 2026] 127.0.0.1:51971 Closing
+[Thu Mar 19 12:31:21 2026] 127.0.0.1:51977 Accepted
+[Thu Mar 19 12:31:23 2026] 127.0.0.1:51974 [200]: GET /api/oa_integration/get_pending_approvals?categories=leave,expense&pending_hours_gte=1&risk_policy=HIGH_AMOUNT_TO_LEADER
+[Thu Mar 19 12:31:23 2026] 127.0.0.1:51974 Closing
+[Thu Mar 19 12:31:23 2026] 127.0.0.1:51977 [200]: POST /api/oa_integration/book_meeting
+[Thu Mar 19 12:31:23 2026] 127.0.0.1:51977 Closing
+[Thu Mar 19 12:31:45 2026] 127.0.0.1:51991 Accepted
+[Thu Mar 19 12:31:45 2026] 127.0.0.1:51992 Accepted
+[Thu Mar 19 12:31:45 2026] 127.0.0.1:51991 [200]: POST /api/oa_integration/get_token
+[Thu Mar 19 12:31:45 2026] 127.0.0.1:51991 Closing
+[Thu Mar 19 12:31:45 2026] 127.0.0.1:51993 Accepted
+[Thu Mar 19 12:31:45 2026] 127.0.0.1:51992 [200]: POST /api/oa_integration/get_token
+[Thu Mar 19 12:31:45 2026] 127.0.0.1:51992 Closing
+[Thu Mar 19 12:31:45 2026] 127.0.0.1:51994 Accepted
+[Thu Mar 19 12:31:46 2026] 127.0.0.1:51993 [200]: POST /api/oa_integration/get_token
+[Thu Mar 19 12:31:46 2026] 127.0.0.1:51993 Closing
+[Thu Mar 19 12:31:46 2026] 127.0.0.1:51997 Accepted
+[Thu Mar 19 12:31:46 2026] 127.0.0.1:51994 [200]: POST /api/oa_integration/get_token
+[Thu Mar 19 12:31:46 2026] 127.0.0.1:51994 Closing
+[Thu Mar 19 12:31:46 2026] 127.0.0.1:52000 Accepted
+[Thu Mar 19 12:31:46 2026] 127.0.0.1:51997 [200]: GET /api/oa_integration/get_meeting_rooms?page=1&limit=20
+[Thu Mar 19 12:31:46 2026] 127.0.0.1:51997 Closing
+[Thu Mar 19 12:31:46 2026] 127.0.0.1:52003 Accepted
+[Thu Mar 19 12:31:46 2026] 127.0.0.1:52000 [500]: POST /api/oa_integration/apply_leave
+[Thu Mar 19 12:31:46 2026] 127.0.0.1:52000 Closing
+[Thu Mar 19 12:31:46 2026] 127.0.0.1:52006 Accepted
+[Thu Mar 19 12:31:46 2026] 127.0.0.1:52003 [200]: GET /api/oa_integration/get_my_leader
+[Thu Mar 19 12:31:46 2026] 127.0.0.1:52003 Closing
+[Thu Mar 19 12:31:47 2026] 127.0.0.1:52006 [200]: POST /api/oa_integration/submit_weekly_report
+[Thu Mar 19 12:31:47 2026] 127.0.0.1:52006 Closing
+[Thu Mar 19 12:32:17 2026] 127.0.0.1:52022 Accepted
+[Thu Mar 19 12:32:17 2026] 127.0.0.1:52022 [200]: POST /api/oa_integration/get_token
+[Thu Mar 19 12:32:17 2026] 127.0.0.1:52022 Closing
+[Thu Mar 19 12:32:17 2026] 127.0.0.1:52025 Accepted
+[Thu Mar 19 12:32:17 2026] 127.0.0.1:52025 [200]: GET /api/oa_integration/get_leave_types
+[Thu Mar 19 12:32:17 2026] 127.0.0.1:52025 Closing
+[Thu Mar 19 13:32:25 2026] 127.0.0.1:60282 Accepted
+[Thu Mar 19 13:32:25 2026] 127.0.0.1:60282 [200]: POST /api/oa_integration/get_token
+[Thu Mar 19 13:32:25 2026] 127.0.0.1:60282 Closing
+[Thu Mar 19 13:32:25 2026] 127.0.0.1:60285 Accepted
+[Thu Mar 19 13:32:26 2026] 127.0.0.1:60285 [200]: POST /api/oa_integration/apply_leave
+[Thu Mar 19 13:32:26 2026] 127.0.0.1:60285 Closing
+[Thu Mar 19 13:32:44 2026] 127.0.0.1:59165 Accepted
+[Thu Mar 19 13:32:44 2026] 127.0.0.1:59165 [200]: POST /api/oa_integration/get_token
+[Thu Mar 19 13:32:44 2026] 127.0.0.1:59165 Closing
+[Thu Mar 19 13:32:44 2026] 127.0.0.1:59168 Accepted
+[Thu Mar 19 13:32:44 2026] 127.0.0.1:59168 [200]: POST /api/oa_integration/assign_leave_handover
+[Thu Mar 19 13:32:44 2026] 127.0.0.1:59168 Closing
+[Thu Mar 19 13:42:08 2026] 127.0.0.1:57437 Accepted
+[Thu Mar 19 13:42:08 2026] 127.0.0.1:57437 [200]: GET /api/oa_integration/test
+[Thu Mar 19 13:42:08 2026] 127.0.0.1:57437 Closing
+[Thu Mar 19 13:45:29 2026] 127.0.0.1:54804 Accepted
+[Thu Mar 19 13:45:29 2026] 127.0.0.1:54804 [200]: POST /api/oa_integration/get_token
+[Thu Mar 19 13:45:29 2026] 127.0.0.1:54804 Closing
+[Thu Mar 19 13:45:55 2026] 127.0.0.1:63630 Accepted
+[Thu Mar 19 13:45:56 2026] 127.0.0.1:63630 [200]: GET /api/oa_integration/get_employees
+[Thu Mar 19 13:45:56 2026] 127.0.0.1:63630 Closing
+[Thu Mar 19 13:45:56 2026] 127.0.0.1:63631 Accepted
+[Thu Mar 19 13:45:56 2026] 127.0.0.1:63632 Accepted
+[Thu Mar 19 13:45:56 2026] 127.0.0.1:63631 [200]: GET /api/oa_integration/get_work_types
+[Thu Mar 19 13:45:56 2026] 127.0.0.1:63631 Closing
+[Thu Mar 19 13:45:56 2026] 127.0.0.1:63633 Accepted
+[Thu Mar 19 13:45:56 2026] 127.0.0.1:63632 [200]: GET /api/oa_integration/get_leave_types
+[Thu Mar 19 13:45:56 2026] 127.0.0.1:63632 Closing
+[Thu Mar 19 13:45:56 2026] 127.0.0.1:63633 [200]: GET /api/oa_integration/get_my_leader
+[Thu Mar 19 13:45:56 2026] 127.0.0.1:63633 Closing
+[Thu Mar 19 13:46:37 2026] 127.0.0.1:65307 Accepted
+[Thu Mar 19 13:46:37 2026] 127.0.0.1:65307 [200]: GET /api/oa_integration/get_employees
+[Thu Mar 19 13:46:37 2026] 127.0.0.1:65307 Closing
+[Thu Mar 19 13:46:37 2026] 127.0.0.1:65308 Accepted
+[Thu Mar 19 13:46:37 2026] 127.0.0.1:65308 [200]: GET /api/oa_integration/get_employees
+[Thu Mar 19 13:46:37 2026] 127.0.0.1:65308 Closing
+[Thu Mar 19 13:46:38 2026] 127.0.0.1:65310 Accepted
+[Thu Mar 19 13:46:38 2026] 127.0.0.1:65310 [200]: GET /api/oa_integration/get_employees
+[Thu Mar 19 13:46:38 2026] 127.0.0.1:65310 Closing
+[Thu Mar 19 13:46:38 2026] 127.0.0.1:65311 Accepted
+[Thu Mar 19 13:46:38 2026] 127.0.0.1:65311 [200]: GET /api/oa_integration/get_employees
+[Thu Mar 19 13:46:38 2026] 127.0.0.1:65311 Closing
+[Thu Mar 19 13:46:45 2026] 127.0.0.1:56525 Accepted
+[Thu Mar 19 13:46:45 2026] 127.0.0.1:56525 [200]: POST /api/oa_integration/submit_weekly_report
+[Thu Mar 19 13:46:45 2026] 127.0.0.1:56525 Closing
+[Thu Mar 19 13:52:48 2026] 127.0.0.1:60400 Accepted
+[Thu Mar 19 13:52:48 2026] 127.0.0.1:60400 [200]: GET /api/oa_integration/get_employees
+[Thu Mar 19 13:52:48 2026] 127.0.0.1:60400 Closing
+[Thu Mar 19 13:52:49 2026] 127.0.0.1:56302 Accepted
+[Thu Mar 19 13:52:49 2026] 127.0.0.1:56302 [200]: GET /api/oa_integration/get_employees
+[Thu Mar 19 13:52:49 2026] 127.0.0.1:56302 Closing
+[Thu Mar 19 13:52:52 2026] 127.0.0.1:56304 Accepted
+[Thu Mar 19 13:52:52 2026] 127.0.0.1:56304 [200]: GET /api/oa_integration/get_employees
+[Thu Mar 19 13:52:52 2026] 127.0.0.1:56304 Closing
+[Thu Mar 19 13:52:53 2026] 127.0.0.1:56305 Accepted
+[Thu Mar 19 13:52:53 2026] 127.0.0.1:56305 [200]: GET /api/oa_integration/get_employees
+[Thu Mar 19 13:52:53 2026] 127.0.0.1:56305 Closing
+[Thu Mar 19 13:53:02 2026] 127.0.0.1:55182 Accepted
+[Thu Mar 19 13:53:02 2026] 127.0.0.1:55182 [200]: POST /api/oa_integration/submit_weekly_report
+[Thu Mar 19 13:53:02 2026] 127.0.0.1:55182 Closing
+[Thu Mar 19 13:57:33 2026] 127.0.0.1:52525 Accepted
+[Thu Mar 19 13:57:33 2026] 127.0.0.1:52525 [200]: POST /api/oa_integration/get_token
+[Thu Mar 19 13:57:33 2026] 127.0.0.1:52525 Closing
+[Thu Mar 19 13:57:33 2026] 127.0.0.1:52526 Accepted
+[Thu Mar 19 13:57:33 2026] 127.0.0.1:52526 [200]: POST /api/oa_integration/get_token
+[Thu Mar 19 13:57:33 2026] 127.0.0.1:52526 Closing
+[Thu Mar 19 13:57:33 2026] 127.0.0.1:52527 Accepted
+[Thu Mar 19 13:57:34 2026] 127.0.0.1:52527 [200]: GET /api/oa_integration/get_employees
+[Thu Mar 19 13:57:34 2026] 127.0.0.1:52527 Closing
+[Thu Mar 19 13:57:34 2026] 127.0.0.1:52528 Accepted
+[Thu Mar 19 13:57:34 2026] 127.0.0.1:52528 [200]: POST /api/oa_integration/get_token
+[Thu Mar 19 13:57:34 2026] 127.0.0.1:52528 Closing
+[Thu Mar 19 13:57:34 2026] 127.0.0.1:52529 Accepted
+[Thu Mar 19 13:57:34 2026] 127.0.0.1:52529 [200]: POST /api/oa_integration/get_token
+[Thu Mar 19 13:57:34 2026] 127.0.0.1:52529 Closing
+[Thu Mar 19 13:57:34 2026] 127.0.0.1:52530 Accepted
+[Thu Mar 19 13:57:34 2026] 127.0.0.1:52530 [200]: GET /api/oa_integration/get_employees
+[Thu Mar 19 13:57:34 2026] 127.0.0.1:52530 Closing
+[Thu Mar 19 13:57:34 2026] 127.0.0.1:52532 Accepted
+[Thu Mar 19 13:57:34 2026] 127.0.0.1:52532 [200]: POST /api/oa_integration/get_token
+[Thu Mar 19 13:57:34 2026] 127.0.0.1:52532 Closing
+[Thu Mar 19 13:57:34 2026] 127.0.0.1:52533 Accepted
+[Thu Mar 19 13:57:34 2026] 127.0.0.1:52533 [200]: POST /api/oa_integration/get_token
+[Thu Mar 19 13:57:34 2026] 127.0.0.1:52533 Closing
+[Thu Mar 19 13:57:34 2026] 127.0.0.1:52534 Accepted
+[Thu Mar 19 13:57:34 2026] 127.0.0.1:52534 [200]: GET /api/oa_integration/get_employees
+[Thu Mar 19 13:57:34 2026] 127.0.0.1:52534 Closing
+[Thu Mar 19 13:57:34 2026] 127.0.0.1:52535 Accepted
+[Thu Mar 19 13:57:35 2026] 127.0.0.1:52535 [200]: POST /api/oa_integration/get_token
+[Thu Mar 19 13:57:35 2026] 127.0.0.1:52535 Closing
+[Thu Mar 19 13:57:35 2026] 127.0.0.1:52536 Accepted
+[Thu Mar 19 13:57:35 2026] 127.0.0.1:52536 [200]: POST /api/oa_integration/get_token
+[Thu Mar 19 13:57:35 2026] 127.0.0.1:52536 Closing
+[Thu Mar 19 13:57:35 2026] 127.0.0.1:52537 Accepted
+[Thu Mar 19 13:57:35 2026] 127.0.0.1:52537 [200]: GET /api/oa_integration/get_employees
+[Thu Mar 19 13:57:35 2026] 127.0.0.1:52537 Closing
+[Thu Mar 19 13:57:41 2026] 127.0.0.1:52280 Accepted
+[Thu Mar 19 13:57:41 2026] 127.0.0.1:52280 [200]: POST /api/oa_integration/get_token
+[Thu Mar 19 13:57:41 2026] 127.0.0.1:52280 Closing
+[Thu Mar 19 13:57:42 2026] 127.0.0.1:52283 Accepted
+[Thu Mar 19 13:57:42 2026] 127.0.0.1:52283 [200]: POST /api/oa_integration/get_token
+[Thu Mar 19 13:57:42 2026] 127.0.0.1:52283 Closing
+[Thu Mar 19 13:57:42 2026] 127.0.0.1:52284 Accepted
+[Thu Mar 19 13:57:42 2026] 127.0.0.1:52284 [200]: POST /api/oa_integration/get_token
+[Thu Mar 19 13:57:42 2026] 127.0.0.1:52284 Closing
+[Thu Mar 19 13:57:42 2026] 127.0.0.1:52285 Accepted
+[Thu Mar 19 13:57:42 2026] 127.0.0.1:52285 [200]: POST /api/oa_integration/submit_weekly_report
+[Thu Mar 19 13:57:42 2026] 127.0.0.1:52285 Closing
+[Thu Mar 19 14:00:42 2026] 127.0.0.1:65361 Accepted
+[Thu Mar 19 14:00:42 2026] 127.0.0.1:65361 [200]: POST /api/oa_integration/get_token
+[Thu Mar 19 14:00:42 2026] 127.0.0.1:65361 Closing
+[Thu Mar 19 14:14:08 2026] 127.0.0.1:49266 Accepted
+[Thu Mar 19 14:14:08 2026] 127.0.0.1:49266 [200]: GET /api/oa_integration/get_employees
+[Thu Mar 19 14:14:08 2026] 127.0.0.1:49266 Closing
+[Thu Mar 19 14:14:08 2026] 127.0.0.1:49269 Accepted
+[Thu Mar 19 14:14:08 2026] 127.0.0.1:49269 [200]: GET /api/oa_integration/get_employees
+[Thu Mar 19 14:14:08 2026] 127.0.0.1:49269 Closing
+[Thu Mar 19 14:14:09 2026] 127.0.0.1:49274 Accepted
+[Thu Mar 19 14:14:09 2026] 127.0.0.1:49274 [200]: GET /api/oa_integration/get_employees
+[Thu Mar 19 14:14:09 2026] 127.0.0.1:49274 Closing
+[Thu Mar 19 14:14:17 2026] 127.0.0.1:50132 Accepted
+[Thu Mar 19 14:14:18 2026] 127.0.0.1:50132 [200]: POST /api/oa_integration/submit_weekly_report
+[Thu Mar 19 14:14:18 2026] 127.0.0.1:50132 Closing
+[Thu Mar 19 14:16:00 2026] 127.0.0.1:63045 Accepted
+[Thu Mar 19 14:16:00 2026] 127.0.0.1:63045 [200]: GET /api/oa_integration/get_leave_types
+[Thu Mar 19 14:16:00 2026] 127.0.0.1:63045 Closing
+[Thu Mar 19 14:16:00 2026] 127.0.0.1:63046 Accepted
+[Thu Mar 19 14:16:00 2026] 127.0.0.1:63046 [200]: GET /api/oa_integration/get_employees
+[Thu Mar 19 14:16:00 2026] 127.0.0.1:63046 Closing
+[Thu Mar 19 14:16:00 2026] 127.0.0.1:57224 Accepted
+[Thu Mar 19 14:16:00 2026] 127.0.0.1:57224 [200]: GET /api/oa_integration/get_leave_types
+[Thu Mar 19 14:16:00 2026] 127.0.0.1:57224 Closing
+[Thu Mar 19 14:16:00 2026] 127.0.0.1:57225 Accepted
+[Thu Mar 19 14:16:01 2026] 127.0.0.1:57225 [200]: GET /api/oa_integration/get_employees
+[Thu Mar 19 14:16:01 2026] 127.0.0.1:57225 Closing
+[Thu Mar 19 14:16:01 2026] 127.0.0.1:57229 Accepted
+[Thu Mar 19 14:16:01 2026] 127.0.0.1:57229 [200]: GET /api/oa_integration/get_leave_types
+[Thu Mar 19 14:16:01 2026] 127.0.0.1:57229 Closing
+[Thu Mar 19 14:16:09 2026] 127.0.0.1:59358 Accepted
+[Thu Mar 19 14:16:09 2026] 127.0.0.1:59358 [200]: GET /api/oa_integration/get_approval_flows
+[Thu Mar 19 14:16:09 2026] 127.0.0.1:59358 Closing
+[Thu Mar 19 14:16:09 2026] 127.0.0.1:59361 Accepted
+[Thu Mar 19 14:16:09 2026] 127.0.0.1:59361 [200]: GET /api/oa_integration/get_my_leader
+[Thu Mar 19 14:16:09 2026] 127.0.0.1:59361 Closing
+[Thu Mar 19 14:16:09 2026] 127.0.0.1:54049 Accepted
+[Thu Mar 19 14:16:10 2026] 127.0.0.1:54049 [200]: POST /api/oa_integration/apply_leave
+[Thu Mar 19 14:16:10 2026] 127.0.0.1:54049 Closing
+[Thu Mar 19 14:16:10 2026] 127.0.0.1:54052 Accepted
+[Thu Mar 19 14:16:10 2026] 127.0.0.1:54052 [200]: POST /api/oa_integration/assign_leave_handover
+[Thu Mar 19 14:16:10 2026] 127.0.0.1:54052 Closing
+[Thu Mar 19 14:16:10 2026] 127.0.0.1:54055 Accepted
+[Thu Mar 19 14:16:10 2026] 127.0.0.1:54055 [500]: POST /api/check/submit_check
+[Thu Mar 19 14:16:10 2026] 127.0.0.1:54055 Closing
+[Thu Mar 19 14:22:31 2026] 127.0.0.1:64166 Accepted
+[Thu Mar 19 14:22:31 2026] 127.0.0.1:64166 [200]: POST /api/oa_integration/get_token
+[Thu Mar 19 14:22:31 2026] 127.0.0.1:64166 Closing
+[Thu Mar 19 14:22:31 2026] 127.0.0.1:64170 Accepted
+[Thu Mar 19 14:22:32 2026] 127.0.0.1:64170 [200]: GET /api/oa_integration/get_my_leader
+[Thu Mar 19 14:22:32 2026] 127.0.0.1:64170 Closing
+[Thu Mar 19 14:24:36 2026] 127.0.0.1:63335 Accepted
+[Thu Mar 19 14:24:36 2026] 127.0.0.1:63335 [200]: POST /api/oa_integration/get_token
+[Thu Mar 19 14:24:36 2026] 127.0.0.1:63335 Closing
+[Thu Mar 19 14:24:36 2026] 127.0.0.1:63338 Accepted
+[Thu Mar 19 14:24:37 2026] 127.0.0.1:63338 [200]: GET /api/oa_integration/get_my_leader
+[Thu Mar 19 14:24:37 2026] 127.0.0.1:63338 Closing
+[Thu Mar 19 14:25:17 2026] 127.0.0.1:63839 Accepted
+[Thu Mar 19 14:25:17 2026] 127.0.0.1:63839 [200]: GET /api/oa_integration/get_leave_types
+[Thu Mar 19 14:25:17 2026] 127.0.0.1:63839 Closing
+[Thu Mar 19 14:25:17 2026] 127.0.0.1:63840 Accepted
+[Thu Mar 19 14:25:18 2026] 127.0.0.1:63840 [200]: GET /api/oa_integration/get_employees
+[Thu Mar 19 14:25:18 2026] 127.0.0.1:63840 Closing
+[Thu Mar 19 14:25:18 2026] 127.0.0.1:63846 Accepted
+[Thu Mar 19 14:25:18 2026] 127.0.0.1:63846 [200]: GET /api/oa_integration/get_leave_types
+[Thu Mar 19 14:25:18 2026] 127.0.0.1:63846 Closing
+[Thu Mar 19 14:25:25 2026] 127.0.0.1:63422 Accepted
+[Thu Mar 19 14:25:26 2026] 127.0.0.1:63422 [200]: GET /api/oa_integration/get_approval_flows
+[Thu Mar 19 14:25:26 2026] 127.0.0.1:63422 Closing
+[Thu Mar 19 14:25:26 2026] 127.0.0.1:63425 Accepted
+[Thu Mar 19 14:25:26 2026] 127.0.0.1:63425 [200]: GET /api/oa_integration/get_my_leader
+[Thu Mar 19 14:25:26 2026] 127.0.0.1:63425 Closing
+[Thu Mar 19 14:25:26 2026] 127.0.0.1:63428 Accepted
+[Thu Mar 19 14:25:26 2026] 127.0.0.1:63428 [200]: POST /api/oa_integration/apply_leave
+[Thu Mar 19 14:25:26 2026] 127.0.0.1:63428 Closing
+[Thu Mar 19 14:25:26 2026] 127.0.0.1:63431 Accepted
+[Thu Mar 19 14:25:27 2026] 127.0.0.1:63431 [200]: POST /api/oa_integration/assign_leave_handover
+[Thu Mar 19 14:25:27 2026] 127.0.0.1:63431 Closing
+[Thu Mar 19 14:25:27 2026] 127.0.0.1:51553 Accepted
+[Thu Mar 19 14:25:28 2026] 127.0.0.1:51553 [200]: POST /api/check/submit_check
+[Thu Mar 19 14:25:28 2026] 127.0.0.1:51553 Closing
+[Thu Mar 19 14:25:50 2026] 127.0.0.1:63172 Accepted
+[Thu Mar 19 14:25:50 2026] 127.0.0.1:63172 [200]: POST /api/oa_integration/get_token
+[Thu Mar 19 14:25:50 2026] 127.0.0.1:63172 Closing
+[Thu Mar 19 14:25:50 2026] 127.0.0.1:63173 Accepted
+[Thu Mar 19 14:25:50 2026] 127.0.0.1:63173 [200]: POST /api/oa_integration/get_token
+[Thu Mar 19 14:25:50 2026] 127.0.0.1:63173 Closing
+[Thu Mar 19 14:25:50 2026] 127.0.0.1:63176 Accepted
+[Thu Mar 19 14:25:51 2026] 127.0.0.1:63176 [200]: GET /api/oa_integration/get_pending_approvals?categories=leave&pending_hours_gte=0
+[Thu Mar 19 14:25:51 2026] 127.0.0.1:63176 Closing
+[Thu Mar 19 14:25:51 2026] 127.0.0.1:63179 Accepted
+[Thu Mar 19 14:25:52 2026] 127.0.0.1:63179 [200]: GET /api/oa_integration/get_meeting_rooms
+[Thu Mar 19 14:25:52 2026] 127.0.0.1:63179 Closing
+[Thu Mar 19 14:26:05 2026] 127.0.0.1:64100 Accepted
+[Thu Mar 19 14:26:05 2026] 127.0.0.1:64100 [200]: POST /api/oa_integration/get_token
+[Thu Mar 19 14:26:05 2026] 127.0.0.1:64100 Closing
+[Thu Mar 19 14:26:05 2026] 127.0.0.1:64103 Accepted
+[Thu Mar 19 14:26:06 2026] 127.0.0.1:64103 [200]: GET /api/oa_integration/get_pending_approvals?categories=leave&pending_hours_gte=0
+[Thu Mar 19 14:26:06 2026] 127.0.0.1:64103 Closing
+[Thu Mar 19 14:27:16 2026] 127.0.0.1:57738 Accepted
+[Thu Mar 19 14:27:16 2026] 127.0.0.1:57738 [200]: POST /api/oa_integration/get_token
+[Thu Mar 19 14:27:16 2026] 127.0.0.1:57738 Closing
+[Thu Mar 19 14:27:16 2026] 127.0.0.1:57741 Accepted
+[Thu Mar 19 14:27:16 2026] 127.0.0.1:57741 [200]: GET /api/oa_integration/get_meeting_rooms
+[Thu Mar 19 14:27:16 2026] 127.0.0.1:57741 Closing
+[Thu Mar 19 14:27:51 2026] 127.0.0.1:65337 Accepted
+[Thu Mar 19 14:27:51 2026] 127.0.0.1:65337 [200]: GET /api/oa_integration/get_meeting_rooms
+[Thu Mar 19 14:27:51 2026] 127.0.0.1:65337 Closing
+[Thu Mar 19 14:27:52 2026] 127.0.0.1:65340 Accepted
+[Thu Mar 19 14:27:52 2026] 127.0.0.1:65340 [200]: GET /api/oa_integration/get_meeting_rooms
+[Thu Mar 19 14:27:52 2026] 127.0.0.1:65340 Closing
+[Thu Mar 19 14:27:52 2026] 127.0.0.1:65344 Accepted
+[Thu Mar 19 14:27:52 2026] 127.0.0.1:65344 [200]: GET /api/oa_integration/get_meeting_rooms
+[Thu Mar 19 14:27:52 2026] 127.0.0.1:65344 Closing
+[Thu Mar 19 14:27:58 2026] 127.0.0.1:58944 Accepted
+[Thu Mar 19 14:27:58 2026] 127.0.0.1:58944 [200]: GET /api/oa_integration/get_approval_flows
+[Thu Mar 19 14:27:58 2026] 127.0.0.1:58944 Closing
+[Thu Mar 19 14:27:58 2026] 127.0.0.1:58947 Accepted
+[Thu Mar 19 14:27:59 2026] 127.0.0.1:58947 [200]: GET /api/oa_integration/get_my_leader
+[Thu Mar 19 14:27:59 2026] 127.0.0.1:58947 Closing
+[Thu Mar 19 14:27:59 2026] 127.0.0.1:58950 Accepted
+[Thu Mar 19 14:27:59 2026] 127.0.0.1:58950 [200]: POST /api/oa_integration/book_meeting
+[Thu Mar 19 14:27:59 2026] 127.0.0.1:58950 Closing
+[Thu Mar 19 14:27:59 2026] 127.0.0.1:60569 Accepted
+[Thu Mar 19 14:28:00 2026] 127.0.0.1:60569 [200]: POST /api/check/submit_check
+[Thu Mar 19 14:28:00 2026] 127.0.0.1:60569 Closing
+[Thu Mar 19 14:29:28 2026] 127.0.0.1:49975 Accepted
+[Thu Mar 19 14:29:28 2026] 127.0.0.1:49975 [200]: POST /api/oa_integration/get_token
+[Thu Mar 19 14:29:28 2026] 127.0.0.1:49975 Closing
+[Thu Mar 19 14:29:28 2026] 127.0.0.1:49978 Accepted
+[Thu Mar 19 14:29:28 2026] 127.0.0.1:49978 [200]: POST /api/oa_integration/apply_leave
+[Thu Mar 19 14:29:28 2026] 127.0.0.1:49978 Closing
+[Thu Mar 19 14:29:28 2026] 127.0.0.1:49981 Accepted
+[Thu Mar 19 14:29:29 2026] 127.0.0.1:49981 [200]: POST /api/check/submit_check
+[Thu Mar 19 14:29:29 2026] 127.0.0.1:49981 Closing
+[Thu Mar 19 14:29:29 2026] 127.0.0.1:59826 Accepted
+[Thu Mar 19 14:29:29 2026] 127.0.0.1:59826 [200]: POST /api/oa_integration/get_token
+[Thu Mar 19 14:29:29 2026] 127.0.0.1:59826 Closing
+[Thu Mar 19 14:29:29 2026] 127.0.0.1:59829 Accepted
+[Thu Mar 19 14:29:31 2026] 127.0.0.1:59829 [200]: GET /api/oa_integration/get_pending_approvals?categories=leave&pending_hours_gte=0
+[Thu Mar 19 14:29:31 2026] 127.0.0.1:59829 Closing
+[Thu Mar 19 14:30:05 2026] 127.0.0.1:63276 Accepted
+[Thu Mar 19 14:30:06 2026] 127.0.0.1:63276 [200]: GET /api/oa_integration/get_pending_approvals?pending_hours_gte=0&risk_policy=DEFAULT&categories=leave
+[Thu Mar 19 14:30:06 2026] 127.0.0.1:63276 Closing
+[Thu Mar 19 14:30:06 2026] 127.0.0.1:53496 Accepted
+[Thu Mar 19 14:30:07 2026] 127.0.0.1:53496 [200]: POST /api/oa_integration/remind_approval
+[Thu Mar 19 14:30:07 2026] 127.0.0.1:53496 Closing
+[Thu Mar 19 14:30:07 2026] 127.0.0.1:53499 Accepted
+[Thu Mar 19 14:30:07 2026] 127.0.0.1:53499 [200]: GET /api/oa_integration/get_my_leader
+[Thu Mar 19 14:30:07 2026] 127.0.0.1:53499 Closing
+[Thu Mar 19 14:30:07 2026] 127.0.0.1:53502 Accepted
+[Thu Mar 19 14:30:07 2026] 127.0.0.1:53502 [200]: POST /api/oa_integration/escalate_approval
+[Thu Mar 19 14:30:07 2026] 127.0.0.1:53502 Closing
+[Thu Mar 19 15:09:46 2026] 127.0.0.1:60717 Accepted
+[Thu Mar 19 15:09:48 2026] 127.0.0.1:60717 [200]: GET /api/oa_integration/get_pending_approvals?pending_hours_gte=0&risk_policy=DEFAULT&categories=leave
+[Thu Mar 19 15:09:48 2026] 127.0.0.1:60717 Closing
+[Thu Mar 19 15:09:48 2026] 127.0.0.1:60720 Accepted
+[Thu Mar 19 15:09:48 2026] 127.0.0.1:60720 [200]: POST /api/oa_integration/remind_approval
+[Thu Mar 19 15:09:48 2026] 127.0.0.1:60720 Closing

@@ -41,6 +41,13 @@ import java.util.UUID;
 @Profile("migration")
 public class ProtocolPayloadSupport {
 
+    private static final Set<String> GENERIC_COLLECT_MESSAGES = Set.of(
+            "Missing required slots, continue collecting.",
+            "No new user input detected; waiting for user input.");
+    private static final Set<String> GENERIC_CONFIRM_MESSAGES = Set.of("Confirmation form generated.");
+    private static final String DEFAULT_COLLECT_MESSAGE = "还需要补充信息。";
+    private static final String DEFAULT_CONFIRM_MESSAGE = "请确认信息后提交。";
+
     public List<FrontendEvent> adaptCollect(String threadId, Map<String, Object> payload, Map<String, Object> state) {
         return List.of(newEvent(
                 threadId,
@@ -256,12 +263,14 @@ public class ProtocolPayloadSupport {
         confirmPayload.put("mode", "CONFIRM");
         confirmPayload.put("status", "WAITING_CONFIRMATION");
         confirmPayload.put("phase", FrontendStage.CONFIRMING.name());
-        confirmPayload.put("message", asText(payload.get("message")));
         confirmPayload.put("toolCode", resolveToolCode(confirmForm, state));
         Map<String, Object> values = selectedValues(confirmForm, payload);
         confirmPayload.put("values", values);
-        confirmPayload.put("fields", buildFields(confirmForm, payload, values));
-        confirmPayload.put("missingFields", normalizeFieldList(payload.get("missing")));
+        List<Map<String, Object>> fields = buildFields(confirmForm, payload, values);
+        confirmPayload.put("fields", fields);
+        List<Map<String, Object>> missingFields = normalizeFieldList(payload.get("missing"));
+        confirmPayload.put("missingFields", missingFields);
+        confirmPayload.put("message", resolveFormMessage(asText(payload.get("message")), true, missingFields, fields));
         confirmPayload.put("summary", summaryPayload(confirmForm, values, confirmPayload));
         confirmPayload.put("canSubmit", Boolean.TRUE);
         return confirmPayload;
@@ -275,16 +284,66 @@ public class ProtocolPayloadSupport {
         formPayload.put("mode", confirmationForm ? "CONFIRM" : "COLLECT");
         formPayload.put("status", confirmationForm ? "WAITING_CONFIRMATION" : "WAITING_INPUT");
         formPayload.put("phase", confirmationForm ? FrontendStage.CONFIRMING.name() : FrontendStage.COLLECTING.name());
-        formPayload.put("message", asText(payload.get("message")));
         formPayload.put("round", payload.get("round"));
         formPayload.put("toolCode", resolveToolCode(payload, state));
         Map<String, Object> values = selectedValues(payload, payload);
         formPayload.put("values", values);
-        formPayload.put("fields", buildFields(payload, payload, values));
-        formPayload.put("missingFields", normalizeFieldList(payload.get("missing")));
+        List<Map<String, Object>> fields = buildFields(payload, payload, values);
+        formPayload.put("fields", fields);
+        List<Map<String, Object>> missingFields = normalizeFieldList(payload.get("missing"));
+        formPayload.put("missingFields", missingFields);
+        formPayload.put("message", resolveFormMessage(asText(payload.get("message")), confirmationForm, missingFields, fields));
         formPayload.put("summary", summaryPayload(payload, values, formPayload));
         formPayload.put("canSubmit", confirmationForm);
         return formPayload;
+    }
+
+    private String resolveFormMessage(
+            String rawMessage,
+            boolean confirmationForm,
+            List<Map<String, Object>> missingFields,
+            List<Map<String, Object>> fields) {
+        String message = asText(rawMessage);
+        if (confirmationForm) {
+            if (StringUtils.hasText(message) && !GENERIC_CONFIRM_MESSAGES.contains(message.trim())) {
+                return message;
+            }
+            return DEFAULT_CONFIRM_MESSAGE;
+        }
+        if (StringUtils.hasText(message) && !GENERIC_COLLECT_MESSAGES.contains(message.trim())) {
+            return message;
+        }
+        return buildCollectGuidanceMessage(missingFields, fields);
+    }
+
+    private String buildCollectGuidanceMessage(
+            List<Map<String, Object>> missingFields,
+            List<Map<String, Object>> fields) {
+        Map<String, String> titlesByName = new LinkedHashMap<>();
+        for (Map<String, Object> field : fields) {
+            String name = asText(field.get("name"));
+            String title = firstText(field.get("title"), name);
+            if (StringUtils.hasText(name) && StringUtils.hasText(title)) {
+                titlesByName.putIfAbsent(name, title);
+            }
+        }
+
+        List<String> labels = new ArrayList<>();
+        for (Map<String, Object> missingField : missingFields) {
+            String name = asText(missingField.get("name"));
+            String label = firstText(missingField.get("title"), titlesByName.get(name), name);
+            if (StringUtils.hasText(label) && !labels.contains(label)) {
+                labels.add(label);
+            }
+        }
+        if (labels.isEmpty()) {
+            return DEFAULT_COLLECT_MESSAGE;
+        }
+        if (labels.size() == 1) {
+            return "还需要补充" + labels.get(0) + "。";
+        }
+        String prefix = String.join("、", labels.subList(0, labels.size() - 1));
+        return "还需要补充" + prefix + "和" + labels.get(labels.size() - 1) + "。";
     }
 
     private Map<String, Object> buildResultPayload(Map<String, Object> payload, Map<String, Object> state) {
@@ -921,3 +980,4 @@ public class ProtocolPayloadSupport {
                 || "ERROR".equalsIgnoreCase(normalized);
     }
 }
+

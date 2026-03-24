@@ -43,11 +43,10 @@ assistant:
 # ============================================================================
 spring.ai.dashscope:
   # 生产环境必须通过环境变量注入密钥，避免将密钥写入仓库。
-  api-key: ${DASHSCOPE_API_KEY:}
+  api-key: sk-b04898a0b0314937a92ea9d2a91b22be
   chat:
     options:
       model: qwen-plus
-      incremental-output: true
 
 
 # ============================================================================

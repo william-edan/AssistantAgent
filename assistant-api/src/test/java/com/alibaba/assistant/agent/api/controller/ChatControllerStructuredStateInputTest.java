@@ -113,6 +113,29 @@ class ChatControllerStructuredStateInputTest {
         assertTrue(agentInput.containsKey(AssistantStateKeys.CURRENT_TURN_SLOT_INPUTS));
         assertInstanceOf(List.class, agentInput.get("messages"));
     }
+    @Test
+    void shouldExposeCurrentTurnUserInputInsideAgentInputDuringRunSse() throws Exception {
+        authenticate();
+        when(agentLoader.loadAgent("grayscale_agent")).thenReturn(agent);
+        when(agent.stream(anyMap(), any(RunnableConfig.class))).thenReturn(Flux.empty());
+        when(agent.stream(any(org.springframework.ai.chat.messages.UserMessage.class), any(RunnableConfig.class)))
+                .thenReturn(Flux.empty());
+
+        AgentRunRequest request = new AgentRunRequest();
+        request.threadId = "thread-current-turn-input-run";
+        request.userId = "ignored-user";
+        request.newMessage = new UserMessageDTO("明天");
+        request.stateDelta = new LinkedHashMap<>();
+        request.stateDelta.put(AssistantStateKeys.ROLE_PACKAGE_CODE, "digital-admin");
+        request.stateDelta.put(AssistantStateKeys.ROLE_PACKAGE_VERSION, "v1");
+
+        controller.runSse(request, null, null, null).blockLast();
+
+        ArgumentCaptor<Map<String, Object>> inputCaptor = ArgumentCaptor.forClass(Map.class);
+        verify(agent).stream(inputCaptor.capture(), any(RunnableConfig.class));
+        Map<String, Object> agentInput = inputCaptor.getValue();
+        assertEquals("明天", agentInput.get("current_turn_user_input"));
+    }
 
     @Test
     void shouldSendStructuredStateInsideAgentInputDuringResumeSse() throws Exception {
@@ -229,6 +252,30 @@ class ChatControllerStructuredStateInputTest {
         verify(agent).stream(anyMap(), any(RunnableConfig.class));
     }
 
+    @Test
+    void shouldContinueAgentRunWhenPendingFormEchoContainsCurrentTurnSlotInputs() throws Exception {
+        authenticate();
+        when(chatThreadStateService.getThreadState("thread-form-submit-nested", "1001"))
+                .thenReturn(pendingFormThreadState("thread-form-submit-nested"));
+        when(agentLoader.loadAgent("grayscale_agent")).thenReturn(agent);
+        when(agent.stream(anyMap(), any(RunnableConfig.class))).thenReturn(Flux.empty());
+
+        AgentRunRequest request = new AgentRunRequest();
+        request.threadId = "thread-form-submit-nested";
+        request.userId = "ignored-user";
+        request.newMessage = new UserMessageDTO("请提供请假的起止时间、事由，以及是否需要审批人知晓。");
+        request.stateDelta = new LinkedHashMap<>();
+        request.stateDelta.put(
+                AssistantStateKeys.CURRENT_TURN_SLOT_INPUTS,
+                Map.of("types", 2, "start_date", "2026-03-24", "end_date", "2026-03-24", "reason", "家中有事"));
+        request.stateDelta.put(AssistantStateKeys.ROLE_PACKAGE_CODE, "digital-admin");
+
+        controller.runSse(request, null, null, null).blockLast();
+
+        verify(agentLoader).loadAgent("grayscale_agent");
+        verify(agent).stream(anyMap(), any(RunnableConfig.class));
+    }
+
     private static ChatThreadStateData pendingFormThreadState(String threadId) {
         return new ChatThreadStateData(
                 threadId,
@@ -271,4 +318,5 @@ class ChatControllerStructuredStateInputTest {
     }
 
 }
+
 

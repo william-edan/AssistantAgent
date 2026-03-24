@@ -185,7 +185,11 @@ public class AssistantFastIntentHook extends AgentHook implements Prioritized {
 	public CompletableFuture<Map<String, Object>> beforeAgent(OverAllState state, RunnableConfig config) {
 		applyStreamingOverride(config);
 		try {
-			String input = state != null ? state.value("input", String.class).orElse(null) : null;
+			String input = state != null
+					? firstNonBlank(
+							state.value(AssistantStateKeys.CURRENT_TURN_USER_INPUT, String.class).orElse(null),
+							state.value("input", String.class).orElse(null))
+					: null;
 			Map<String, Object> confirmationUpdates = tryBuildConfirmationExecutionUpdates(state, input);
 			if (!confirmationUpdates.isEmpty()) {
 				return CompletableFuture.completedFuture(confirmationUpdates);
@@ -395,7 +399,11 @@ public class AssistantFastIntentHook extends AgentHook implements Prioritized {
 	}
 
 	private Map<String, Object> tryBuildCollectionContinuationUpdates(OverAllState state, String input) {
-		if (!StringUtils.hasText(input) || state == null) {
+		if (state == null) {
+			return Map.of();
+		}
+		boolean hasStructuredSlotInputs = hasExplicitCurrentTurnSlotInputs(state);
+		if (!StringUtils.hasText(input) && !hasStructuredSlotInputs) {
 			return Map.of();
 		}
 		String phase = state.value(AssistantStateKeys.CONVERSATION_PHASE, String.class).orElse(null);
@@ -406,7 +414,7 @@ public class AssistantFastIntentHook extends AgentHook implements Prioritized {
 		if (!"COLLECTING".equals(normalizedPhase) && !"BLOCKED".equals(normalizedPhase)) {
 			return Map.of();
 		}
-		if (!hasNewUserInputForCollection(state, input)) {
+		if (!hasStructuredSlotInputs && !hasNewUserInputForCollection(state, input)) {
 			logger.debug("AssistantFastIntentHook#tryBuildCollectionContinuationUpdates - skip duplicate collect input");
 			return Map.of();
 		}
@@ -418,11 +426,16 @@ public class AssistantFastIntentHook extends AgentHook implements Prioritized {
 		if (!StringUtils.hasText(matchedToolCode)) {
 			return Map.of();
 		}
-				return buildFormExtractionUpdates(
+		Map<String, Object> matchedSnapshot = resolveMatchedToolMetaSnapshot(state, matchedToolCode);
+		String routeType = hasStructuredSlotInputs
+				? "COLLECTION_CONTINUE_STRUCTURED"
+				: "COLLECTION_CONTINUE";
+		return buildDirectSlotCollectUpdates(
 				matchedToolCode,
-				resolveMatchedToolMetaSnapshot(state, matchedToolCode),
-				"COLLECTION_CONTINUE");
+				matchedSnapshot,
+				routeType);
 	}
+
 
 	private Map<String, Object> tryBuildOperationCollectUpdates(OverAllState state, String input) {
 		if (!StringUtils.hasText(input)) {
@@ -447,6 +460,46 @@ public class AssistantFastIntentHook extends AgentHook implements Prioritized {
 				matchedTool.toolCode(),
 				matchedTool.snapshot(),
 				"OPERATION_COLLECT");
+	}
+
+	private Map<String, Object> buildDirectSlotCollectUpdates(
+			String matchedToolCode,
+			Map<String, Object> matchedSnapshot,
+			String routeType) {
+		if (!StringUtils.hasText(matchedToolCode)) {
+			return Map.of();
+		}
+		try {
+			String toolCallId = "assistant_continue_collect_" + UUID.randomUUID().toString().substring(0, 8);
+			AssistantMessage assistantMessage = AssistantMessage.builder()
+					.content("")
+					.toolCalls(List.of(new AssistantMessage.ToolCall(
+							toolCallId,
+							"function",
+							SLOT_COLLECT_TOOL,
+							toJson(Map.of("toolCode", matchedToolCode)))))
+					.build();
+
+			Map<String, Object> fastIntentState = new LinkedHashMap<>();
+			fastIntentState.put("hit", true);
+			fastIntentState.put("route_type", routeType);
+			fastIntentState.put("tool_code", matchedToolCode);
+
+			Map<String, Object> updates = new LinkedHashMap<>();
+			updates.put("messages", List.of(assistantMessage));
+			updates.put("jump_to", JumpTo.tool);
+			updates.put("fast_intent", fastIntentState);
+			updates.put("current_date", LocalDate.now().toString());
+			updates.put(AssistantStateKeys.FORM_FLOW_EXTRACTION_PENDING, Boolean.FALSE);
+			if (matchedSnapshot != null && !matchedSnapshot.isEmpty()) {
+				updates.put(AssistantStateKeys.MATCHED_TOOL_META, matchedSnapshot);
+			}
+			return updates;
+		}
+		catch (JsonProcessingException ex) {
+			logger.warn("AssistantFastIntentHook#buildDirectSlotCollectUpdates - build failed, error={}", ex.getMessage());
+			return Map.of();
+		}
 	}
 
 	private Map<String, Object> buildFormExtractionUpdates(
@@ -1145,6 +1198,9 @@ public class AssistantFastIntentHook extends AgentHook implements Prioritized {
 	}
 
 	private boolean hasNewUserInputForCollection(OverAllState state, String resolvedInput) {
+		if (hasExplicitCurrentTurnSlotInputs(state)) {
+			return true;
+		}
 		if (!StringUtils.hasText(resolvedInput)) {
 			return false;
 		}
@@ -1165,6 +1221,67 @@ public class AssistantFastIntentHook extends AgentHook implements Prioritized {
 		}
 		return !resolvedInput.trim().equalsIgnoreCase(lastCollectInput.trim());
 	}
+
+	private boolean hasExplicitCurrentTurnSlotInputs(OverAllState state) {
+		if (state == null) {
+			return false;
+		}
+		Object raw = state.value(AssistantStateKeys.CURRENT_TURN_SLOT_INPUTS, Object.class).orElse(null);
+		if (!(raw instanceof Map<?, ?> slotInputs) || slotInputs.isEmpty()) {
+			return false;
+		}
+		for (Map.Entry<?, ?> entry : slotInputs.entrySet()) {
+			String key = entry.getKey() != null ? String.valueOf(entry.getKey()).trim() : null;
+			if (!StringUtils.hasText(key) || isIgnoredCurrentTurnInputKey(key)) {
+				continue;
+			}
+			if (hasMeaningfulStructuredValue(entry.getValue())) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	private boolean isIgnoredCurrentTurnInputKey(String key) {
+		return AssistantStateKeys.CURRENT_TURN_SLOT_INPUTS.equals(key)
+				|| AssistantStateKeys.THREAD_ID.equals(key)
+				|| AssistantStateKeys.ASSISTANT_UID.equals(key)
+				|| AssistantStateKeys.SYSTEM_CODE.equals(key)
+				|| AssistantStateKeys.AGENT_APP_CODE.equals(key)
+				|| AssistantStateKeys.ROLE_PACKAGE_CODE.equals(key)
+				|| AssistantStateKeys.ROLE_PACKAGE_VERSION.equals(key)
+				|| AssistantStateKeys.ROLE_SCENARIO_CODE.equals(key)
+				|| AssistantStateKeys.SPACE_ID.equals(key)
+				|| AssistantStateKeys.SPACE_CODE.equals(key)
+				|| AssistantStateKeys.SPACE_ENVIRONMENT.equals(key)
+				|| CodeactStateKeys.AVAILABLE_TOOL_NAMES.equals(key)
+				|| "input".equalsIgnoreCase(key)
+				|| "query".equalsIgnoreCase(key)
+				|| "messages".equalsIgnoreCase(key)
+				|| "threadId".equals(key)
+				|| "assistantUid".equals(key)
+				|| "systemCode".equals(key)
+				|| "agentAppCode".equals(key)
+				|| "userId".equals(key)
+				|| "user_id".equalsIgnoreCase(key);
+	}
+
+	private boolean hasMeaningfulStructuredValue(Object value) {
+		if (value == null) {
+			return false;
+		}
+		if (value instanceof String text) {
+			return StringUtils.hasText(text);
+		}
+		if (value instanceof Map<?, ?> map) {
+			return !map.isEmpty();
+		}
+		if (value instanceof List<?> list) {
+			return !list.isEmpty();
+		}
+		return true;
+	}
+
 
 	private Object firstNonNull(Object... values) {
 		if (values == null || values.length == 0) {
@@ -1243,5 +1360,6 @@ public class AssistantFastIntentHook extends AgentHook implements Prioritized {
 	}
 
 }
+
 
 

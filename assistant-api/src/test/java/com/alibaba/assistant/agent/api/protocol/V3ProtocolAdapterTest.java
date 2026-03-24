@@ -146,6 +146,41 @@ class V3ProtocolAdapterTest {
     }
 
     @Test
+    void shouldLocalizeGenericEnglishCollectMessageToChineseGuidance() {
+        V3ProtocolAdapter adapter = new V3ProtocolAdapter(new ObjectMapper());
+        List<FrontendEvent> events = adapter.adapt(
+                "slot_collect",
+                """
+                        {
+                          \"status\":\"COLLECTING\",
+                          \"phase\":\"COLLECTING\",
+                          \"message\":\"Missing required slots, continue collecting.\",
+                          \"round\":2,
+                          \"collected\":{\"start_date\":\"2026-03-24\"},
+                          \"missing\":[{\"name\":\"types\"}],
+                          \"enrichedSlots\":[
+                            {
+                              \"name\":\"types\",
+                              \"definition\":{
+                                \"name\":\"types\",
+                                \"type\":\"integer\",
+                                \"title\":\"请假类型\",
+                                \"required\":true,
+                                \"uiComponent\":\"select\"
+                              },
+                              \"options\":[{\"label\":\"事假\",\"value\":\"1\",\"disabled\":false}],
+                              \"optionsLoaded\":true
+                            }
+                          ]
+                        }
+                        """,
+                (Map<String, Object>) null);
+
+        assertEquals(1, events.size());
+        assertEquals("还需要补充请假类型。", events.get(0).payload().get("message"));
+    }
+
+    @Test
     void shouldNormalizeReadyToConfirmCollectFormAsConfirmationState() {
         V3ProtocolAdapter adapter = new V3ProtocolAdapter(new ObjectMapper());
         List<FrontendEvent> events = adapter.adapt(
@@ -602,5 +637,4 @@ class V3ProtocolAdapterTest {
         return new V3ProtocolAdapter(new ObjectMapper(), List.of(strategies));
     }
 }
-
 

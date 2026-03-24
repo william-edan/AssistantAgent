@@ -1,0 +1,4 @@
+data:{"protocolVersion":"2026-03-13","eventId":"82de80ca-d473-4a2b-9c18-8599a9621d7e","timestamp":"2026-03-19T09:43:06.455994400Z","eventType":"STAGE","stage":"UNDERSTANDING","payload":{"source":"run_sse"}}
+
+data:{"protocolVersion":"2026-03-13","eventId":"a2155ccb-222b-4430-9fe7-fdd8f3ac9611","threadId":"thread_keytest_8084","timestamp":"2026-03-19T09:43:08.579287500Z","eventType":"ERROR","stage":"ERROR","payload":{"code":"agent_stream_error","errorType":"BadRequest","errorMessage":"400 Bad Request from POST https://dashscope.aliyuncs.com/api/v1/services/aigc/text-generation/generation"}}
+

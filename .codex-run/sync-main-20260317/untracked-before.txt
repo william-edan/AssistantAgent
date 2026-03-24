@@ -1,0 +1,2 @@
+.codex-run/sync-main-20260317/index.patch
+.codex-run/sync-main-20260317/working-tree.patch

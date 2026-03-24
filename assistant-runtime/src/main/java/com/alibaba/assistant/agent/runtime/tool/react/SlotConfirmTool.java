@@ -667,6 +667,7 @@ public class SlotConfirmTool implements BiFunction<SlotConfirmTool.Request, Tool
         updates.put(AssistantStateKeys.ENRICHED_SLOTS, enrichedSlots);
         updates.put(AssistantStateKeys.SLOT_DEFINITIONS, slotDefinitions);
         updates.put(AssistantStateKeys.CONVERSATION_PHASE, "CONFIRMING");
+        updates.put(AssistantStateKeys.CURRENT_TURN_USER_INPUT, null);
         updates.put(AssistantStateKeys.EXECUTION_CONFIRM_GRANTED, false);
         updates.put(AssistantStateKeys.EXECUTION_CONFIRM_TOOL_NAME, null);
         updates.put(AssistantStateKeys.EXECUTION_CONFIRM_USER_INPUT, null);
@@ -756,6 +757,7 @@ public class SlotConfirmTool implements BiFunction<SlotConfirmTool.Request, Tool
         public List<EnrichedSlot> enrichedSlots;
     }
 }
+
 
 
 

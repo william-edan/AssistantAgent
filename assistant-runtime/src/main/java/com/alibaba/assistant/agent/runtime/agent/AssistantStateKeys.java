@@ -56,6 +56,7 @@ public final class AssistantStateKeys {
     public static final String CONVERSATION_PHASE = "conversation_phase";
 
     public static final String LAST_COLLECT_USER_INPUT = "last_collect_user_input";
+    public static final String CURRENT_TURN_USER_INPUT = "current_turn_user_input";
     public static final String FORM_FLOW_EXTRACTION_PENDING = "form_flow_extraction_pending";
 
     public static final String ENRICHED_SLOTS = "enriched_slots";
@@ -92,3 +93,4 @@ public final class AssistantStateKeys {
     // Audit context
     public static final String AUDIT_TRACE_ID = "audit_trace_id";
 }
+

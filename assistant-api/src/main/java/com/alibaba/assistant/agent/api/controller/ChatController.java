@@ -1157,7 +1157,8 @@ public class ChatController {
 				request.threadId,
 				userId,
 				resolveSystemCode(authenticatedUser),
-				request.appName);
+				request.appName,
+				request.newMessage.toUserMessage().getText());
 	}
 
 	List<FrontendEvent> resolveResumeReplayEvents(String threadId, String assistantUid, boolean hasToolFeedback) {
@@ -1227,7 +1228,34 @@ public class ChatController {
 		}
 		for (Map.Entry<String, Object> entry : stateDelta.entrySet()) {
 			String key = entry.getKey();
-			if (!StringUtils.hasText(key) || RUN_REPLAY_STATE_KEYS.contains(key)) {
+			if (!StringUtils.hasText(key)) {
+				continue;
+			}
+			if (AssistantStateKeys.CURRENT_TURN_SLOT_INPUTS.equals(key)) {
+				if (hasExplicitCurrentTurnSlotInputs(entry.getValue())) {
+					return true;
+				}
+				continue;
+			}
+			if (RUN_REPLAY_STATE_KEYS.contains(key)) {
+				continue;
+			}
+			if (hasMeaningfulValue(entry.getValue())) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	private boolean hasExplicitCurrentTurnSlotInputs(@Nullable Object value) {
+		if (!(value instanceof Map<?, ?> slotInputs) || slotInputs.isEmpty()) {
+			return false;
+		}
+		for (Map.Entry<?, ?> entry : slotInputs.entrySet()) {
+			String key = entry.getKey() != null ? String.valueOf(entry.getKey()) : null;
+			if (!StringUtils.hasText(key)
+					|| AssistantStateKeys.CURRENT_TURN_SLOT_INPUTS.equals(key)
+					|| RUN_REPLAY_STATE_KEYS.contains(key)) {
 				continue;
 			}
 			if (hasMeaningfulValue(entry.getValue())) {
@@ -1330,7 +1358,8 @@ public class ChatController {
 				request.threadId,
 				request.userId,
 				resolveSystemCode(authenticatedUser),
-				request.appName);
+				request.appName,
+				null);
 	}
 
 	private String resolveAppName(String... candidates) {
@@ -1346,16 +1375,18 @@ public class ChatController {
 	}
 
 	private Map<String, Object> mergeStateDelta(
-			Map<String, Object> baseStateDelta, String threadId, String assistantUid, String systemCode, String agentAppCode) {
+			Map<String, Object> baseStateDelta, String threadId, String assistantUid, String systemCode,
+			String agentAppCode, @Nullable String currentTurnUserInput) {
 		Map<String, Object> merged = new LinkedHashMap<>();
 		if (baseStateDelta != null && !baseStateDelta.isEmpty()) {
 			merged.putAll(baseStateDelta);
-			Map<String, Object> currentTurnSlotInputs = new LinkedHashMap<>(baseStateDelta);
-			currentTurnSlotInputs.remove(AssistantStateKeys.CURRENT_TURN_SLOT_INPUTS);
+			Map<String, Object> currentTurnSlotInputs = buildCurrentTurnSlotInputs(baseStateDelta);
 			if (!currentTurnSlotInputs.isEmpty()) {
 				merged.put(AssistantStateKeys.CURRENT_TURN_SLOT_INPUTS, currentTurnSlotInputs);
 			}
 		}
+		merged.put(AssistantStateKeys.CURRENT_TURN_USER_INPUT,
+				StringUtils.hasText(currentTurnUserInput) ? currentTurnUserInput : null);
 		if (StringUtils.hasText(threadId)) {
 			merged.put(AssistantStateKeys.THREAD_ID, threadId);
 		}
@@ -1394,6 +1425,31 @@ public class ChatController {
 
 	// 快速定位：run_sse / resume_sse 最终都在这里把会话输入转换成 Graph 的输入状态。
 	// 结构化表单值必须直接进入图输入状态，不能只挂在 RunnableConfig metadata 上。
+	private Map<String, Object> buildCurrentTurnSlotInputs(@Nullable Map<String, Object> baseStateDelta) {
+		Map<String, Object> currentTurnSlotInputs = new LinkedHashMap<>();
+		if (baseStateDelta == null || baseStateDelta.isEmpty()) {
+			return currentTurnSlotInputs;
+		}
+		Object rawNestedInputs = baseStateDelta.get(AssistantStateKeys.CURRENT_TURN_SLOT_INPUTS);
+		if (rawNestedInputs instanceof Map<?, ?> nestedInputs) {
+			nestedInputs.forEach((key, value) -> {
+				if (key != null) {
+					currentTurnSlotInputs.put(String.valueOf(key), value);
+				}
+			});
+		}
+		for (Map.Entry<String, Object> entry : baseStateDelta.entrySet()) {
+			String key = entry.getKey();
+			if (!StringUtils.hasText(key)
+					|| AssistantStateKeys.CURRENT_TURN_SLOT_INPUTS.equals(key)
+					|| RUN_REPLAY_STATE_KEYS.contains(key)) {
+				continue;
+			}
+			currentTurnSlotInputs.put(key, entry.getValue());
+		}
+		return currentTurnSlotInputs;
+	}
+
 	private Map<String, Object> buildAgentInput(
 			@Nullable UserMessage userMessage,
 			@Nullable Map<String, Object> stateDelta) {
@@ -1536,22 +1592,6 @@ public class ChatController {
 	}
 
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 

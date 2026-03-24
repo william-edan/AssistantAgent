@@ -231,9 +231,10 @@ class AssistantFastIntentHookTest {
 
         Map<String, Object> updates = hook.beforeAgent(state, RunnableConfig.builder().build()).join();
 
-        assertEquals(JumpTo.model, updates.get("jump_to"));
-        assertEquals(Boolean.TRUE, updates.get(AssistantStateKeys.FORM_FLOW_EXTRACTION_PENDING));
-        assertFalse(updates.containsKey("messages"));
+        assertEquals(JumpTo.tool, updates.get("jump_to"));
+        assertFalse(Boolean.TRUE.equals(updates.get(AssistantStateKeys.FORM_FLOW_EXTRACTION_PENDING)));
+        AssistantMessage assistantMessage = firstAssistantMessage(updates);
+        assertEquals("slot_collect", assistantMessage.getToolCalls().get(0).name());
         verify(router, never()).route(any(), any(), any());
     }
 
@@ -256,9 +257,65 @@ class AssistantFastIntentHookTest {
 
         Map<String, Object> updates = hook.beforeAgent(state, RunnableConfig.builder().build()).join();
 
-        assertEquals(JumpTo.model, updates.get("jump_to"));
-        assertEquals(Boolean.TRUE, updates.get(AssistantStateKeys.FORM_FLOW_EXTRACTION_PENDING));
-        assertFalse(updates.containsKey("messages"));
+        assertEquals(JumpTo.tool, updates.get("jump_to"));
+        assertFalse(Boolean.TRUE.equals(updates.get(AssistantStateKeys.FORM_FLOW_EXTRACTION_PENDING)));
+        AssistantMessage assistantMessage = firstAssistantMessage(updates);
+        assertEquals("slot_collect", assistantMessage.getToolCalls().get(0).name());
+        verify(router, never()).route(any(), any(), any());
+    }
+
+    @Test
+    void shouldContinueSlotCollectionWhenCollectingPhaseReceivesStructuredSlotInputsWithoutNewText() throws Exception {
+        AssistantIntentRouter router = mock(AssistantIntentRouter.class);
+        when(router.route(any(), any(), any())).thenReturn(AssistantIntentRouter.IntentResult.mainFlow());
+
+        AssistantFastIntentHook hook = new AssistantFastIntentHook(router, new ObjectMapper());
+        OverAllState state = new OverAllState();
+        state.updateState(Map.of(
+                "input", "我要请假",
+                AssistantStateKeys.LAST_COLLECT_USER_INPUT, "我要请假",
+                AssistantStateKeys.CONVERSATION_PHASE, "COLLECTING",
+                AssistantStateKeys.MATCHED_TOOL_META, Map.of("toolCode", "gougu_oa.leave_application"),
+                AssistantStateKeys.CURRENT_TURN_SLOT_INPUTS, Map.of(
+                        "types", 2,
+                        "start_date", "2026-03-24",
+                        "end_date", "2026-03-25",
+                        "reason", "家中有事"),
+                CodeactStateKeys.AVAILABLE_TOOL_NAMES, List.of("slot_collect", "slot_confirm")));
+
+        Map<String, Object> updates = hook.beforeAgent(state, RunnableConfig.builder().build()).join();
+
+        assertEquals(JumpTo.tool, updates.get("jump_to"));
+        assertFalse(Boolean.TRUE.equals(updates.get(AssistantStateKeys.FORM_FLOW_EXTRACTION_PENDING)));
+        AssistantMessage assistantMessage = firstAssistantMessage(updates);
+        assertEquals("slot_collect", assistantMessage.getToolCalls().get(0).name());
+
+        @SuppressWarnings("unchecked")
+        Map<String, Object> args = new ObjectMapper().readValue(assistantMessage.getToolCalls().get(0).arguments(), Map.class);
+        assertEquals("gougu_oa.leave_application", args.get("toolCode"));
+        verify(router, never()).route(any(), any(), any());
+    }
+    @Test
+    void shouldContinueSlotCollectionWhenCurrentTurnUserInputIsProvidedWithoutFreshInputState() {
+        AssistantIntentRouter router = mock(AssistantIntentRouter.class);
+        when(router.route(any(), any(), any())).thenReturn(AssistantIntentRouter.IntentResult.mainFlow());
+
+        AssistantFastIntentHook hook = new AssistantFastIntentHook(router, new ObjectMapper());
+        OverAllState state = new OverAllState();
+        state.updateState(Map.of(
+                "input", "我要请假",
+                "current_turn_user_input", "明天",
+                AssistantStateKeys.LAST_COLLECT_USER_INPUT, "我要请假",
+                AssistantStateKeys.CONVERSATION_PHASE, "COLLECTING",
+                AssistantStateKeys.MATCHED_TOOL_META, Map.of("toolCode", "gougu_oa.leave_application"),
+                CodeactStateKeys.AVAILABLE_TOOL_NAMES, List.of("slot_collect", "slot_confirm")));
+
+        Map<String, Object> updates = hook.beforeAgent(state, RunnableConfig.builder().build()).join();
+
+        assertEquals(JumpTo.tool, updates.get("jump_to"));
+        assertFalse(Boolean.TRUE.equals(updates.get(AssistantStateKeys.FORM_FLOW_EXTRACTION_PENDING)));
+        AssistantMessage assistantMessage = firstAssistantMessage(updates);
+        assertEquals("slot_collect", assistantMessage.getToolCalls().get(0).name());
         verify(router, never()).route(any(), any(), any());
     }
 
@@ -587,5 +644,6 @@ class AssistantFastIntentHookTest {
         return experience;
     }
 }
+
 
 

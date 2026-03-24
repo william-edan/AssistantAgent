@@ -3137,6 +3137,7 @@ public class SlotCollectTool implements BiFunction<SlotCollectTool.Request, Tool
         // jump_to is a one-shot routing hint; clear stale value to avoid tool/model self-loop in same turn.
         updates.put("jump_to", null);
         updates.put(AssistantStateKeys.EXECUTION_CONFIRM_GRANTED, false);
+        updates.put(AssistantStateKeys.CURRENT_TURN_USER_INPUT, null);
         updates.put(AssistantStateKeys.CURRENT_TURN_SLOT_INPUTS, null);
         clearTransientSlotInputs(updates, currentTurnSlotInputs);
         updates.put(AssistantStateKeys.EXECUTION_CONFIRM_TOOL_NAME, null);
@@ -3307,8 +3308,34 @@ public class SlotCollectTool implements BiFunction<SlotCollectTool.Request, Tool
             response.enrichedSlots = enrichedSlots;
             response.message = StringUtils.hasText(displayMessage)
                     ? displayMessage
-                    : "Missing required slots, continue collecting.";
+                    : buildDefaultCollectingMessage(missing);
             return response;
+        }
+
+        private static String buildDefaultCollectingMessage(List<MissingSlot> missing) {
+            if (missing == null || missing.isEmpty()) {
+                return "还需要补充信息。";
+            }
+            List<String> slotLabels = missing.stream()
+                    .map(Response::resolveMissingSlotLabel)
+                    .filter(StringUtils::hasText)
+                    .distinct()
+                    .toList();
+            if (slotLabels.isEmpty()) {
+                return "还需要补充信息。";
+            }
+            if (slotLabels.size() == 1) {
+                return "还需要补充" + slotLabels.get(0) + "。";
+            }
+            String prefix = String.join("、", slotLabels.subList(0, slotLabels.size() - 1));
+            return "还需要补充" + prefix + "和" + slotLabels.get(slotLabels.size() - 1) + "。";
+        }
+
+        private static String resolveMissingSlotLabel(MissingSlot missingSlot) {
+            if (missingSlot == null) {
+                return null;
+            }
+            return StringUtils.hasText(missingSlot.title) ? missingSlot.title : missingSlot.name;
         }
 
         public static Response complete(String toolCode,
@@ -3351,3 +3378,5 @@ public class SlotCollectTool implements BiFunction<SlotCollectTool.Request, Tool
         public String options;
     }
 }
+
+
