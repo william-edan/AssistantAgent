@@ -40,6 +40,11 @@ assistant:
     default-system-code: ${ASSISTANT_DEFAULT_SYSTEM_CODE:gougu_oa}
     default-space-code: ${ASSISTANT_DEFAULT_SPACE_CODE:default}
     default-space-environment: ${ASSISTANT_DEFAULT_SPACE_ENVIRONMENT:prod}
+  profile:
+    data-agent:
+      base-url: ${PROFILE_DATA_AGENT_BASE_URL:http://localhost:8066}
+      search-path: ${PROFILE_DATA_AGENT_SEARCH_PATH:/api/stream/search}
+      agent-id: ${PROFILE_DATA_AGENT_ID:5}
   debug:
     http:
       enabled: true
