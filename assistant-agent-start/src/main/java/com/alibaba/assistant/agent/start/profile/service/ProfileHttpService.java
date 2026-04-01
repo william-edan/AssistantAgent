@@ -16,6 +16,7 @@
 package com.alibaba.assistant.agent.start.profile.service;
 
 import com.alibaba.assistant.agent.start.profile.dto.ProfileDTO;
+import com.alibaba.assistant.agent.start.profile.intent.IntentRecognizer;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
@@ -110,7 +111,13 @@ public class ProfileHttpService {
      * @return 归一化后的档案结果
      */
     public Mono<ProfileDTO> queryProfile(String name) {
-        return requestStream(name)
+        return queryProfile(name, IntentRecognizer.IntentType.PROFILE_ARCHIVE);
+    }
+
+    public Mono<ProfileDTO> queryProfile(String name, IntentRecognizer.IntentType intentType) {
+        IntentRecognizer.IntentType resolvedIntentType = Optional.ofNullable(intentType)
+                .orElse(IntentRecognizer.IntentType.PROFILE_ARCHIVE);
+        return requestStream(name, resolvedIntentType)
                 .timeout(streamIdleTimeout)
                 .<DataAgentStreamEvent>handle((event, sink) -> {
                     if (event.error()) {
@@ -121,7 +128,7 @@ public class ProfileHttpService {
                 })
                 .takeUntil(DataAgentStreamEvent::complete)
                 .collectList()
-                .map(events -> aggregateEvents(name, events))
+                .map(events -> aggregateEvents(name, resolvedIntentType, events))
                 .retryWhen(Retry.backoff(2, Duration.ofMillis(200))
                         .filter(this::isRetryable)
                         .onRetryExhaustedThrow((spec, signal) -> signal.failure()))
@@ -139,12 +146,12 @@ public class ProfileHttpService {
      * @param name 查询姓名
      * @return SSE 事件流
      */
-    private Flux<DataAgentStreamEvent> requestStream(String name) {
+    private Flux<DataAgentStreamEvent> requestStream(String name, IntentRecognizer.IntentType intentType) {
         return profileWebClient.get()
                 .uri(uriBuilder -> uriBuilder
                         .path(searchPath)
                         .queryParam("agentId", agentId)
-                        .queryParam("query", buildProfileQuery(name))
+                        .queryParam("query", buildProfileQuery(name, intentType))
                         .build())
                 .accept(MediaType.TEXT_EVENT_STREAM)
                 .retrieve()
@@ -178,14 +185,17 @@ public class ProfileHttpService {
      * @param events SSE 事件列表
      * @return 聚合后的 DTO
      */
-    private ProfileDTO aggregateEvents(String name, List<DataAgentStreamEvent> events) {
+    private ProfileDTO aggregateEvents(
+            String name,
+            IntentRecognizer.IntentType intentType,
+            List<DataAgentStreamEvent> events) {
         String threadId = events.stream()
                 .map(DataAgentStreamEvent::threadId)
                 .filter(StringUtils::hasText)
                 .findFirst()
                 .orElse(null);
 
-        Optional<ProfileDTO> resultSetProfile = extractResultSetProfile(name, threadId, events);
+        Optional<ProfileDTO> resultSetProfile = extractResultSetProfile(name, intentType, threadId, events);
         if (resultSetProfile.isPresent()) {
             return resultSetProfile.get();
         }
@@ -208,13 +218,17 @@ public class ProfileHttpService {
      * @param events SSE 事件列表
      * @return 命中最终结果时返回 DTO
      */
-    private Optional<ProfileDTO> extractResultSetProfile(String name, String threadId, List<DataAgentStreamEvent> events) {
+    private Optional<ProfileDTO> extractResultSetProfile(
+            String name,
+            IntentRecognizer.IntentType intentType,
+            String threadId,
+            List<DataAgentStreamEvent> events) {
         return events.stream()
                 .filter(this::isResultSetEvent)
                 .map(DataAgentStreamEvent::text)
                 .filter(StringUtils::hasText)
                 .reduce((previous, current) -> current)
-                .flatMap(resultSetText -> parseResultSetProfile(name, threadId, resultSetText));
+                .flatMap(resultSetText -> parseResultSetProfile(name, intentType, threadId, resultSetText));
     }
 
     /**
@@ -225,7 +239,11 @@ public class ProfileHttpService {
      * @param resultSetText RESULT_SET 文本
      * @return 解析后的 DTO
      */
-    private Optional<ProfileDTO> parseResultSetProfile(String name, String threadId, String resultSetText) {
+    private Optional<ProfileDTO> parseResultSetProfile(
+            String name,
+            IntentRecognizer.IntentType intentType,
+            String threadId,
+            String resultSetText) {
         try {
             Map<String, Object> payload = objectMapper.readValue(resultSetText, MAP_TYPE);
             Map<String, Object> resultSet = asMap(payload.get("resultSet"));
@@ -239,16 +257,16 @@ public class ProfileHttpService {
                 return Optional.empty();
             }
 
-            Object firstRowObject = rows.get(0);
-            if (!(firstRowObject instanceof Map<?, ?> firstRowRaw) || firstRowRaw.isEmpty()) {
+            List<Map<String, Object>> normalizedRows = normalizeResultRows(rows);
+            if (normalizedRows.isEmpty()) {
                 return Optional.empty();
             }
 
-            @SuppressWarnings("unchecked")
-            Map<String, Object> firstRow = new LinkedHashMap<>((Map<String, Object>) firstRowRaw);
+            Map<String, Object> firstRow = normalizedRows.get(0);
+            String resolvedName = resolveResultName(name, normalizedRows);
             String rawText = objectMapper.writeValueAsString(firstRow);
-            String summary = buildRowSummary(firstRow);
-            return Optional.of(new ProfileDTO(name, summary, rawText, threadId));
+            String summary = buildResultSetSummary(resolvedName, intentType, normalizedRows);
+            return Optional.of(new ProfileDTO(resolvedName, summary, rawText, threadId, normalizedRows));
         }
         catch (IllegalStateException illegalStateException) {
             throw illegalStateException;
@@ -256,6 +274,67 @@ public class ProfileHttpService {
         catch (Exception ignored) {
             return Optional.empty();
         }
+    }
+
+    /**
+     * 归一化 RESULT_SET 中的多条记录，保留原始字段顺序。
+     *
+     * @param rows DataAgent 返回的结果行
+     * @return 归一化后的记录列表
+     */
+    private List<Map<String, Object>> normalizeResultRows(List<?> rows) {
+        if (rows == null || rows.isEmpty()) {
+            return List.of();
+        }
+        List<Map<String, Object>> normalizedRows = new ArrayList<>();
+        for (Object rowObject : rows) {
+            if (rowObject instanceof Map<?, ?> rowMap && !rowMap.isEmpty()) {
+                @SuppressWarnings("unchecked")
+                Map<String, Object> currentRow = new LinkedHashMap<>((Map<String, Object>) rowMap);
+                normalizedRows.add(currentRow);
+            }
+        }
+        return normalizedRows;
+    }
+
+    /**
+     * 构建结果集摘要，多条记录时优先输出列表汇总文案。
+     *
+     * @param displayName 展示姓名
+     * @param intentType 意图类型
+     * @param rows 结果记录
+     * @return 摘要文本
+     */
+    private String buildResultSetSummary(
+            String displayName,
+            IntentRecognizer.IntentType intentType,
+            List<Map<String, Object>> rows) {
+        if (rows == null || rows.isEmpty()) {
+            return null;
+        }
+        if (rows.size() == 1) {
+            return buildRowSummary(rows.get(0));
+        }
+        return switch (Optional.ofNullable(intentType).orElse(IntentRecognizer.IntentType.PROFILE_ARCHIVE)) {
+            case PROFILE_SCHEDULE -> "已查询到%s的%d条日程".formatted(displayName, rows.size());
+            case PROFILE_GENERAL -> "已查询到%s的%d条个人信息".formatted(displayName, rows.size());
+            case PROFILE_ARCHIVE, UNKNOWN -> "已查询到%s的%d条相关记录".formatted(displayName, rows.size());
+        };
+    }
+
+    /**
+     * 解析结果展示姓名，优先使用结果集中的姓名字段，未命中时回退到查询姓名。
+     *
+     * @param requestedName 查询姓名
+     * @param rows 结果记录
+     * @return 展示姓名
+     */
+    private String resolveResultName(String requestedName, List<Map<String, Object>> rows) {
+        if (rows == null || rows.isEmpty()) {
+            return requestedName;
+        }
+        String rowName = resolveRowValue(rows.get(0), "name", "employeeName", "employee_name", "姓名", "员工姓名");
+        return StringUtils.hasText(rowName) ? rowName : requestedName;
     }
 
     /**
@@ -281,8 +360,26 @@ public class ProfileHttpService {
                 "职位",
                 "职务",
                 "岗位"));
+        addIfHasText(summaryParts, resolveRowValue(row,
+                "date",
+                "day",
+                "scheduleDate",
+                "schedule_date",
+                "startDate",
+                "start_date",
+                "日期"));
+        addIfHasText(summaryParts, resolveRowValue(row,
+                "schedule",
+                "agenda",
+                "event",
+                "eventName",
+                "event_name",
+                "content",
+                "日程",
+                "行程",
+                "事项"));
         addIfHasText(summaryParts, resolveRowValue(row, "city", "currentAddress", "current_address", "现居地址", "城市"));
-        if (!summaryParts.isEmpty()) {
+        if (summaryParts.size() > 1) {
             return String.join("，", summaryParts);
         }
         return row.entrySet().stream()
@@ -540,6 +637,19 @@ public class ProfileHttpService {
      * @param error 是否错误
      * @param complete 是否完成
      */
+    private String buildProfileQuery(String name, IntentRecognizer.IntentType intentType) {
+        IntentRecognizer.IntentType resolvedIntentType = Optional.ofNullable(intentType)
+                .orElse(IntentRecognizer.IntentType.PROFILE_ARCHIVE);
+        return switch (resolvedIntentType) {
+            case PROFILE_SCHEDULE -> ("查询姓名为%s的个人日程、日历或排期信息，"
+                    + "返回该人员日程相关的核心字段和值。").formatted(name);
+            case PROFILE_GENERAL -> ("查询姓名为%s的个人信息，"
+                    + "返回该人员相关的核心信息字段和值。").formatted(name);
+            case PROFILE_ARCHIVE, UNKNOWN -> ("查询姓名为%s的个人档案信息，"
+                    + "返回该人员的核心档案字段和值。").formatted(name);
+        };
+    }
+
     private record DataAgentStreamEvent(
             String agentId,
             String threadId,

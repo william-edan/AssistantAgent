@@ -23,16 +23,21 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * 个人档案查询意图识别器。
+ * 个人信息查询意图识别器。
  *
- * <p>负责识别“张三的个人档案”“李四是谁”“帮我查一下王五的信息”这类输入，
- * 并抽取姓名，用于后续快速跳转到 Tool 执行阶段。</p>
+ * <p>负责识别个人档案、个人日程以及通用个人信息查询请求，
+ * 并提取目标姓名，供快捷 Hook 和 Tool 直接命中本地查询链路。</p>
  */
 @Component
 public class IntentRecognizer {
 
-    private static final Pattern NAME_EXTRACTION_PATTERN = Pattern.compile(
-            "(?:帮我查一下|请帮我查一下|查一下|查询|看看|帮我)?\\s*([\\u4e00-\\u9fa5]{2,4})\\s*(?:的)?\\s*(?:个人档案|档案|信息|资料|是谁)");
+    private static final Pattern POSSESSIVE_QUERY_PATTERN = Pattern.compile(
+            "([\\u4e00-\\u9fa5]{2,4})\\s*\\u7684\\s*(\\u4e2a\\u4eba\\u6863\\u6848|\\u6863\\u6848|\\u4fe1\\u606f|\\u8d44\\u6599|\\u65e5\\u7a0b|\\u6392\\u671f|\\u65e5\\u5386|\\u884c\\u7a0b)");
+
+    private static final Pattern LOOKUP_QUERY_PATTERN = Pattern.compile(
+            "(?:\\u5e2e\\u6211\\u67e5\\u4e00\\u4e0b|\\u8bf7\\u5e2e\\u6211\\u67e5\\u4e00\\u4e0b|\\u67e5\\u4e00\\u4e0b|\\u67e5\\u8be2|\\u770b\\u770b|\\u5e2e\\u6211\\u770b\\u4e0b|\\u5e2e\\u6211\\u67e5)\\s*([\\u4e00-\\u9fa5]{2,4})\\s*(?:\\u7684)?\\s*(\\u4e2a\\u4eba\\u6863\\u6848|\\u6863\\u6848|\\u4fe1\\u606f|\\u8d44\\u6599|\\u65e5\\u7a0b|\\u6392\\u671f|\\u65e5\\u5386|\\u884c\\u7a0b)");
+
+    private static final Pattern WHO_IS_PATTERN = Pattern.compile("([\\u4e00-\\u9fa5]{2,4})\\s*\\u662f\\u8c01");
 
     /**
      * 识别输入并返回结果。
@@ -45,7 +50,7 @@ public class IntentRecognizer {
                 .map(String::trim)
                 .orElse("");
         IntentType intentType = detectIntentType(normalizedInput);
-        if (intentType != IntentType.PROFILE_QUERY) {
+        if (intentType == IntentType.UNKNOWN) {
             return RecognitionResult.notMatched();
         }
         return extractName(normalizedInput)
@@ -54,34 +59,39 @@ public class IntentRecognizer {
     }
 
     /**
-     * 检测输入属于哪种意图。
+     * 检测输入属于哪一种意图。
      *
-     * <p>这里使用 switch 表达式，把关键词条件映射到目标意图。</p>
+     * <p>这里使用 switch 表达式，将关键词条件映射到目标意图。</p>
      *
      * @param normalizedInput 归一化后的输入
      * @return 意图类型
      */
     public IntentType detectIntentType(String normalizedInput) {
-        boolean hasActionKeyword = normalizedInput.contains("查")
-                || normalizedInput.contains("查询")
-                || normalizedInput.contains("看看")
-                || normalizedInput.contains("帮我");
-        boolean hasProfileKeyword = normalizedInput.contains("个人档案")
-                || normalizedInput.contains("档案")
-                || normalizedInput.contains("信息")
-                || normalizedInput.contains("资料")
-                || normalizedInput.contains("是谁");
-        String intentCode = hasProfileKeyword
-                ? "PROFILE_QUERY"
+        boolean hasScheduleKeyword = containsAny(normalizedInput,
+                "\u65e5\u7a0b", "\u6392\u671f", "\u65e5\u5386", "\u884c\u7a0b");
+        boolean hasArchiveKeyword = containsAny(normalizedInput,
+                "\u4e2a\u4eba\u6863\u6848", "\u6863\u6848");
+        boolean hasGeneralKeyword = containsAny(normalizedInput,
+                "\u4fe1\u606f", "\u8d44\u6599", "\u662f\u8c01");
+
+        String intentCode = hasScheduleKeyword
+                ? "PROFILE_SCHEDULE"
+                : hasArchiveKeyword
+                ? "PROFILE_ARCHIVE"
+                : hasGeneralKeyword
+                ? "PROFILE_GENERAL"
                 : "UNKNOWN";
+
         return switch (intentCode) {
-            case "PROFILE_QUERY" -> IntentType.PROFILE_QUERY;
+            case "PROFILE_ARCHIVE" -> IntentType.PROFILE_ARCHIVE;
+            case "PROFILE_SCHEDULE" -> IntentType.PROFILE_SCHEDULE;
+            case "PROFILE_GENERAL" -> IntentType.PROFILE_GENERAL;
             default -> IntentType.UNKNOWN;
         };
     }
 
     /**
-     * 从输入中抽取姓名。
+     * 从输入中提取姓名。
      *
      * @param normalizedInput 归一化后的输入
      * @return 姓名
@@ -90,40 +100,133 @@ public class IntentRecognizer {
         if (!StringUtils.hasText(normalizedInput)) {
             return Optional.empty();
         }
-        Matcher matcher = NAME_EXTRACTION_PATTERN.matcher(normalizedInput);
-        if (matcher.find()) {
-            return Optional.ofNullable(matcher.group(1))
-                    .map(String::trim)
-                    .map(name -> name.endsWith("的") ? name.substring(0, name.length() - 1) : name)
-                    .filter(StringUtils::hasText);
+
+        Optional<String> matchedName = extractNameByPattern(normalizedInput, LOOKUP_QUERY_PATTERN, 1);
+        if (matchedName.isPresent()) {
+            return matchedName;
         }
+
+        matchedName = extractNameByPattern(normalizedInput, POSSESSIVE_QUERY_PATTERN, 1);
+        if (matchedName.isPresent()) {
+            return matchedName;
+        }
+
+        matchedName = extractNameByPattern(normalizedInput, WHO_IS_PATTERN, 1);
+        if (matchedName.isPresent()) {
+            return matchedName;
+        }
+
         String fallback = normalizedInput
-                .replace("帮我查一下", "")
-                .replace("请帮我查一下", "")
-                .replace("查一下", "")
-                .replace("查询", "")
-                .replace("看看", "")
-                .replace("帮我", "")
-                .replace("的个人档案", "")
-                .replace("个人档案", "")
-                .replace("的档案", "")
-                .replace("档案", "")
-                .replace("的信息", "")
-                .replace("信息", "")
-                .replace("的资料", "")
-                .replace("资料", "")
-                .replace("是谁", "")
+                .replace("\u5e2e\u6211\u67e5\u4e00\u4e0b", "")
+                .replace("\u8bf7\u5e2e\u6211\u67e5\u4e00\u4e0b", "")
+                .replace("\u67e5\u4e00\u4e0b", "")
+                .replace("\u67e5\u8be2", "")
+                .replace("\u770b\u770b", "")
+                .replace("\u5e2e\u6211\u770b\u4e0b", "")
+                .replace("\u5e2e\u6211\u67e5", "")
+                .replace("\u7684\u4e2a\u4eba\u6863\u6848", "")
+                .replace("\u4e2a\u4eba\u6863\u6848", "")
+                .replace("\u7684\u6863\u6848", "")
+                .replace("\u6863\u6848", "")
+                .replace("\u7684\u4fe1\u606f", "")
+                .replace("\u4fe1\u606f", "")
+                .replace("\u7684\u8d44\u6599", "")
+                .replace("\u8d44\u6599", "")
+                .replace("\u7684\u65e5\u7a0b", "")
+                .replace("\u65e5\u7a0b", "")
+                .replace("\u7684\u6392\u671f", "")
+                .replace("\u6392\u671f", "")
+                .replace("\u7684\u65e5\u5386", "")
+                .replace("\u65e5\u5386", "")
+                .replace("\u7684\u884c\u7a0b", "")
+                .replace("\u884c\u7a0b", "")
+                .replace("\u662f\u8c01", "")
                 .trim();
+
         return Optional.of(fallback)
                 .filter(StringUtils::hasText)
                 .filter(candidate -> candidate.matches("[\\u4e00-\\u9fa5]{2,4}"));
     }
 
     /**
+     * 根据正则模式提取姓名。
+     *
+     * @param normalizedInput 归一化输入
+     * @param pattern 匹配模式
+     * @param groupIndex 姓名所在分组
+     * @return 命中的姓名
+     */
+    private Optional<String> extractNameByPattern(String normalizedInput, Pattern pattern, int groupIndex) {
+        Matcher matcher = pattern.matcher(normalizedInput);
+        if (!matcher.find()) {
+            return Optional.empty();
+        }
+        return Optional.ofNullable(matcher.group(groupIndex))
+                .map(String::trim)
+                .map(this::normalizeNameCandidate)
+                .filter(StringUtils::hasText);
+    }
+
+    /**
+     * 清洗姓名候选值，避免把“查一下”的尾部误并入姓名。
+     *
+     * @param candidate 原始候选值
+     * @return 清洗后的姓名
+     */
+    private String normalizeNameCandidate(String candidate) {
+        if (!StringUtils.hasText(candidate)) {
+            return candidate;
+        }
+        String normalizedCandidate = candidate.trim();
+        String[] prefixes = {
+                "\u8bf7\u5e2e\u6211\u67e5\u4e00\u4e0b",
+                "\u5e2e\u6211\u67e5\u4e00\u4e0b",
+                "\u67e5\u4e00\u4e0b",
+                "\u67e5\u8be2",
+                "\u770b\u770b",
+                "\u5e2e\u6211\u770b\u4e0b",
+                "\u5e2e\u6211\u67e5"
+        };
+        for (String prefix : prefixes) {
+            if (normalizedCandidate.startsWith(prefix) && normalizedCandidate.length() > prefix.length()) {
+                normalizedCandidate = normalizedCandidate.substring(prefix.length()).trim();
+            }
+        }
+        if (normalizedCandidate.startsWith("\u4e00\u4e0b") && normalizedCandidate.length() > 2) {
+            normalizedCandidate = normalizedCandidate.substring(2);
+        }
+        if (normalizedCandidate.endsWith("\u7684") && normalizedCandidate.length() > 1) {
+            normalizedCandidate = normalizedCandidate.substring(0, normalizedCandidate.length() - 1);
+        }
+        return normalizedCandidate.trim();
+    }
+
+    /**
+     * 判断输入中是否包含任一关键词。
+     *
+     * @param input 输入文本
+     * @param keywords 关键词
+     * @return 命中时返回 true
+     */
+    private boolean containsAny(String input, String... keywords) {
+        if (!StringUtils.hasText(input) || keywords == null || keywords.length == 0) {
+            return false;
+        }
+        for (String keyword : keywords) {
+            if (StringUtils.hasText(keyword) && input.contains(keyword)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
      * 意图类型枚举。
      */
     public enum IntentType {
-        PROFILE_QUERY,
+        PROFILE_ARCHIVE,
+        PROFILE_SCHEDULE,
+        PROFILE_GENERAL,
         UNKNOWN
     }
 

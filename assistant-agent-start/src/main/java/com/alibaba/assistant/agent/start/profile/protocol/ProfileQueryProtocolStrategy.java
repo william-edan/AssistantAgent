@@ -52,7 +52,13 @@ public class ProfileQueryProtocolStrategy implements ProtocolStrategy {
 
     private static final String RECORD_TYPE_SINGLE = "single";
 
+    private static final String RECORD_TYPE_LIST = "list";
+
     private static final String TITLE_SUFFIX_PROFILE = "\u7684\u4e2a\u4eba\u6863\u6848";
+
+    private static final String TITLE_SUFFIX_SCHEDULE = "\u7684\u4e2a\u4eba\u65e5\u7a0b";
+
+    private static final String TITLE_SUFFIX_GENERAL = "\u7684\u4e2a\u4eba\u4fe1\u606f";
 
     private static final String TITLE_QUERY_FAILED = "\u4e2a\u4eba\u6863\u6848\u67e5\u8be2\u5931\u8d25";
 
@@ -61,6 +67,12 @@ public class ProfileQueryProtocolStrategy implements ProtocolStrategy {
     private static final String VALUE_PERSON_FALLBACK = "\u76ee\u6807\u4eba\u5458";
 
     private static final String TEXT_QUERY_SUCCESS = "\u5df2\u4e3a\u4f60\u67e5\u8be2\u5230%s\u7684\u4e2a\u4eba\u6863\u6848\uff0c\u4e0b\u9762\u662f\u5173\u952e\u4fe1\u606f\u3002";
+
+    private static final String TEXT_QUERY_SUCCESS_SCHEDULE = "\u5df2\u4e3a\u4f60\u67e5\u8be2\u5230%s\u7684\u4e2a\u4eba\u65e5\u7a0b\u4fe1\u606f\uff0c\u4e0b\u9762\u662f\u5173\u952e\u4fe1\u606f\u3002";
+
+    private static final String TEXT_QUERY_SUCCESS_GENERAL = "\u5df2\u4e3a\u4f60\u67e5\u8be2\u5230%s\u7684\u4e2a\u4eba\u4fe1\u606f\uff0c\u4e0b\u9762\u662f\u5173\u952e\u4fe1\u606f\u3002";
+
+    private static final String TEXT_QUERY_SUCCESS_SCHEDULE_LIST = "\u5df2\u4e3a\u4f60\u67e5\u8be2\u5230%s\u7684%d\u6761\u4e2a\u4eba\u65e5\u7a0b\u4fe1\u606f\u3002";
 
     private static final String LABEL_NAME = "\u59d3\u540d";
 
@@ -95,6 +107,18 @@ public class ProfileQueryProtocolStrategy implements ProtocolStrategy {
     private static final String LABEL_HOME_ADDRESS = "\u5bb6\u5ead\u5730\u5740";
 
     private static final String LABEL_PROFILE_NAME = "\u6863\u6848\u540d\u79f0";
+
+    private static final String LABEL_SCHEDULE_NAME = "\u65e5\u7a0b\u540d\u79f0";
+
+    private static final String LABEL_INFO_NAME = "\u4fe1\u606f\u540d\u79f0";
+
+    private static final String LABEL_SCHEDULE_COUNT = "\u884c\u7a0b\u603b\u6570";
+
+    private static final String LABEL_EARLIEST_START_TIME = "\u6700\u65e9\u5f00\u59cb\u65f6\u95f4";
+
+    private static final String LABEL_LATEST_END_TIME = "\u6700\u665a\u7ed3\u675f\u65f6\u95f4";
+
+    private static final String LABEL_RECENT_SCHEDULE = "\u6700\u8fd1\u4e00\u6761\u5b89\u6392";
 
     private static final String SECTION_BASIC = "\u57fa\u7840\u4fe1\u606f";
 
@@ -169,21 +193,55 @@ public class ProfileQueryProtocolStrategy implements ProtocolStrategy {
         }
 
         Map<String, Object> data = asMap(payload.get("data"));
+        List<Map<String, Object>> records = extractRecordList(data);
         Map<String, Object> profile = normalizeProfile(extractProfileValues(payload));
         String displayName = resolveDisplayName(payload, data, profile);
-        String summary = buildResultText(displayName);
+        if (shouldBuildScheduleListResult(payload, records)) {
+            return buildScheduleListResult(payload, data, displayName, records);
+        }
+        String titleSuffix = resolveTitleSuffix(payload);
+        String summary = buildResultText(displayName, payload);
         Set<String> consumedKeys = new LinkedHashSet<>();
 
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("templateCode", PROFILE_CARD_TEMPLATE_CODE);
-        result.put("title", displayName + TITLE_SUFFIX_PROFILE);
+        result.put("title", displayName + titleSuffix);
         result.put("summary", summary);
         result.put("text", summary);
         result.put("recordType", RECORD_TYPE_SINGLE);
-        result.put("finalOutputs", buildFinalOutputs(profile, displayName, summary));
+        result.put("finalOutputs", buildFinalOutputs(profile, displayName, payload));
         result.put("highlights", buildHighlights(profile, displayName, consumedKeys));
         result.put("sections", buildSections(profile, displayName, consumedKeys));
         result.put("profile", profile);
+        putText(result, "threadId", asText(data.get("threadId")));
+        return result;
+    }
+
+    private boolean shouldBuildScheduleListResult(Map<String, Object> payload, List<Map<String, Object>> records) {
+        return "PROFILE_SCHEDULE".equals(resolveIntent(payload))
+                && records != null
+                && records.size() > 1;
+    }
+
+    private Map<String, Object> buildScheduleListResult(
+            Map<String, Object> payload,
+            Map<String, Object> data,
+            String displayName,
+            List<Map<String, Object>> records) {
+        List<Map<String, Object>> displayRecords = buildDisplayRecords(records);
+        String summary = TEXT_QUERY_SUCCESS_SCHEDULE_LIST.formatted(displayName, displayRecords.size());
+
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("templateCode", PROFILE_CARD_TEMPLATE_CODE);
+        result.put("title", displayName + TITLE_SUFFIX_SCHEDULE);
+        result.put("summary", summary);
+        result.put("text", summary);
+        result.put("recordType", RECORD_TYPE_LIST);
+        result.put("finalOutputs", buildScheduleListFinalOutputs(displayName, displayRecords));
+        result.put("highlights", buildScheduleListHighlights(displayName, displayRecords));
+        result.put("sections", buildScheduleListSections(displayRecords));
+        result.put("records", displayRecords);
+        result.put("profile", buildScheduleListProfile(displayName, displayRecords));
         putText(result, "threadId", asText(data.get("threadId")));
         return result;
     }
@@ -258,26 +316,71 @@ public class ProfileQueryProtocolStrategy implements ProtocolStrategy {
         return normalizedProfile;
     }
 
+    private List<Map<String, Object>> extractRecordList(Map<String, Object> data) {
+        if (data == null || data.isEmpty()) {
+            return List.of();
+        }
+        Object recordsObject = data.get("records");
+        if (!(recordsObject instanceof List<?> rawRecords) || rawRecords.isEmpty()) {
+            return List.of();
+        }
+
+        List<Map<String, Object>> normalizedRecords = new ArrayList<>();
+        for (Object rawRecord : rawRecords) {
+            if (rawRecord instanceof Map<?, ?> recordMap && !recordMap.isEmpty()) {
+                @SuppressWarnings("unchecked")
+                Map<String, Object> currentRecord = new LinkedHashMap<>((Map<String, Object>) recordMap);
+                normalizedRecords.add(currentRecord);
+            }
+        }
+        return normalizedRecords;
+    }
+
     private Map<String, Object> buildFinalOutputs(
             Map<String, Object> profile,
             String displayName,
-            String summary) {
+            Map<String, Object> payload) {
+        String titleSuffix = resolveTitleSuffix(payload);
         Map<String, Object> finalOutputs = new LinkedHashMap<>();
-        finalOutputs.put(LABEL_PROFILE_NAME, displayName + TITLE_SUFFIX_PROFILE);
-        putText(finalOutputs, LABEL_NAME, displayName);
-        putText(finalOutputs, LABEL_GENDER, resolveProfileValue(profile, "gender", "sex", "\u6027\u522b", "\u5458\u5de5\u6027\u522b"));
-        putText(finalOutputs, LABEL_AGE, formatAge(resolveProfileValue(profile, "age", "\u5e74\u9f84")));
-        putText(finalOutputs, LABEL_POSITION, resolveProfileValue(profile,
-                "position", "positionName", "position_name", "job", "title", "\u804c\u4f4d", "\u804c\u52a1", "\u5c97\u4f4d"));
-        putText(finalOutputs, LABEL_MOBILE, resolveProfileValue(profile,
-                "mobile", "phone", "\u624b\u673a\u53f7", "\u624b\u673a\u53f7\u7801", "\u8054\u7cfb\u7535\u8bdd"));
-        putText(finalOutputs, LABEL_BIRTHDAY, resolveProfileValue(profile,
-                "birthday", "birthDate", "birth_date", "\u51fa\u751f\u65e5\u671f", "\u751f\u65e5"));
-        putText(finalOutputs, LABEL_SPECIALITY, resolveProfileValue(profile,
-                "speciality", "specialty", "major", "\u6240\u5b66\u4e13\u4e1a", "\u4e13\u4e1a"));
-        putText(finalOutputs, LABEL_HOME_ADDRESS, resolveProfileValue(profile,
-                "homeAddress", "home_address", "familyAddress", "family_address", "\u5bb6\u5ead\u5730\u5740"));
+        Set<String> consumedKeys = new LinkedHashSet<>();
+
+        finalOutputs.put(resolvePrimaryOutputLabel(payload), displayName + titleSuffix);
+        addFinalOutputItem(finalOutputs, LABEL_NAME, displayName, profile, consumedKeys,
+                "name", "employeeName", "employee_name", "\u59d3\u540d", "\u5458\u5de5\u59d3\u540d");
+        addFinalOutputItem(finalOutputs, LABEL_GENDER,
+                resolveProfileValue(profile, "gender", "sex", "\u6027\u522b", "\u5458\u5de5\u6027\u522b"),
+                profile, consumedKeys, "gender", "sex", "\u6027\u522b", "\u5458\u5de5\u6027\u522b");
+        addFinalOutputItem(finalOutputs, LABEL_AGE,
+                formatAge(resolveProfileValue(profile, "age", "\u5e74\u9f84")),
+                profile, consumedKeys, "age", "\u5e74\u9f84");
+        addFinalOutputItem(finalOutputs, LABEL_POSITION,
+                resolveProfileValue(profile,
+                        "position", "positionName", "position_name", "job", "title", "\u804c\u4f4d", "\u804c\u52a1", "\u5c97\u4f4d"),
+                profile, consumedKeys,
+                "position", "positionName", "position_name", "job", "title", "\u804c\u4f4d", "\u804c\u52a1", "\u5c97\u4f4d");
+        addFinalOutputItem(finalOutputs, LABEL_MOBILE,
+                resolveProfileValue(profile, "mobile", "phone", "\u624b\u673a\u53f7", "\u624b\u673a\u53f7\u7801", "\u8054\u7cfb\u7535\u8bdd"),
+                profile, consumedKeys, "mobile", "phone", "\u624b\u673a\u53f7", "\u624b\u673a\u53f7\u7801", "\u8054\u7cfb\u7535\u8bdd");
+        addFinalOutputItem(finalOutputs, LABEL_BIRTHDAY,
+                resolveProfileValue(profile, "birthday", "birthDate", "birth_date", "\u51fa\u751f\u65e5\u671f", "\u751f\u65e5"),
+                profile, consumedKeys, "birthday", "birthDate", "birth_date", "\u51fa\u751f\u65e5\u671f", "\u751f\u65e5");
+        addFinalOutputItem(finalOutputs, LABEL_SPECIALITY,
+                resolveProfileValue(profile, "speciality", "specialty", "major", "\u6240\u5b66\u4e13\u4e1a", "\u4e13\u4e1a"),
+                profile, consumedKeys, "speciality", "specialty", "major", "\u6240\u5b66\u4e13\u4e1a", "\u4e13\u4e1a");
+        addFinalOutputItem(finalOutputs, LABEL_HOME_ADDRESS,
+                resolveProfileValue(profile, "homeAddress", "home_address", "familyAddress", "family_address", "\u5bb6\u5ead\u5730\u5740"),
+                profile, consumedKeys, "homeAddress", "home_address", "familyAddress", "family_address", "\u5bb6\u5ead\u5730\u5740");
+
+        appendRemainingProfileOutputs(finalOutputs, profile, consumedKeys);
         return finalOutputs;
+    }
+
+    private String resolvePrimaryOutputLabel(Map<String, Object> payload) {
+        return switch (resolveIntent(payload)) {
+            case "PROFILE_SCHEDULE" -> LABEL_SCHEDULE_NAME;
+            case "PROFILE_GENERAL" -> LABEL_INFO_NAME;
+            default -> LABEL_PROFILE_NAME;
+        };
     }
 
     private String resolveDisplayName(
@@ -311,8 +414,27 @@ public class ProfileQueryProtocolStrategy implements ProtocolStrategy {
         return firstText(data.get("summary"), payload.get("message"), displayName + TITLE_SUFFIX_PROFILE);
     }
 
-    private String buildResultText(String displayName) {
-        return TEXT_QUERY_SUCCESS.formatted(displayName);
+    private String buildResultText(String displayName, Map<String, Object> payload) {
+        return switch (resolveIntent(payload)) {
+            case "PROFILE_SCHEDULE" -> TEXT_QUERY_SUCCESS_SCHEDULE.formatted(displayName);
+            case "PROFILE_GENERAL" -> TEXT_QUERY_SUCCESS_GENERAL.formatted(displayName);
+            default -> TEXT_QUERY_SUCCESS.formatted(displayName);
+        };
+    }
+
+    private String resolveTitleSuffix(Map<String, Object> payload) {
+        return switch (resolveIntent(payload)) {
+            case "PROFILE_SCHEDULE" -> TITLE_SUFFIX_SCHEDULE;
+            case "PROFILE_GENERAL" -> TITLE_SUFFIX_GENERAL;
+            default -> TITLE_SUFFIX_PROFILE;
+        };
+    }
+
+    private String resolveIntent(Map<String, Object> payload) {
+        return Optional.ofNullable(payload)
+                .map(currentPayload -> asText(currentPayload.get("intent")))
+                .filter(StringUtils::hasText)
+                .orElse("PROFILE_ARCHIVE");
     }
 
     private String formatAge(String age) {
@@ -452,6 +574,113 @@ public class ProfileQueryProtocolStrategy implements ProtocolStrategy {
         return sections;
     }
 
+    private List<Map<String, Object>> buildDisplayRecords(List<Map<String, Object>> records) {
+        if (records == null || records.isEmpty()) {
+            return List.of();
+        }
+        List<Map<String, Object>> displayRecords = new ArrayList<>();
+        for (int index = 0; index < records.size(); index++) {
+            Map<String, Object> displayRecord = new LinkedHashMap<>();
+            for (Map.Entry<String, Object> entry : records.get(index).entrySet()) {
+                if (StringUtils.hasText(entry.getKey()) && StringUtils.hasText(asText(entry.getValue()))) {
+                    displayRecord.put(entry.getKey(), entry.getValue());
+                }
+            }
+            displayRecords.add(displayRecord);
+        }
+        return displayRecords;
+    }
+
+    private Map<String, Object> buildScheduleListFinalOutputs(
+            String displayName,
+            List<Map<String, Object>> records) {
+        Map<String, Object> finalOutputs = new LinkedHashMap<>();
+        finalOutputs.put(LABEL_SCHEDULE_NAME, displayName + TITLE_SUFFIX_SCHEDULE);
+        putText(finalOutputs, LABEL_NAME, displayName);
+        putText(finalOutputs, LABEL_SCHEDULE_COUNT, String.valueOf(records.size()));
+        putText(finalOutputs, LABEL_EARLIEST_START_TIME, minRecordValue(records,
+                "startTime", "start_time", "startDate", "start_date", "\u5f00\u59cb\u65f6\u95f4", "\u5f00\u59cb\u65e5\u671f"));
+        putText(finalOutputs, LABEL_LATEST_END_TIME, maxRecordValue(records,
+                "endTime", "end_time", "endDate", "end_date", "\u7ed3\u675f\u65f6\u95f4", "\u7ed3\u675f\u65e5\u671f"));
+        putText(finalOutputs, LABEL_RECENT_SCHEDULE, firstRecordValue(records,
+                "\u5de5\u4f5c\u5b89\u6392\u4e3b\u9898", "schedule", "agenda", "event", "eventName", "event_name", "\u4e8b\u9879", "\u65e5\u7a0b", "\u884c\u7a0b"));
+        return finalOutputs;
+    }
+
+    private List<Map<String, Object>> buildScheduleListHighlights(
+            String displayName,
+            List<Map<String, Object>> records) {
+        List<Map<String, Object>> highlights = new ArrayList<>();
+        highlights.add(buildFieldItem(LABEL_NAME, displayName));
+        highlights.add(buildFieldItem(LABEL_SCHEDULE_COUNT, String.valueOf(records.size())));
+
+        String earliestStartTime = minRecordValue(records,
+                "startTime", "start_time", "startDate", "start_date", "\u5f00\u59cb\u65f6\u95f4", "\u5f00\u59cb\u65e5\u671f");
+        if (StringUtils.hasText(earliestStartTime)) {
+            highlights.add(buildFieldItem(LABEL_EARLIEST_START_TIME, earliestStartTime));
+        }
+
+        String recentSchedule = firstRecordValue(records,
+                "\u5de5\u4f5c\u5b89\u6392\u4e3b\u9898", "schedule", "agenda", "event", "eventName", "event_name", "\u4e8b\u9879", "\u65e5\u7a0b", "\u884c\u7a0b");
+        if (StringUtils.hasText(recentSchedule)) {
+            highlights.add(buildFieldItem(LABEL_RECENT_SCHEDULE, recentSchedule));
+        }
+        return highlights;
+    }
+
+    private List<Map<String, Object>> buildScheduleListSections(List<Map<String, Object>> records) {
+        List<Map<String, Object>> sections = new ArrayList<>();
+        for (int index = 0; index < records.size(); index++) {
+            List<Map<String, Object>> items = new ArrayList<>();
+            for (Map.Entry<String, Object> entry : records.get(index).entrySet()) {
+                String value = asText(entry.getValue());
+                if (StringUtils.hasText(entry.getKey()) && StringUtils.hasText(value)) {
+                    items.add(buildFieldItem(entry.getKey(), value));
+                }
+            }
+            sections.add(buildSection(
+                    "schedule_" + (index + 1),
+                    "\u7b2c" + (index + 1) + "\u6761\u65e5\u7a0b",
+                    items));
+        }
+        return sections;
+    }
+
+    private Map<String, Object> buildScheduleListProfile(
+            String displayName,
+            List<Map<String, Object>> records) {
+        return new LinkedHashMap<>(buildScheduleListFinalOutputs(displayName, records));
+    }
+
+    private String firstRecordValue(List<Map<String, Object>> records, String... aliases) {
+        if (records == null || records.isEmpty()) {
+            return null;
+        }
+        for (Map<String, Object> record : records) {
+            String value = resolveProfileValue(record, aliases);
+            if (StringUtils.hasText(value)) {
+                return value;
+            }
+        }
+        return null;
+    }
+
+    private String minRecordValue(List<Map<String, Object>> records, String... aliases) {
+        return records == null ? null : records.stream()
+                .map(record -> resolveProfileValue(record, aliases))
+                .filter(StringUtils::hasText)
+                .min(String::compareTo)
+                .orElse(null);
+    }
+
+    private String maxRecordValue(List<Map<String, Object>> records, String... aliases) {
+        return records == null ? null : records.stream()
+                .map(record -> resolveProfileValue(record, aliases))
+                .filter(StringUtils::hasText)
+                .max(String::compareTo)
+                .orElse(null);
+    }
+
     private void addResolvedItem(
             List<Map<String, Object>> items,
             String label,
@@ -464,6 +693,41 @@ public class ProfileQueryProtocolStrategy implements ProtocolStrategy {
         }
         items.add(buildFieldItem(label, value));
         findMatchedKey(profile, aliases).ifPresent(key -> consumedKeys.add(normalizeKey(key)));
+    }
+
+    private void addFinalOutputItem(
+            Map<String, Object> finalOutputs,
+            String label,
+            String value,
+            Map<String, Object> profile,
+            Set<String> consumedKeys,
+            String... aliases) {
+        if (!StringUtils.hasText(label) || !StringUtils.hasText(value)) {
+            return;
+        }
+        finalOutputs.put(label, value);
+        findMatchedKey(profile, aliases).ifPresent(key -> consumedKeys.add(normalizeKey(key)));
+    }
+
+    private void appendRemainingProfileOutputs(
+            Map<String, Object> finalOutputs,
+            Map<String, Object> profile,
+            Set<String> consumedKeys) {
+        if (profile == null || profile.isEmpty()) {
+            return;
+        }
+        for (Map.Entry<String, Object> entry : profile.entrySet()) {
+            String normalizedKey = normalizeKey(entry.getKey());
+            String value = asText(entry.getValue());
+            if (!StringUtils.hasText(entry.getKey())
+                    || !StringUtils.hasText(value)
+                    || consumedKeys.contains(normalizedKey)
+                    || "genderlabel".equals(normalizedKey)
+                    || "gendercode".equals(normalizedKey)) {
+                continue;
+            }
+            finalOutputs.putIfAbsent(entry.getKey(), value);
+        }
     }
 
     private void addSectionIfPresent(

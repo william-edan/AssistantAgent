@@ -37,11 +37,11 @@ import java.util.Map;
 import java.util.Optional;
 
 /**
- * 个人档案查询工具。
+ * 个人信息查询工具。
  *
  * <p>该工具是 AssistantAgent 接入 DataAgent 的核心 Tool。
- * Hook 在命中后会直接构造本工具的调用，从而跳过模型生成。
- * 工具内部再进行一次意图校验，避免被误调用。</p>
+ * Hook 在命中后会直接构造本工具调用，从而跳过大模型生成。
+ * 工具内部会再次识别子类型，并按档案、日程或通用个人信息查询路由到 HTTP 服务。</p>
  */
 @Component
 @Profile("migration")
@@ -63,7 +63,7 @@ public class ProfileQueryTool extends AbstractDynamicCodeactTool {
     }
 
     /**
-     * 执行个人档案查询。
+     * 执行个人信息查询。
      *
      * @param args 工具参数
      * @param toolContext 工具上下文
@@ -78,16 +78,21 @@ public class ProfileQueryTool extends AbstractDynamicCodeactTool {
                 .orElseGet(() -> Optional.ofNullable(args.get("query"))
                         .map(String::valueOf)
                         .orElse(""));
+
         IntentRecognizer.RecognitionResult recognitionResult = intentRecognizer.recognize(userInput);
         if (!recognitionResult.matched()) {
             return objectMapper.writeValueAsString(Map.of(
                     "success", false,
                     "matched", false,
-                    "message", "当前输入不属于个人档案查询意图"));
+                    "message", "\u5f53\u524d\u8f93\u5165\u4e0d\u5c5e\u4e8e\u4e2a\u4eba\u4fe1\u606f\u67e5\u8be2\u610f\u56fe"));
         }
+
         try {
-            ProfileDTO profileDTO = profileHttpService.queryProfile(recognitionResult.name()).blockOptional()
-                    .orElseThrow(() -> new IllegalStateException("未查询到个人档案结果"));
+            ProfileDTO profileDTO = profileHttpService
+                    .queryProfile(recognitionResult.name(), recognitionResult.intentType())
+                    .blockOptional()
+                    .orElseThrow(() -> new IllegalStateException("\u672a\u67e5\u8be2\u5230\u4e2a\u4eba\u4fe1\u606f\u7ed3\u679c"));
+
             return objectMapper.writeValueAsString(Map.of(
                     "success", true,
                     "matched", true,
@@ -101,8 +106,9 @@ public class ProfileQueryTool extends AbstractDynamicCodeactTool {
             return objectMapper.writeValueAsString(Map.of(
                     "success", false,
                     "matched", true,
+                    "intent", recognitionResult.intentType().name(),
                     "name", recognitionResult.name(),
-                    "message", "个人档案查询失败: " + exception.getMessage()));
+                    "message", "\u4e2a\u4eba\u4fe1\u606f\u67e5\u8be2\u5931\u8d25: " + exception.getMessage()));
         }
     }
 
@@ -114,14 +120,14 @@ public class ProfileQueryTool extends AbstractDynamicCodeactTool {
     private static ToolDefinition buildToolDefinition() {
         return DefaultToolDefinition.builder()
                 .name(TOOL_NAME)
-                .description("查询指定人员个人档案的工具，命中后直接调用本地 DataAgent 流式搜索接口")
+                .description("\u67e5\u8be2\u6307\u5b9a\u4eba\u5458\u4e2a\u4eba\u6863\u6848\u3001\u65e5\u7a0b\u6216\u901a\u7528\u4e2a\u4eba\u4fe1\u606f\u7684\u5de5\u5177\uff0c\u547d\u4e2d\u540e\u76f4\u63a5\u8c03\u7528\u672c\u5730 DataAgent \u6d41\u5f0f\u641c\u7d22\u63a5\u53e3")
                 .inputSchema("""
                         {
                           "type": "object",
                           "properties": {
                             "userInput": {
                               "type": "string",
-                              "description": "用户原始输入，例如：张三的个人档案"
+                              "description": "用户原始输入，例如：张三的个人档案、张三的日程"
                             }
                           },
                           "required": ["userInput"]
@@ -139,11 +145,11 @@ public class ProfileQueryTool extends AbstractDynamicCodeactTool {
         return DefaultCodeactToolMetadata.builder()
                 .addSupportedLanguage(Language.PYTHON)
                 .targetClassName("profile_tools")
-                .targetClassDescription("个人档案查询工具集合")
+                .targetClassDescription("\u4e2a\u4eba\u4fe1\u606f\u67e5\u8be2\u5de5\u5177\u96c6\u5408")
                 .fewShots(List.of(new CodeExample(
-                        "query profile",
+                        "query personal info",
                         "result = profile_query(userInput='张三的个人档案')",
-                        "返回张三的个人档案摘要")))
+                        "\u8fd4\u56de\u5f20\u4e09\u7684\u4e2a\u4eba\u4fe1\u606f\u6458\u8981")))
                 .displayName("profile_query")
                 .returnDirect(true)
                 .alwaysAvailable(true)
