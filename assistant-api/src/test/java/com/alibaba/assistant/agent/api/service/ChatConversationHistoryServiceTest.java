@@ -312,5 +312,73 @@ class ChatConversationHistoryServiceTest {
         assertThat(snapshot).containsEntry("pendingCardType", "TASK_CARD");
         assertThat(snapshot).containsEntry("lastMessage", "已完成 2/3 批 (65%)");
     }
+    @Test
+    void shouldKeepTerminalReadOnlyFormCardAsCompletedSnapshot() throws Exception {
+        ChatThreadRecord threadRecord = new ChatThreadRecord();
+        threadRecord.setThreadId("thread-profile");
+        threadRecord.setAssistantUid("1001");
+        threadRecord.setStatus("COMPLETED");
+        threadRecord.setPhase("DONE");
+        threadRecord.setUnfinished(false);
+        threadRecord.setCanResume(false);
+        threadRecord.setToolCode("profile_query");
+        threadRecord.setPendingCardType("FORM_CARD");
+        threadRecord.setLastMessagePreview("employeeName: zhangsan");
+        threadRecord.setUpdatedAt(LocalDateTime.parse("2026-03-31T12:05:00"));
+
+        ChatMessageRecord messageRecord = new ChatMessageRecord();
+        messageRecord.setMessageId("msg-profile");
+        messageRecord.setThreadId("thread-profile");
+        messageRecord.setAssistantUid("1001");
+        messageRecord.setTurnId("turn-profile");
+        messageRecord.setMessageType("FORM_CARD");
+        messageRecord.setEventType("FORM_STATE");
+        messageRecord.setStage("DONE");
+        messageRecord.setStatus("COMPLETED");
+        messageRecord.setTitle("profile details loaded");
+        messageRecord.setSummaryText("employeeName: zhangsan");
+        messageRecord.setPayloadJson(new ObjectMapper().writeValueAsString(Map.of(
+                "protocolVersion", "2026-03-13",
+                "eventId", "evt-profile",
+                "threadId", "thread-profile",
+                "timestamp", "2026-03-31T12:05:05Z",
+                "eventType", "FORM_STATE",
+                "stage", "DONE",
+                "payload", Map.of(
+                        "mode", "DISPLAY",
+                        "status", "COMPLETED",
+                        "phase", "DONE",
+                        "readOnly", true,
+                        "toolCode", "profile_query",
+                        "values", Map.of("employeeName", "zhangsan"),
+                        "fields", List.of(Map.of("name", "employeeName", "title", "employeeName")),
+                        "summary", Map.of("summaryItems", List.of(Map.of("label", "employeeName", "value", "zhangsan"))),
+                        "canSubmit", false))));
+        messageRecord.setCollapsed(false);
+        messageRecord.setRevisionNo(1);
+
+        when(chatThreadRecordService.findByThreadId("thread-profile")).thenReturn(Optional.of(threadRecord));
+        when(chatMessageRecordService.listByThreadId("thread-profile", "1001", 100)).thenReturn(List.of(messageRecord));
+        when(chatMessageRecordService.listByThreadId("thread-profile", "1001", 200)).thenReturn(List.of(messageRecord));
+        when(agentTaskService.countActiveByAssistantUidAndThreadId("1001", "thread-profile")).thenReturn(0);
+        when(userInboxNotificationService.countUnreadByAssistantUidAndThreadId("1001", "thread-profile")).thenReturn(0);
+
+        ChatMessageData message = chatConversationHistoryService.listMessages("1001", "thread-profile", 100)
+                .messages()
+                .get(0);
+        assertThat(message.stage()).isEqualTo("DONE");
+        assertThat(message.status()).isEqualTo("COMPLETED");
+        assertThat(message.payload()).containsEntry("mode", "DISPLAY");
+        assertThat(message.payload()).containsEntry("readOnly", true);
+
+        Map<String, Object> snapshot = chatConversationHistoryService.findThreadStateSnapshot("1001", "thread-profile")
+                .orElseThrow();
+        assertThat(snapshot).containsEntry("status", "COMPLETED");
+        assertThat(snapshot).containsEntry("phase", "DONE");
+        assertThat(snapshot).containsEntry("pendingCardType", "FORM_CARD");
+        assertThat(snapshot).containsEntry("canResume", false);
+        assertThat(((Map<String, Object>) snapshot.get("pendingForm"))).containsEntry("mode", "DISPLAY");
+        assertThat(((Map<String, Object>) snapshot.get("pendingForm"))).containsEntry("readOnly", true);
+    }
 }
 

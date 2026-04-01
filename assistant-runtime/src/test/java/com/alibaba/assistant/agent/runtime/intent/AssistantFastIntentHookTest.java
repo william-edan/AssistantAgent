@@ -320,6 +320,35 @@ class AssistantFastIntentHookTest {
     }
 
     @Test
+    void shouldNotOverrideFreshToolJumpPreparedByEarlierHook() {
+        AssistantIntentRouter router = mock(AssistantIntentRouter.class);
+        when(router.route(any(), any(), any())).thenReturn(AssistantIntentRouter.IntentResult.mainFlow());
+
+        AssistantFastIntentHook hook = new AssistantFastIntentHook(router, new ObjectMapper());
+        OverAllState state = new OverAllState();
+        state.updateState(Map.of(
+                AssistantStateKeys.CURRENT_TURN_USER_INPUT, "查询张三的档案",
+                AssistantStateKeys.LAST_COLLECT_USER_INPUT, "我要请假",
+                AssistantStateKeys.CONVERSATION_PHASE, "COLLECTING",
+                AssistantStateKeys.MATCHED_TOOL_META, Map.of("toolCode", "gougu_oa.leave_application"),
+                CodeactStateKeys.AVAILABLE_TOOL_NAMES, List.of("slot_collect", "slot_confirm", "profile_query"),
+                "jump_to", JumpTo.tool,
+                "messages", List.of(AssistantMessage.builder()
+                        .content("")
+                        .toolCalls(List.of(new AssistantMessage.ToolCall(
+                                "profile-fast-1",
+                                "function",
+                                "profile_query",
+                                "{\"userInput\":\"查询张三的档案\"}")))
+                        .build())));
+
+        Map<String, Object> updates = hook.beforeAgent(state, RunnableConfig.builder().build()).join();
+
+        assertTrue(updates.isEmpty());
+        verify(router, never()).route(any(), any(), any());
+    }
+
+    @Test
     void shouldNotPreRouteForQueryIntent() {
         AssistantIntentRouter router = mock(AssistantIntentRouter.class);
         when(router.route(any(), any(), any())).thenReturn(AssistantIntentRouter.IntentResult.mainFlow());

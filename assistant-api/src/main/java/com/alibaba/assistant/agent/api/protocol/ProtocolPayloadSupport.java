@@ -172,6 +172,26 @@ public class ProtocolPayloadSupport {
         return snapshot;
     }
 
+    public Map<String, Object> projectTerminalFormState(Map<String, Object> payload, Map<String, Object> state) {
+        Map<String, Object> normalizedForm = FrontendFormStateSupport.normalizePayload(
+                payload,
+                asText(payload != null ? payload.get("phase") : null),
+                asText(payload != null ? payload.get("status") : null));
+        FrontendStage stage = FrontendFormStateSupport.normalizedStage(
+                normalizedForm,
+                asText(normalizedForm.get("phase")),
+                asText(normalizedForm.get("status")));
+        String status = FrontendFormStateSupport.normalizedStatus(
+                normalizedForm,
+                stage.name(),
+                asText(normalizedForm.get("status")));
+        Map<String, Object> snapshot = baseSnapshot(status, stage, false, false, state);
+        snapshot.put("toolCode", resolveToolCode(normalizedForm, state));
+        snapshot.put("pendingCardType", "FORM_CARD");
+        snapshot.put("pendingForm", normalizedForm);
+        return snapshot;
+    }
+
     public Map<String, Object> projectResultState(Map<String, Object> payload, Map<String, Object> state) {
         if (isWaitingApprovalPayload(payload)) {
             Map<String, Object> task = FrontendTaskStateSupport.normalizePayload(buildRunningTaskPayload(payload, state));

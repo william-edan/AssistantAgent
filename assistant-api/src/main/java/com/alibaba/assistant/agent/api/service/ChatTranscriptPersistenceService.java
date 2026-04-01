@@ -440,14 +440,19 @@ public class ChatTranscriptPersistenceService {
     }
 
     private void applyFormState(ChatThreadRecord threadRecord, FrontendEvent event) {
-        boolean confirmationForm = FrontendFormStateSupport.isConfirmationForm(
+        String normalizedPhase = FrontendFormStateSupport.normalizedPhase(
                 event.payload(),
                 event.stage() != null ? event.stage().name() : null,
                 textValue(event.payload().get("status")));
-        threadRecord.setPhase(confirmationForm ? FrontendStage.CONFIRMING.name() : FrontendStage.COLLECTING.name());
-        threadRecord.setStatus(confirmationForm ? "WAITING_CONFIRMATION" : "WAITING_INPUT");
-        threadRecord.setUnfinished(Boolean.TRUE);
-        threadRecord.setCanResume(Boolean.TRUE);
+        String normalizedStatus = FrontendFormStateSupport.normalizedStatus(
+                event.payload(),
+                event.stage() != null ? event.stage().name() : null,
+                textValue(event.payload().get("status")));
+        boolean unfinished = !ChatThreadActionSupport.isTerminalStatus(normalizedStatus);
+        threadRecord.setPhase(normalizedPhase);
+        threadRecord.setStatus(normalizedStatus);
+        threadRecord.setUnfinished(unfinished);
+        threadRecord.setCanResume(ChatThreadActionSupport.canResume(normalizedStatus, normalizedPhase, unfinished));
         threadRecord.setToolCode(firstText(event.payload().get("toolCode"), threadRecord.getToolCode()));
         threadRecord.setPendingCardType("FORM_CARD");
     }

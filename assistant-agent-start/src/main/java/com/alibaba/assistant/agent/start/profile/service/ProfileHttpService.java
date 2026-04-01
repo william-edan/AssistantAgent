@@ -20,6 +20,7 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.http.HttpStatusCode;
@@ -33,8 +34,11 @@ import reactor.core.publisher.Mono;
 import reactor.util.retry.Retry;
 
 import java.time.Duration;
+import java.time.format.DateTimeParseException;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -58,7 +62,7 @@ public class ProfileHttpService {
     /**
      * 限制流空闲超时，不限制整条流总时长。
      */
-    private static final Duration STREAM_IDLE_TIMEOUT = Duration.ofSeconds(5);
+    private static final Duration DEFAULT_STREAM_IDLE_TIMEOUT = Duration.ofSeconds(30);
 
     /**
      * DataAgent 终止性失败关键词。
@@ -79,15 +83,24 @@ public class ProfileHttpService {
 
     private final String agentId;
 
+    private final Duration streamIdleTimeout;
+
     private final ObjectMapper objectMapper = new ObjectMapper();
 
+    @Autowired
     public ProfileHttpService(
             WebClient profileWebClient,
             @Value("${assistant.profile.data-agent.search-path:/api/stream/search}") String searchPath,
-            @Value("${assistant.profile.data-agent.agent-id:5}") String agentId) {
+            @Value("${assistant.profile.data-agent.agent-id:5}") String agentId,
+            @Value("${assistant.profile.data-agent.stream-idle-timeout:PT30S}") String streamIdleTimeout) {
         this.profileWebClient = profileWebClient;
         this.searchPath = searchPath;
         this.agentId = agentId;
+        this.streamIdleTimeout = parseStreamIdleTimeout(streamIdleTimeout);
+    }
+
+    ProfileHttpService(WebClient profileWebClient, String searchPath, String agentId) {
+        this(profileWebClient, searchPath, agentId, DEFAULT_STREAM_IDLE_TIMEOUT.toString());
     }
 
     /**
@@ -98,7 +111,7 @@ public class ProfileHttpService {
      */
     public Mono<ProfileDTO> queryProfile(String name) {
         return requestStream(name)
-                .timeout(STREAM_IDLE_TIMEOUT)
+                .timeout(streamIdleTimeout)
                 .<DataAgentStreamEvent>handle((event, sink) -> {
                     if (event.error()) {
                         sink.error(new IllegalStateException(resolveErrorMessage(event)));
@@ -252,10 +265,110 @@ public class ProfileHttpService {
      * @return 人类可读的摘要文本
      */
     private String buildRowSummary(Map<String, Object> row) {
+        List<String> summaryParts = new ArrayList<>();
+        addIfHasText(summaryParts, resolveRowValue(row, "name", "employeeName", "employee_name", "姓名", "员工姓名"));
+        addIfHasText(summaryParts, resolveRowValue(row, "gender", "sex", "性别", "员工性别"));
+        Optional.ofNullable(resolveRowValue(row, "age", "年龄"))
+                .filter(StringUtils::hasText)
+                .map(age -> age.endsWith("岁") ? age : age + "岁")
+                .ifPresent(summaryParts::add);
+        addIfHasText(summaryParts, resolveRowValue(row,
+                "position",
+                "positionName",
+                "position_name",
+                "job",
+                "title",
+                "职位",
+                "职务",
+                "岗位"));
+        addIfHasText(summaryParts, resolveRowValue(row, "city", "currentAddress", "current_address", "现居地址", "城市"));
+        if (!summaryParts.isEmpty()) {
+            return String.join("，", summaryParts);
+        }
         return row.entrySet().stream()
                 .filter(entry -> StringUtils.hasText(asText(entry.getValue())))
                 .map(entry -> entry.getKey() + "：" + asText(entry.getValue()))
                 .collect(Collectors.joining("，"));
+    }
+
+    /**
+     * 根据别名解析结果行中的目标字段值。
+     *
+     * @param row 查询结果行
+     * @param aliases 目标字段别名
+     * @return 命中的字段值
+     */
+    private String resolveRowValue(Map<String, Object> row, String... aliases) {
+        if (row == null || row.isEmpty() || aliases == null || aliases.length == 0) {
+            return null;
+        }
+        for (Map.Entry<String, Object> entry : row.entrySet()) {
+            String normalizedKey = normalizeKey(entry.getKey());
+            for (String alias : aliases) {
+                if (normalizeKey(alias).equals(normalizedKey)) {
+                    String value = asText(entry.getValue());
+                    return isGenderAlias(alias) ? normalizeGenderValue(value) : value;
+                }
+            }
+        }
+        return null;
+    }
+
+    /**
+     * 判断当前别名是否表示性别字段。
+     *
+     * @param alias 字段别名
+     * @return 是否为性别字段
+     */
+    private boolean isGenderAlias(String alias) {
+        String normalizedAlias = normalizeKey(alias);
+        return "gender".equals(normalizedAlias)
+                || "sex".equals(normalizedAlias)
+                || "\u6027\u522b".equals(alias)
+                || "\u5458\u5de5\u6027\u522b".equals(alias);
+    }
+
+    /**
+     * 将性别编码转换成前端友好的展示值。
+     *
+     * @param rawGender 原始性别值
+     * @return 归一化后的展示值
+     */
+    private String normalizeGenderValue(String rawGender) {
+        if (!StringUtils.hasText(rawGender)) {
+            return rawGender;
+        }
+        String normalized = rawGender.trim().toLowerCase(Locale.ROOT);
+        return switch (normalized) {
+            case "1", "m", "male", "man", "\u7537" -> "\u7537";
+            case "0", "2", "f", "female", "woman", "\u5973" -> "\u5973";
+            default -> rawGender.trim();
+        };
+    }
+
+    /**
+     * 统一字段名格式，便于兼容不同命名风格的结果列。
+     *
+     * @param key 原始字段名
+     * @return 归一化后的字段名
+     */
+    private String normalizeKey(String key) {
+        if (!StringUtils.hasText(key)) {
+            return "";
+        }
+        return key.replaceAll("[\\s_\\-]", "").toLowerCase(Locale.ROOT);
+    }
+
+    /**
+     * 仅在文本非空时追加到摘要片段中。
+     *
+     * @param parts 摘要片段集合
+     * @param value 文本值
+     */
+    private void addIfHasText(List<String> parts, String value) {
+        if (StringUtils.hasText(value)) {
+            parts.add(value);
+        }
     }
 
     /**
@@ -393,6 +506,27 @@ public class ProfileHttpService {
             return new LinkedHashMap<>((Map<String, Object>) map);
         }
         return Map.of();
+    }
+
+    private Duration parseStreamIdleTimeout(String configuredTimeout) {
+        if (!StringUtils.hasText(configuredTimeout)) {
+            return DEFAULT_STREAM_IDLE_TIMEOUT;
+        }
+        try {
+            Duration parsedTimeout = Duration.parse(configuredTimeout.trim());
+            if (parsedTimeout.isZero() || parsedTimeout.isNegative()) {
+                return DEFAULT_STREAM_IDLE_TIMEOUT;
+            }
+            return parsedTimeout;
+        }
+        catch (DateTimeParseException exception) {
+            logger.warn(
+                    "ProfileHttpService#parseStreamIdleTimeout - invalid value={}, fallback={}",
+                    configuredTimeout,
+                    DEFAULT_STREAM_IDLE_TIMEOUT,
+                    exception);
+            return DEFAULT_STREAM_IDLE_TIMEOUT;
+        }
     }
 
     /**

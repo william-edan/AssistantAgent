@@ -1201,19 +1201,23 @@ public class ChatController {
 		}
 	}
 
-	private boolean shouldReplayPendingForm(
-			@Nullable ChatThreadStateData threadState,
-			@Nullable UserMessageDTO newMessage,
-			@Nullable Map<String, Object> stateDelta) {
-		if (threadState == null
-				|| !"FORM_CARD".equalsIgnoreCase(threadState.pendingCardType())
-				|| threadState.pendingForm() == null
-				|| threadState.pendingForm().isEmpty()) {
-			return false;
-		}
-		if (hasExplicitRunReplayInput(stateDelta)) {
-			return false;
-		}
+    private boolean shouldReplayPendingForm(
+            @Nullable ChatThreadStateData threadState,
+            @Nullable UserMessageDTO newMessage,
+            @Nullable Map<String, Object> stateDelta) {
+        if (threadState == null
+                || !threadState.unfinished()
+                || !"FORM_CARD".equalsIgnoreCase(threadState.pendingCardType())
+                || threadState.pendingForm() == null
+                || threadState.pendingForm().isEmpty()) {
+            return false;
+        }
+        if (Boolean.TRUE.equals(threadState.pendingForm().get("readOnly"))) {
+            return false;
+        }
+        if (hasExplicitRunReplayInput(stateDelta)) {
+            return false;
+        }
 		String incomingText = newMessage != null ? asText(newMessage.getContent()) : null;
 		if (!StringUtils.hasText(incomingText)) {
 			return true;

@@ -207,6 +207,31 @@ class V3ProtocolAdapterTest {
     }
 
     @Test
+    void shouldPreserveTerminalReadOnlyFormStateAsDisplayCard() {
+        V3ProtocolAdapter adapter = new V3ProtocolAdapter(new ObjectMapper());
+
+        FrontendEvent event = adapter.formStateEvent(
+                "thread-display-form",
+                Map.of(
+                        "mode", "DISPLAY",
+                        "status", "COMPLETED",
+                        "phase", "DONE",
+                        "readOnly", true,
+                        "toolCode", "profile_query",
+                        "message", "profile details loaded",
+                        "values", Map.of("employeeName", "zhangsan"),
+                        "fields", List.of(Map.of("name", "employeeName", "title", "employeeName"))));
+
+        assertEquals(FrontendEventType.FORM_STATE, event.eventType());
+        assertEquals(FrontendStage.DONE, event.stage());
+        assertEquals("DISPLAY", event.payload().get("mode"));
+        assertEquals("COMPLETED", event.payload().get("status"));
+        assertEquals("DONE", event.payload().get("phase"));
+        assertEquals(Boolean.TRUE, event.payload().get("readOnly"));
+        assertEquals(Boolean.FALSE, event.payload().get("canSubmit"));
+    }
+
+    @Test
     void shouldResolveFormToolCodeFromMatchedToolMetaSnapshot() {
         V3ProtocolAdapter adapter = new V3ProtocolAdapter(new ObjectMapper());
         ToolMetaSnapshot snapshot = new ToolMetaSnapshot();

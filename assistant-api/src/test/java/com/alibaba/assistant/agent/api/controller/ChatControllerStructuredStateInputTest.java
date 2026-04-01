@@ -53,6 +53,9 @@ import static org.mockito.Mockito.when;
 
 class ChatControllerStructuredStateInputTest {
 
+    private static final String FORM_PROMPT =
+            "Please provide the leave time range, reason, and whether approvers should be notified.";
+
     private final AgentLoader agentLoader = mock(AgentLoader.class);
 
     private final Agent agent = mock(Agent.class);
@@ -88,10 +91,10 @@ class ChatControllerStructuredStateInputTest {
         AgentRunRequest request = new AgentRunRequest();
         request.threadId = "thread-structured-run";
         request.userId = "ignored-user";
-        request.newMessage = new UserMessageDTO("补充汇报内容");
+        request.newMessage = new UserMessageDTO("supplement weekly report");
         request.stateDelta = new LinkedHashMap<>();
-        request.stateDelta.put("works", "本周完成多轮汇报主链修复");
-        request.stateDelta.put("plans", "下周补全真实联调");
+        request.stateDelta.put("works", "fixed report pipeline");
+        request.stateDelta.put("plans", "finish integration tests next week");
         request.stateDelta.put("send", 0);
         request.stateDelta.put(AssistantStateKeys.ROLE_PACKAGE_CODE, "digital-admin");
         request.stateDelta.put(AssistantStateKeys.ROLE_PACKAGE_VERSION, "v1");
@@ -101,9 +104,9 @@ class ChatControllerStructuredStateInputTest {
         ArgumentCaptor<Map<String, Object>> inputCaptor = ArgumentCaptor.forClass(Map.class);
         verify(agent).stream(inputCaptor.capture(), any(RunnableConfig.class));
         Map<String, Object> agentInput = inputCaptor.getValue();
-        assertEquals("补充汇报内容", agentInput.get("input"));
-        assertEquals("本周完成多轮汇报主链修复", agentInput.get("works"));
-        assertEquals("下周补全真实联调", agentInput.get("plans"));
+        assertEquals("supplement weekly report", agentInput.get("input"));
+        assertEquals("fixed report pipeline", agentInput.get("works"));
+        assertEquals("finish integration tests next week", agentInput.get("plans"));
         assertEquals(0, agentInput.get("send"));
         assertEquals("1001", agentInput.get(AssistantStateKeys.ASSISTANT_UID));
         assertEquals("gougu_oa", agentInput.get(AssistantStateKeys.SYSTEM_CODE));
@@ -113,6 +116,7 @@ class ChatControllerStructuredStateInputTest {
         assertTrue(agentInput.containsKey(AssistantStateKeys.CURRENT_TURN_SLOT_INPUTS));
         assertInstanceOf(List.class, agentInput.get("messages"));
     }
+
     @Test
     void shouldExposeCurrentTurnUserInputInsideAgentInputDuringRunSse() throws Exception {
         authenticate();
@@ -124,7 +128,7 @@ class ChatControllerStructuredStateInputTest {
         AgentRunRequest request = new AgentRunRequest();
         request.threadId = "thread-current-turn-input-run";
         request.userId = "ignored-user";
-        request.newMessage = new UserMessageDTO("明天");
+        request.newMessage = new UserMessageDTO("tomorrow");
         request.stateDelta = new LinkedHashMap<>();
         request.stateDelta.put(AssistantStateKeys.ROLE_PACKAGE_CODE, "digital-admin");
         request.stateDelta.put(AssistantStateKeys.ROLE_PACKAGE_VERSION, "v1");
@@ -134,7 +138,7 @@ class ChatControllerStructuredStateInputTest {
         ArgumentCaptor<Map<String, Object>> inputCaptor = ArgumentCaptor.forClass(Map.class);
         verify(agent).stream(inputCaptor.capture(), any(RunnableConfig.class));
         Map<String, Object> agentInput = inputCaptor.getValue();
-        assertEquals("明天", agentInput.get("current_turn_user_input"));
+        assertEquals("tomorrow", agentInput.get("current_turn_user_input"));
     }
 
     @Test
@@ -148,7 +152,7 @@ class ChatControllerStructuredStateInputTest {
         request.threadId = "thread-structured-resume";
         request.userId = "ignored-user";
         request.stateDelta = new LinkedHashMap<>();
-        request.stateDelta.put("works", "恢复后的汇报内容");
+        request.stateDelta.put("works", "resume payload");
         request.stateDelta.put("send", 1);
         request.stateDelta.put(AssistantStateKeys.ROLE_PACKAGE_CODE, "digital-admin");
         request.stateDelta.put(AssistantStateKeys.ROLE_PACKAGE_VERSION, "v1");
@@ -158,7 +162,7 @@ class ChatControllerStructuredStateInputTest {
         ArgumentCaptor<Map<String, Object>> inputCaptor = ArgumentCaptor.forClass(Map.class);
         verify(agent).stream(inputCaptor.capture(), any(RunnableConfig.class));
         Map<String, Object> agentInput = inputCaptor.getValue();
-        assertEquals("恢复后的汇报内容", agentInput.get("works"));
+        assertEquals("resume payload", agentInput.get("works"));
         assertEquals(1, agentInput.get("send"));
         assertEquals("1001", agentInput.get(AssistantStateKeys.ASSISTANT_UID));
         assertEquals("gougu_oa", agentInput.get(AssistantStateKeys.SYSTEM_CODE));
@@ -189,12 +193,13 @@ class ChatControllerStructuredStateInputTest {
         when(agent.stream(anyMap(), any(RunnableConfig.class))).thenReturn(Flux.empty());
         when(agent.stream(any(org.springframework.ai.chat.messages.UserMessage.class), any(RunnableConfig.class)))
                 .thenReturn(Flux.empty());
-        when(scenarioRouter.resolveScenario(anyMap(), eq("我要发起请假申请"))).thenReturn(Optional.of("leave-approval"));
+        when(scenarioRouter.resolveScenario(anyMap(), eq("start leave application")))
+                .thenReturn(Optional.of("leave-approval"));
 
         AgentRunRequest request = new AgentRunRequest();
         request.threadId = "thread-role-scenario";
         request.userId = "ignored-user";
-        request.newMessage = new UserMessageDTO("我要发起请假申请");
+        request.newMessage = new UserMessageDTO("start leave application");
         request.stateDelta = new LinkedHashMap<>();
         request.stateDelta.put(AssistantStateKeys.ROLE_PACKAGE_CODE, "digital-admin");
         request.stateDelta.put(AssistantStateKeys.ROLE_PACKAGE_VERSION, "v1");
@@ -207,7 +212,7 @@ class ChatControllerStructuredStateInputTest {
     }
 
     @Test
-    void shouldReplayPendingFormDuringRunSseWhenIncomingTextEchoesCurrentPrompt() throws Exception {
+    void shouldReplayPendingFormDuringRunSseWhenIncomingTextIsEmpty() throws Exception {
         authenticate();
         when(chatThreadStateService.getThreadState("thread-form-echo", "1001"))
                 .thenReturn(pendingFormThreadState("thread-form-echo"));
@@ -215,7 +220,7 @@ class ChatControllerStructuredStateInputTest {
         AgentRunRequest request = new AgentRunRequest();
         request.threadId = "thread-form-echo";
         request.userId = "ignored-user";
-        request.newMessage = new UserMessageDTO("请提供请假的起止时间、事由，以及是否需要审批人知晓。");
+        request.newMessage = new UserMessageDTO("");
         request.stateDelta = new LinkedHashMap<>();
 
         List<String> payloads = controller.runSse(request, null, null, null)
@@ -241,7 +246,7 @@ class ChatControllerStructuredStateInputTest {
         AgentRunRequest request = new AgentRunRequest();
         request.threadId = "thread-form-submit";
         request.userId = "ignored-user";
-        request.newMessage = new UserMessageDTO("请提供请假的起止时间、事由，以及是否需要审批人知晓。");
+        request.newMessage = new UserMessageDTO(FORM_PROMPT);
         request.stateDelta = new LinkedHashMap<>();
         request.stateDelta.put("types", 2);
         request.stateDelta.put(AssistantStateKeys.ROLE_PACKAGE_CODE, "digital-admin");
@@ -263,12 +268,32 @@ class ChatControllerStructuredStateInputTest {
         AgentRunRequest request = new AgentRunRequest();
         request.threadId = "thread-form-submit-nested";
         request.userId = "ignored-user";
-        request.newMessage = new UserMessageDTO("请提供请假的起止时间、事由，以及是否需要审批人知晓。");
+        request.newMessage = new UserMessageDTO(FORM_PROMPT);
         request.stateDelta = new LinkedHashMap<>();
         request.stateDelta.put(
                 AssistantStateKeys.CURRENT_TURN_SLOT_INPUTS,
-                Map.of("types", 2, "start_date", "2026-03-24", "end_date", "2026-03-24", "reason", "家中有事"));
+                Map.of("types", 2, "start_date", "2026-03-24", "end_date", "2026-03-24", "reason", "family"));
         request.stateDelta.put(AssistantStateKeys.ROLE_PACKAGE_CODE, "digital-admin");
+
+        controller.runSse(request, null, null, null).blockLast();
+
+        verify(agentLoader).loadAgent("grayscale_agent");
+        verify(agent).stream(anyMap(), any(RunnableConfig.class));
+    }
+
+    @Test
+    void shouldNotReplayTerminalReadOnlyFormDuringRunSse() throws Exception {
+        authenticate();
+        when(chatThreadStateService.getThreadState("thread-profile-done", "1001"))
+                .thenReturn(completedFormThreadState("thread-profile-done"));
+        when(agentLoader.loadAgent("grayscale_agent")).thenReturn(agent);
+        when(agent.stream(anyMap(), any(RunnableConfig.class))).thenReturn(Flux.empty());
+
+        AgentRunRequest request = new AgentRunRequest();
+        request.threadId = "thread-profile-done";
+        request.userId = "ignored-user";
+        request.newMessage = new UserMessageDTO("show me zhangsan profile again");
+        request.stateDelta = new LinkedHashMap<>();
 
         controller.runSse(request, null, null, null).blockLast();
 
@@ -292,18 +317,54 @@ class ChatControllerStructuredStateInputTest {
                 0,
                 0,
                 null,
-                "请提供请假的起止时间、事由，以及是否需要审批人知晓。",
+                FORM_PROMPT,
                 Map.of(
                         "mode", "COLLECT",
                         "status", "WAITING_INPUT",
                         "phase", "COLLECTING",
-                        "message", "请提供请假的起止时间、事由，以及是否需要审批人知晓。",
+                        "message", FORM_PROMPT,
                         "toolCode", "gougu_oa.leave_application",
                         "values", Map.of("check_uids", "4"),
-                        "fields", List.of(Map.of("name", "types", "title", "请假类型")),
+                        "fields", List.of(Map.of("name", "types", "title", "leave type")),
                         "missingFields", List.of(Map.of("name", "types")),
                         "summary", Map.of(),
                         "canSubmit", false),
+                Map.of(),
+                List.of(),
+                List.of(),
+                Map.of());
+    }
+
+    private static ChatThreadStateData completedFormThreadState(String threadId) {
+        Map<String, Object> pendingForm = new LinkedHashMap<>();
+        pendingForm.put("mode", "DISPLAY");
+        pendingForm.put("status", "COMPLETED");
+        pendingForm.put("phase", "DONE");
+        pendingForm.put("readOnly", true);
+        pendingForm.put("message", "employeeName: zhangsan");
+        pendingForm.put("toolCode", "profile_query");
+        pendingForm.put("values", Map.of("employeeName", "zhangsan"));
+        pendingForm.put("fields", List.of(Map.of("name", "employeeName", "title", "employeeName")));
+        pendingForm.put("missingFields", List.of());
+        pendingForm.put("summary", Map.of());
+        pendingForm.put("canSubmit", false);
+        return new ChatThreadStateData(
+                threadId,
+                null,
+                "COMPLETED",
+                "DONE",
+                false,
+                false,
+                "profile_query",
+                null,
+                null,
+                null,
+                "FORM_CARD",
+                0,
+                0,
+                null,
+                "employeeName: zhangsan",
+                pendingForm,
                 Map.of(),
                 List.of(),
                 List.of(),
@@ -316,7 +377,4 @@ class ChatControllerStructuredStateInputTest {
                 "token-x",
                 Collections.emptyList()));
     }
-
 }
-
-

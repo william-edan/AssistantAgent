@@ -185,6 +185,10 @@ public class AssistantFastIntentHook extends AgentHook implements Prioritized {
 	public CompletableFuture<Map<String, Object>> beforeAgent(OverAllState state, RunnableConfig config) {
 		applyStreamingOverride(config);
 		try {
+			if (hasFreshPendingToolJump(state)) {
+				logger.debug("AssistantFastIntentHook#beforeAgent - skip because a prior hook already prepared a tool jump");
+				return CompletableFuture.completedFuture(Map.of());
+			}
 			String input = state != null
 					? firstNonBlank(
 							state.value(AssistantStateKeys.CURRENT_TURN_USER_INPUT, String.class).orElse(null),
@@ -315,6 +319,21 @@ public class AssistantFastIntentHook extends AgentHook implements Prioritized {
 		}
 		String text = asText(jumpToRaw);
 		return StringUtils.hasText(text) && "tool".equalsIgnoreCase(text);
+	}
+
+	private boolean hasFreshPendingToolJump(OverAllState state) {
+		if (!hasStaleToolJump(state)) {
+			return false;
+		}
+		List<Message> messages = resolveMessages(state);
+		if (messages == null || messages.isEmpty()) {
+			return false;
+		}
+		Message lastMessage = messages.get(messages.size() - 1);
+		if (!(lastMessage instanceof AssistantMessage assistantMessage)) {
+			return false;
+		}
+		return assistantMessage.hasToolCalls();
 	}
 
 	private Map<String, Object> tryBuildConfirmationExecutionUpdates(OverAllState state, String input) {

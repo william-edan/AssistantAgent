@@ -203,17 +203,23 @@ public class ChatConversationHistoryService {
                         latestFormCard.getStage(),
                         latestFormCard.getStatus())
                 : Map.of();
-        if (!latestFormPayload.isEmpty() && (!StringUtils.hasText(status) || unfinished)) {
-            status = FrontendFormStateSupport.normalizedStatus(
+        if (!latestFormPayload.isEmpty()
+                && (!StringUtils.hasText(status)
+                || unfinished
+                || "FORM_CARD".equalsIgnoreCase(pendingCardType))) {
+            String formStatus = FrontendFormStateSupport.normalizedStatus(
                     latestFormPayload,
                     latestFormCard != null ? latestFormCard.getStage() : null,
                     latestFormCard != null ? latestFormCard.getStatus() : null);
-            phase = FrontendFormStateSupport.normalizedPhase(
+            String formPhase = FrontendFormStateSupport.normalizedPhase(
                     latestFormPayload,
                     latestFormCard != null ? latestFormCard.getStage() : null,
                     latestFormCard != null ? latestFormCard.getStatus() : null);
-            unfinished = true;
-            canResume = true;
+            boolean formUnfinished = !ChatThreadActionSupport.isTerminalStatus(formStatus);
+            status = formStatus;
+            phase = formPhase;
+            unfinished = formUnfinished;
+            canResume = ChatThreadActionSupport.canResume(formStatus, formPhase, formUnfinished);
             toolCode = firstText(toolCode, latestFormPayload.get("toolCode"));
             pendingCardType = "FORM_CARD";
             snapshot.put("pendingForm", latestFormPayload);

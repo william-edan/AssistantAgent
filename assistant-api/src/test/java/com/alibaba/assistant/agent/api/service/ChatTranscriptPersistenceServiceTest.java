@@ -226,6 +226,61 @@ class ChatTranscriptPersistenceServiceTest {
     }
 
     @Test
+    void shouldPersistTerminalReadOnlyFormCardAsCompletedThread() throws Exception {
+        when(chatThreadRecordService.findByThreadId("thread-profile")).thenReturn(Optional.empty());
+        when(chatMessageRecordService.findBySourceKey("FORM_CARD:turn-profile:profile_query:DISPLAY"))
+                .thenReturn(Optional.empty());
+
+        transcriptPersistenceService.recordFrontendEvent(
+                "thread-profile",
+                "1001",
+                "assistant-ui",
+                "gougu_oa",
+                "turn-profile",
+                new FrontendEvent(
+                        "2026-03-31",
+                        "evt-profile",
+                        "thread-profile",
+                        "2026-03-31T12:00:10Z",
+                        FrontendEventType.FORM_STATE,
+                        FrontendStage.DONE,
+                        new LinkedHashMap<>(Map.of(
+                                "mode", "DISPLAY",
+                                "status", "COMPLETED",
+                                "phase", "DONE",
+                                "readOnly", true,
+                                "toolCode", "profile_query",
+                                "message", "profile details loaded",
+                                "values", Map.of("employeeName", "zhangsan", "jobNumber", "HR002"),
+                                "fields", java.util.List.of(
+                                        Map.of("name", "employeeName", "title", "employeeName"),
+                                        Map.of("name", "jobNumber", "title", "jobNumber")),
+                                "summary", Map.of("summaryItems", java.util.List.of(Map.of(
+                                        "label", "employeeName",
+                                        "value", "zhangsan"))),
+                                "canSubmit", false))));
+
+        ChatThreadRecord latestThread = threadCaptorFromLatestSave();
+        assertThat(latestThread.getStatus()).isEqualTo("COMPLETED");
+        assertThat(latestThread.getPhase()).isEqualTo("DONE");
+        assertThat(latestThread.getUnfinished()).isFalse();
+        assertThat(latestThread.getCanResume()).isFalse();
+        assertThat(latestThread.getPendingCardType()).isEqualTo("FORM_CARD");
+        assertThat(latestThread.getToolCode()).isEqualTo("profile_query");
+
+        ArgumentCaptor<ChatMessageRecord> messageCaptor = ArgumentCaptor.forClass(ChatMessageRecord.class);
+        verify(chatMessageRecordService).saveOrUpdateBySourceKey(messageCaptor.capture());
+        ChatMessageRecord formCard = messageCaptor.getValue();
+        assertThat(formCard.getMessageType()).isEqualTo("FORM_CARD");
+        assertThat(formCard.getStage()).isEqualTo("DONE");
+        assertThat(formCard.getStatus()).isEqualTo("COMPLETED");
+
+        Map<String, Object> persistedPayload = objectMapper.readValue(formCard.getPayloadJson(), MAP_TYPE);
+        assertThat((Map<String, Object>) persistedPayload.get("payload")).containsEntry("mode", "DISPLAY");
+        assertThat((Map<String, Object>) persistedPayload.get("payload")).containsEntry("readOnly", true);
+    }
+
+    @Test
     void shouldFoldAssistantChunksIntoSingleTranscriptRowAndTrackTaskStatus() throws Exception {
         ChatMessageRecord existingAssistantMessage = new ChatMessageRecord();
         existingAssistantMessage.setId(11L);
