@@ -519,6 +519,41 @@ class ChatTranscriptPersistenceServiceTest {
         assertThat(taskPayload).containsEntry("summaryText", "已完成 2/3 批 (65%)");
         assertThat(((Map<String, Object>) taskPayload.get("display"))).containsEntry("collapsedByDefault", true);
     }
+    @Test
+    void shouldUseResultTitleInsteadOfArtifactCodeForResultCardTitle() throws Exception {
+        when(chatThreadRecordService.findByThreadId("thread-result-title")).thenReturn(Optional.empty());
+
+        transcriptPersistenceService.recordFrontendEvent(
+                "thread-result-title",
+                "1001",
+                "assistant-ui",
+                "gougu_oa",
+                "turn-result-title",
+                new FrontendEvent(
+                        "2026-04-01",
+                        "evt-result-title",
+                        "thread-result-title",
+                        "2026-04-01T16:10:00Z",
+                        FrontendEventType.RESULT,
+                        FrontendStage.DONE,
+                        new LinkedHashMap<>(Map.of(
+                                "success", true,
+                                "artifactCode", "profile_query",
+                                "result", Map.of(
+                                        "title", "张三的个人日程",
+                                        "summary", "已为你查询到张三的3条个人日程信息。")))));
+
+        ArgumentCaptor<ChatMessageRecord> messageCaptor = ArgumentCaptor.forClass(ChatMessageRecord.class);
+        verify(chatMessageRecordService).save(messageCaptor.capture());
+        ChatMessageRecord resultCard = messageCaptor.getValue();
+        assertThat(resultCard.getMessageType()).isEqualTo("RESULT_CARD");
+        assertThat(resultCard.getTitle()).isEqualTo("张三的个人日程");
+        assertThat(resultCard.getSummaryText()).isEqualTo("已为你查询到张三的3条个人日程信息。");
+
+        Map<String, Object> persistedPayload = objectMapper.readValue(resultCard.getPayloadJson(), MAP_TYPE);
+        assertThat((Map<String, Object>) persistedPayload.get("payload")).containsEntry("artifactCode", "profile_query");
+    }
+
     private Map<String, Object> buildDetachedMcpTaskPayload() {
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("taskId", "TASK-MCP-1");

@@ -647,7 +647,15 @@ public class ChatTranscriptPersistenceService {
                     event.payload().get("title"),
                     event.payload().get("sourceCode"),
                     "后台任务");
-            case RESULT -> firstText(event.payload().get("artifactCode"), "执行结果");
+            case RESULT -> {
+                Map<String, Object> result = asMap(event.payload().get("result"));
+                yield firstText(
+                        result.get("title"),
+                        event.payload().get("title"),
+                        event.payload().get("sourceLabel"),
+                        event.payload().get("artifactCode"),
+                        "执行结果");
+            }
             case ERROR -> "执行异常";
             case MESSAGE -> "助手回复";
             default -> firstText(messageType, "聊天消息");
