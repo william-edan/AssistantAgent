@@ -7,9 +7,9 @@
 spring:
   datasource:
     # 默认落到全新迁移库，仍可通过 MYSQL_DB 覆盖。
-    url: jdbc:mysql://${MYSQL_HOST:8.156.74.119}:${MYSQL_PORT:3306}/${MYSQL_DB:assistant_new1}?useUnicode=true&characterEncoding=utf-8&useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Shanghai
+    url: jdbc:mysql://${MYSQL_HOST:192.168.2.26}:${MYSQL_PORT:3306}/${MYSQL_DB:ai_assistant_agent}?useUnicode=true&characterEncoding=utf-8&useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Shanghai
     driver-class-name: com.mysql.cj.jdbc.Driver
-    username: ${MYSQL_USER:root}
+    username: ${MYSQL_USER:ai_assistant_agent}
     password: ${MYSQL_PASSWORD:StrongRootPwd}
   flyway:
     enabled: true
@@ -56,11 +56,11 @@ assistant:
     token-header-prefix: 'Bearer '
   system-profiles:
     gougu_oa:
-      base-url: ${GOUGU_OA_BASE_URL:http://office.ai.devefive.com}
+      base-url: ${GOUGU_OA_BASE_URL:http://192.168.2.26:9000}
       token-header-name: Authorization
       token-header-prefix: 'Bearer '
     office1:
-      base-url: ${OFFICE1_BASE_URL:http://office.ai.devefive.com}
+      base-url: ${OFFICE1_BASE_URL:http://192.168.2.26:9000}
       token-header-name: Authorization
       token-header-prefix: 'Bearer '
   # Runtime namespace: read by AssistantRuntimeProperties
@@ -96,7 +96,7 @@ spring.ai.dashscope:
     options:
       model: deepseek-v3
       incremental-output: true
-  api-key: sk-8ae125796fc6476cb1062e2eabe5b43a
+  api-key: sk-5011c80bf24c42d8b6fc506ff4a626c0
 
 
 # ============================================================================

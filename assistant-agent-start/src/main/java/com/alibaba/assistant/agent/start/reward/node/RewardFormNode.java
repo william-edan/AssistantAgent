@@ -1,0 +1,318 @@
+/*
+ * Copyright 2024-2025 the original author or authors.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      https://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package com.alibaba.assistant.agent.start.reward.node;
+
+import com.alibaba.assistant.agent.start.reward.client.RewardsClient;
+import com.alibaba.assistant.agent.start.reward.model.RewardAddRequest;
+import com.alibaba.assistant.agent.start.reward.model.RewardAddResult;
+import com.alibaba.assistant.agent.start.reward.model.RewardCategoryRecord;
+import com.alibaba.assistant.agent.start.reward.model.RewardIntentResult;
+import com.alibaba.assistant.agent.start.reward.model.RewardNodeResult;
+import com.alibaba.assistant.agent.start.reward.model.RewardUserRecord;
+import com.alibaba.assistant.agent.start.reward.model.RewardWorkflowContext;
+import com.alibaba.assistant.agent.start.reward.service.DataAgentService;
+import com.alibaba.assistant.agent.start.reward.util.DataAgentResultParser;
+import com.alibaba.assistant.agent.start.reward.util.RewardErrorMessageUtil;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.util.StringUtils;
+import reactor.core.publisher.Mono;
+
+import java.math.BigDecimal;
+import java.time.LocalDate;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+
+/**
+ * 员工奖惩表单节点。
+ */
+public class RewardFormNode {
+
+    private static final Logger log = LoggerFactory.getLogger(RewardFormNode.class);
+
+    private static final String USER_LOOKUP_FAILED_MESSAGE = "未查询到员工，请重新选择员工";
+
+    private final DataAgentService dataAgentService;
+
+    private final RewardsClient rewardsClient;
+
+    private final DataAgentResultParser resultParser;
+
+    public RewardFormNode(
+            DataAgentService dataAgentService,
+            RewardsClient rewardsClient,
+            DataAgentResultParser resultParser) {
+        this.dataAgentService = dataAgentService;
+        this.rewardsClient = rewardsClient;
+        this.resultParser = resultParser;
+    }
+
+    public Mono<RewardNodeResult> handle(RewardWorkflowContext context) {
+        log.info(
+                "RewardFormNode#handle - uname={}, confirmed={}",
+                Optional.ofNullable(context.intentResult()).map(RewardIntentResult::uname).orElse(null),
+                context.confirmed());
+        return rewardsClient.listCategories(context.toolContext())
+                .flatMap(categories -> prepareValues(context)
+                        .flatMap(preparedValues -> buildNodeResult(context, preparedValues, categories)))
+                .onErrorResume(error -> Mono.just(errorResult(
+                        RewardErrorMessageUtil.resolveMessage(error, "员工奖惩处理失败"))));
+    }
+
+    private Mono<PreparedValues> prepareValues(RewardWorkflowContext context) {
+        Map<String, Object> values = buildInitialValues(context);
+        String uname = asText(values.get("uname"));
+        if (!StringUtils.hasText(uname)) {
+            return Mono.just(new PreparedValues(values, null));
+        }
+        String prompt = "查询员工 %s 的用户ID".formatted(uname);
+        log.info("RewardFormNode#prepareValues - prompt={}", prompt);
+        return dataAgentService.query(prompt)
+                .map(resultParser::parseUser)
+                .map(optionalUser -> optionalUser
+                        .map(user -> new PreparedValues(applyResolvedUser(values, user), null))
+                        .orElseGet(() -> new PreparedValues(values, USER_LOOKUP_FAILED_MESSAGE)));
+    }
+
+    private Mono<RewardNodeResult> buildNodeResult(
+            RewardWorkflowContext context,
+            PreparedValues preparedValues,
+            List<RewardCategoryRecord> categories) {
+        Map<String, Object> values = preparedValues.values();
+        List<Map<String, Object>> fields = buildFields(values, categories);
+        if (StringUtils.hasText(preparedValues.userMessage())) {
+            return Mono.just(formResult(
+                    "COLLECTING",
+                    "COLLECT",
+                    values,
+                    fields,
+                    List.of(Map.of("name", "uname", "title", "员工")),
+                    false,
+                    preparedValues.userMessage()));
+        }
+
+        List<Map<String, Object>> missingFields = buildMissingFields(fields, values);
+        if (!missingFields.isEmpty()) {
+            return Mono.just(formResult(
+                    "COLLECTING",
+                    "COLLECT",
+                    values,
+                    fields,
+                    missingFields,
+                    false,
+                    buildCollectMessage(missingFields)));
+        }
+        if (!context.confirmed()) {
+            return Mono.just(formResult(
+                    "CONFIRMING",
+                    "CONFIRM",
+                    values,
+                    fields,
+                    List.of(),
+                    true,
+                    "请确认奖惩信息后提交。"));
+        }
+
+        RewardAddRequest request = new RewardAddRequest(
+                asText(values.get("rewards_cate")),
+                intValue(values.get("types")),
+                asText(values.get("uname")),
+                longValue(values.get("uid")),
+                new BigDecimal(asText(values.get("cost"))),
+                LocalDate.parse(asText(values.get("rewards_time"))),
+                asText(values.get("remark")));
+        return rewardsClient.addReward(request, context.toolContext())
+                .map(result -> successResult(resolveSuccessMessage(result), Map.of(
+                        "rewardId", result.rewardId(),
+                        "uid", request.uid(),
+                        "uname", request.uname())))
+                .onErrorResume(error -> Mono.just(errorResult(
+                        RewardErrorMessageUtil.resolveMessage(error, "员工奖惩处理失败"))));
+    }
+
+    private Map<String, Object> buildInitialValues(RewardWorkflowContext context) {
+        Map<String, Object> values = new LinkedHashMap<>();
+        RewardIntentResult intentResult = context.intentResult();
+        putIfHasText(values, "uname", Optional.ofNullable(intentResult).map(RewardIntentResult::uname).orElse(null));
+        putIfNotNull(values, "types", Optional.ofNullable(intentResult)
+                .map(RewardIntentResult::types)
+                .orElse(1));
+        putIfHasText(values, "cost", Optional.ofNullable(intentResult)
+                .map(RewardIntentResult::amount)
+                .map(amount -> amount.stripTrailingZeros().toPlainString())
+                .orElse(null));
+        putIfHasText(values, "rewards_time", Optional.ofNullable(intentResult)
+                .map(RewardIntentResult::rewardDate)
+                .map(LocalDate::toString)
+                .orElse(null));
+        putIfHasText(values, "remark", Optional.ofNullable(intentResult).map(RewardIntentResult::remark).orElse(null));
+        context.slotInputs().forEach((key, value) -> {
+            if (value != null) {
+                values.put(key, value);
+            }
+        });
+        values.putIfAbsent("types", 1);
+        return values;
+    }
+
+    private Map<String, Object> applyResolvedUser(Map<String, Object> values, RewardUserRecord user) {
+        Map<String, Object> resolvedValues = new LinkedHashMap<>(values);
+        resolvedValues.put("uid", user.uid());
+        resolvedValues.put("uname", user.uname());
+        return resolvedValues;
+    }
+
+    private List<Map<String, Object>> buildFields(Map<String, Object> values, List<RewardCategoryRecord> categories) {
+        List<Map<String, Object>> fields = new ArrayList<>();
+        fields.add(field("uname", "员工", values.get("uname"), true, "TEXT", null));
+        fields.add(field("types", "奖惩类型", values.get("types"), true, "SELECT", List.of(
+                Map.<String, Object>of("label", "奖励", "value", 1),
+                Map.<String, Object>of("label", "惩罚", "value", 2))));
+        fields.add(field("rewards_cate", "奖惩项目", values.get("rewards_cate"), true, "SELECT",
+                categories.stream()
+                        .map(category -> Map.<String, Object>of("label", category.name(), "value", category.id()))
+                        .toList()));
+        fields.add(field("cost", "金额", values.get("cost"), true, "TEXT", null));
+        fields.add(field("rewards_time", "日期", values.get("rewards_time"), true, "DATE", null));
+        fields.add(field("remark", "备注", values.get("remark"), false, "TEXTAREA", null));
+        return fields;
+    }
+
+    private List<Map<String, Object>> buildMissingFields(List<Map<String, Object>> fields, Map<String, Object> values) {
+        return fields.stream()
+                .filter(field -> Boolean.TRUE.equals(field.get("required")))
+                .filter(field -> !StringUtils.hasText(asText(values.get(field.get("name")))))
+                .map(field -> Map.<String, Object>of("name", field.get("name"), "title", field.get("title")))
+                .toList();
+    }
+
+    private String buildCollectMessage(List<Map<String, Object>> missingFields) {
+        List<String> titles = missingFields.stream()
+                .map(field -> asText(field.get("title")))
+                .filter(StringUtils::hasText)
+                .distinct()
+                .toList();
+        if (titles.isEmpty()) {
+            return "请补全奖惩信息。";
+        }
+        return "请补全" + String.join("、", titles) + "。";
+    }
+
+    private RewardNodeResult formResult(
+            String phase,
+            String mode,
+            Map<String, Object> values,
+            List<Map<String, Object>> fields,
+            List<Map<String, Object>> missingFields,
+            boolean canSubmit,
+            String message) {
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("kind", "FORM");
+        payload.put("mode", mode);
+        payload.put("toolCode", "reward_workflow");
+        payload.put("values", values);
+        payload.put("fields", fields);
+        payload.put("missingFields", missingFields);
+        payload.put("message", message);
+        payload.put("canSubmit", canSubmit);
+        return new RewardNodeResult(phase, false, payload);
+    }
+
+    private RewardNodeResult successResult(String message, Map<String, Object> extra) {
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("kind", "RESULT");
+        payload.put("success", true);
+        payload.put("message", message);
+        payload.putAll(extra);
+        return new RewardNodeResult("DONE", true, payload);
+    }
+
+    private RewardNodeResult errorResult(String message) {
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("kind", "RESULT");
+        payload.put("success", false);
+        payload.put("message", message);
+        payload.put("error", message);
+        return new RewardNodeResult("ERROR", true, payload);
+    }
+
+    private String resolveSuccessMessage(RewardAddResult result) {
+        if (result != null && StringUtils.hasText(result.message())) {
+            return result.message();
+        }
+        if (result != null && StringUtils.hasText(result.rewardId())) {
+            return "保存成功，记录ID=" + result.rewardId();
+        }
+        return "保存成功";
+    }
+
+    private Map<String, Object> field(
+            String name,
+            String title,
+            Object value,
+            boolean required,
+            String fieldType,
+            List<Map<String, Object>> options) {
+        Map<String, Object> field = new LinkedHashMap<>();
+        field.put("name", name);
+        field.put("title", title);
+        field.put("value", value);
+        field.put("required", required);
+        field.put("type", fieldType);
+        if (options != null && !options.isEmpty()) {
+            field.put("options", options);
+        }
+        return field;
+    }
+
+    private void putIfHasText(Map<String, Object> values, String key, String value) {
+        if (StringUtils.hasText(value)) {
+            values.put(key, value);
+        }
+    }
+
+    private void putIfNotNull(Map<String, Object> values, String key, Object value) {
+        if (value != null) {
+            values.put(key, value);
+        }
+    }
+
+    private String asText(Object value) {
+        if (value == null) {
+            return null;
+        }
+        String text = String.valueOf(value).trim();
+        return StringUtils.hasText(text) ? text : null;
+    }
+
+    private Integer intValue(Object value) {
+        return value == null ? null : Integer.parseInt(String.valueOf(value));
+    }
+
+    private Long longValue(Object value) {
+        return value == null ? null : Long.parseLong(String.valueOf(value));
+    }
+
+    private record PreparedValues(Map<String, Object> values, String userMessage) {
+
+        private PreparedValues {
+            values = values == null ? Map.of() : Map.copyOf(values);
+        }
+    }
+}

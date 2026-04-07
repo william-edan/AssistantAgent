@@ -22,6 +22,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.http.HttpStatusCode;
@@ -90,7 +91,7 @@ public class ProfileHttpService {
 
     @Autowired
     public ProfileHttpService(
-            WebClient profileWebClient,
+            @Qualifier("profileWebClient") WebClient profileWebClient,
             @Value("${assistant.profile.data-agent.search-path:/api/stream/search}") String searchPath,
             @Value("${assistant.profile.data-agent.agent-id:5}") String agentId,
             @Value("${assistant.profile.data-agent.stream-idle-timeout:PT30S}") String streamIdleTimeout) {

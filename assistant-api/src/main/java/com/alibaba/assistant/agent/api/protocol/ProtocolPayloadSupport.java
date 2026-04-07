@@ -373,6 +373,7 @@ public class ProtocolPayloadSupport {
         resultPayload.put("artifactCode", resolveToolCode(payload, state));
         resultPayload.put("lifecycleStatus", asText(payload.get("lifecycleStatus")));
         resultPayload.put("approvalRequestId", asText(payload.get("approvalRequestId")));
+        resultPayload.put("message", asText(payload.get("message")));
         resultPayload.put("result", asMap(payload.get("result")).isEmpty() ? payload.get("result") : asMap(payload.get("result")));
         resultPayload.put("error", asText(payload.get("error")));
         if (payload.containsKey("executionEvents")) {

@@ -16,10 +16,12 @@
 package com.alibaba.assistant.agent.start.migration;
 
 import org.junit.jupiter.api.Test;
+import org.apache.ibatis.annotations.Mapper;
 import org.mybatis.spring.annotation.MapperScan;
 
 import java.util.List;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -33,5 +35,6 @@ class MigrationScanConfigurationTest {
 
         assertTrue(packages.contains("com.alibaba.assistant.agent.controlplane"));
         assertTrue(packages.contains("com.alibaba.assistant.agent.execution.persistence.mapper"));
+        assertEquals(Mapper.class, mapperScan.annotationClass());
     }
 }

@@ -21,6 +21,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.http.HttpStatusCode;
@@ -76,7 +77,7 @@ public class DepartmentHttpService {
 
     @Autowired
     public DepartmentHttpService(
-            WebClient dataAgentWebClient,
+            @Qualifier("profileWebClient") WebClient dataAgentWebClient,
             @Value("${assistant.department.data-agent.search-path:${assistant.profile.data-agent.search-path:/api/stream/search}}")
             String searchPath,
             @Value("${assistant.department.data-agent.agent-id:${assistant.profile.data-agent.agent-id:5}}")
