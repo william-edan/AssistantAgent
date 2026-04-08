@@ -23,6 +23,8 @@ import com.alibaba.assistant.agent.extension.dynamic.tool.AbstractDynamicCodeact
 import com.alibaba.assistant.agent.start.profile.dto.ProfileDTO;
 import com.alibaba.assistant.agent.start.profile.intent.IntentRecognizer;
 import com.alibaba.assistant.agent.start.profile.service.ProfileHttpService;
+import com.alibaba.assistant.agent.start.reward.model.RewardUserRecord;
+import com.alibaba.assistant.agent.start.reward.service.RewardEmployeeHttpService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.ai.chat.model.ToolContext;
 import org.springframework.ai.tool.definition.DefaultToolDefinition;
@@ -49,17 +51,23 @@ public class ProfileQueryTool extends AbstractDynamicCodeactTool {
 
     public static final String TOOL_NAME = "profile_query";
 
+    private static final String ASSET_EMPTY_MESSAGE = "暂无该用户使用记录";
+
     private final IntentRecognizer intentRecognizer;
 
     private final ProfileHttpService profileHttpService;
 
+    private final RewardEmployeeHttpService rewardEmployeeHttpService;
+
     public ProfileQueryTool(
             ObjectMapper objectMapper,
             IntentRecognizer intentRecognizer,
-            ProfileHttpService profileHttpService) {
+            ProfileHttpService profileHttpService,
+            RewardEmployeeHttpService rewardEmployeeHttpService) {
         super(objectMapper, buildToolDefinition(), buildMetadata());
         this.intentRecognizer = intentRecognizer;
         this.profileHttpService = profileHttpService;
+        this.rewardEmployeeHttpService = rewardEmployeeHttpService;
     }
 
     /**
@@ -88,19 +96,39 @@ public class ProfileQueryTool extends AbstractDynamicCodeactTool {
         }
 
         try {
+            Long resolvedUserId = null;
+            String resolvedName = recognitionResult.name();
+            if (recognitionResult.intentType() == IntentRecognizer.IntentType.PROFILE_ASSET_IN_USE) {
+                Optional<RewardUserRecord> matchedUser = rewardEmployeeHttpService
+                        .findUser(recognitionResult.name(), toolContext)
+                        .blockOptional()
+                        .orElse(Optional.empty());
+                if (matchedUser.isEmpty()) {
+                    return objectMapper.writeValueAsString(Map.of(
+                            "success", false,
+                            "matched", true,
+                            "intent", recognitionResult.intentType().name(),
+                            "name", recognitionResult.name(),
+                            "message", ASSET_EMPTY_MESSAGE));
+                }
+                resolvedUserId = matchedUser.map(RewardUserRecord::uid).orElse(null);
+            }
+
             ProfileDTO profileDTO = profileHttpService
-                    .queryProfile(recognitionResult.name(), recognitionResult.intentType())
+                    .queryProfile(resolvedName, recognitionResult.intentType(), resolvedUserId)
                     .blockOptional()
-                    .orElseThrow(() -> new IllegalStateException("\u672a\u67e5\u8be2\u5230\u4e2a\u4eba\u4fe1\u606f\u7ed3\u679c"));
+                    .orElseThrow(() -> new IllegalStateException(resolveEmptyMessage(recognitionResult.intentType())));
+            String successMessage = resolveSuccessMessage(recognitionResult.intentType(), resolvedName, profileDTO.summary());
 
             return objectMapper.writeValueAsString(Map.of(
                     "success", true,
                     "matched", true,
                     "intent", recognitionResult.intentType().name(),
-                    "name", recognitionResult.name(),
+                    "name", resolvedName,
                     "data", profileDTO,
-                    "message", profileDTO.summary(),
-                    "reply", profileDTO.summary()));
+                    "message", successMessage,
+                    "reply", successMessage,
+                    "text", successMessage));
         }
         catch (Exception exception) {
             return objectMapper.writeValueAsString(Map.of(
@@ -108,8 +136,43 @@ public class ProfileQueryTool extends AbstractDynamicCodeactTool {
                     "matched", true,
                     "intent", recognitionResult.intentType().name(),
                     "name", recognitionResult.name(),
-                    "message", "\u4e2a\u4eba\u4fe1\u606f\u67e5\u8be2\u5931\u8d25: " + exception.getMessage()));
+                    "message", resolveErrorMessage(recognitionResult.intentType(), exception)));
         }
+    }
+
+    private String resolveEmptyMessage(IntentRecognizer.IntentType intentType) {
+        return intentType == IntentRecognizer.IntentType.PROFILE_ASSET_IN_USE
+                ? ASSET_EMPTY_MESSAGE
+                : "未查询到个人信息结果";
+    }
+
+    private String resolveSuccessMessage(
+            IntentRecognizer.IntentType intentType,
+            String displayName,
+            String summary) {
+        if (intentType == IntentRecognizer.IntentType.PROFILE_ASSET_IN_USE) {
+            return "已为你查询到%s的在用资产信息，下面是关键信息。".formatted(displayName);
+        }
+        return summary;
+    }
+
+    private String resolveErrorMessage(IntentRecognizer.IntentType intentType, Exception exception) {
+        if (intentType == IntentRecognizer.IntentType.PROFILE_ASSET_IN_USE
+                && isAssetNoRecordError(exception)) {
+            return ASSET_EMPTY_MESSAGE;
+        }
+        return "个人信息查询失败: " + exception.getMessage();
+    }
+
+    private boolean isAssetNoRecordError(Exception exception) {
+        String message = Optional.ofNullable(exception)
+                .map(Throwable::getMessage)
+                .orElse("");
+        return !StringUtils.hasText(message)
+                || message.contains("未返回有效文本结果")
+                || message.contains("未找到")
+                || message.contains("未查询到")
+                || message.contains("暂无");
     }
 
     /**

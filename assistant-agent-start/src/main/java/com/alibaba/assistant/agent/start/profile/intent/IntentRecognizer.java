@@ -32,10 +32,10 @@ import java.util.regex.Pattern;
 public class IntentRecognizer {
 
     private static final Pattern POSSESSIVE_QUERY_PATTERN = Pattern.compile(
-            "([\\u4e00-\\u9fa5]{2,4})\\s*\\u7684\\s*(\\u4e2a\\u4eba\\u6863\\u6848|\\u6863\\u6848|\\u4fe1\\u606f|\\u8d44\\u6599|\\u65e5\\u7a0b|\\u6392\\u671f|\\u65e5\\u5386|\\u884c\\u7a0b)");
+            "([\\u4e00-\\u9fa5]{2,4}?)\\s*\\u7684\\s*(\\u4e2a\\u4eba\\u6863\\u6848|\\u6863\\u6848|\\u4e2a\\u4eba\\u8d44\\u6599|\\u4fe1\\u606f|\\u8d44\\u6599|\\u65e5\\u7a0b|\\u6392\\u671f|\\u65e5\\u5386|\\u884c\\u7a0b|\\u5728\\u7528\\u8d44\\u4ea7|\\u6b63\\u5728\\u4f7f\\u7528\\u7684\\u8d44\\u4ea7|\\u5728\\u4f7f\\u7528\\u7684\\u8d44\\u4ea7|\\u540d\\u4e0b\\u8d44\\u4ea7|\\u8d44\\u4ea7)");
 
     private static final Pattern LOOKUP_QUERY_PATTERN = Pattern.compile(
-            "(?:\\u5e2e\\u6211\\u67e5\\u4e00\\u4e0b|\\u8bf7\\u5e2e\\u6211\\u67e5\\u4e00\\u4e0b|\\u67e5\\u4e00\\u4e0b|\\u67e5\\u8be2|\\u770b\\u770b|\\u5e2e\\u6211\\u770b\\u4e0b|\\u5e2e\\u6211\\u67e5)\\s*([\\u4e00-\\u9fa5]{2,4})\\s*(?:\\u7684)?\\s*(\\u4e2a\\u4eba\\u6863\\u6848|\\u6863\\u6848|\\u4fe1\\u606f|\\u8d44\\u6599|\\u65e5\\u7a0b|\\u6392\\u671f|\\u65e5\\u5386|\\u884c\\u7a0b)");
+            "(?:\\u5e2e\\u6211\\u67e5\\u4e00\\u4e0b|\\u8bf7\\u5e2e\\u6211\\u67e5\\u4e00\\u4e0b|\\u67e5\\u4e00\\u4e0b|\\u67e5\\u8be2|\\u770b\\u770b|\\u5e2e\\u6211\\u770b\\u4e0b|\\u5e2e\\u6211\\u67e5)\\s*([\\u4e00-\\u9fa5]{2,4}?)\\s*(?:\\u7684)?\\s*(\\u4e2a\\u4eba\\u6863\\u6848|\\u6863\\u6848|\\u4e2a\\u4eba\\u8d44\\u6599|\\u4fe1\\u606f|\\u8d44\\u6599|\\u65e5\\u7a0b|\\u6392\\u671f|\\u65e5\\u5386|\\u884c\\u7a0b|\\u5728\\u7528\\u8d44\\u4ea7|\\u6b63\\u5728\\u4f7f\\u7528\\u7684\\u8d44\\u4ea7|\\u5728\\u4f7f\\u7528\\u7684\\u8d44\\u4ea7|\\u540d\\u4e0b\\u8d44\\u4ea7|\\u8d44\\u4ea7)");
 
     private static final Pattern WHO_IS_PATTERN = Pattern.compile("([\\u4e00-\\u9fa5]{2,4})\\s*\\u662f\\u8c01");
 
@@ -67,6 +67,8 @@ public class IntentRecognizer {
      * @return 意图类型
      */
     public IntentType detectIntentType(String normalizedInput) {
+        boolean hasAssetKeyword = containsAny(normalizedInput,
+                "\u5728\u7528\u8d44\u4ea7", "\u6b63\u5728\u4f7f\u7528\u7684\u8d44\u4ea7", "\u5728\u4f7f\u7528\u7684\u8d44\u4ea7", "\u540d\u4e0b\u8d44\u4ea7", "\u8d44\u4ea7");
         boolean hasScheduleKeyword = containsAny(normalizedInput,
                 "\u65e5\u7a0b", "\u6392\u671f", "\u65e5\u5386", "\u884c\u7a0b");
         boolean hasArchiveKeyword = containsAny(normalizedInput,
@@ -74,7 +76,9 @@ public class IntentRecognizer {
         boolean hasGeneralKeyword = containsAny(normalizedInput,
                 "\u4fe1\u606f", "\u8d44\u6599", "\u662f\u8c01");
 
-        String intentCode = hasScheduleKeyword
+        String intentCode = hasAssetKeyword
+                ? "PROFILE_ASSET_IN_USE"
+                : hasScheduleKeyword
                 ? "PROFILE_SCHEDULE"
                 : hasArchiveKeyword
                 ? "PROFILE_ARCHIVE"
@@ -83,6 +87,7 @@ public class IntentRecognizer {
                 : "UNKNOWN";
 
         return switch (intentCode) {
+            case "PROFILE_ASSET_IN_USE" -> IntentType.PROFILE_ASSET_IN_USE;
             case "PROFILE_ARCHIVE" -> IntentType.PROFILE_ARCHIVE;
             case "PROFILE_SCHEDULE" -> IntentType.PROFILE_SCHEDULE;
             case "PROFILE_GENERAL" -> IntentType.PROFILE_GENERAL;
@@ -126,6 +131,8 @@ public class IntentRecognizer {
                 .replace("\u5e2e\u6211\u67e5", "")
                 .replace("\u7684\u4e2a\u4eba\u6863\u6848", "")
                 .replace("\u4e2a\u4eba\u6863\u6848", "")
+                .replace("\u7684\u4e2a\u4eba\u8d44\u6599", "")
+                .replace("\u4e2a\u4eba\u8d44\u6599", "")
                 .replace("\u7684\u6863\u6848", "")
                 .replace("\u6863\u6848", "")
                 .replace("\u7684\u4fe1\u606f", "")
@@ -140,6 +147,14 @@ public class IntentRecognizer {
                 .replace("\u65e5\u5386", "")
                 .replace("\u7684\u884c\u7a0b", "")
                 .replace("\u884c\u7a0b", "")
+                .replace("\u6b63\u5728\u4f7f\u7528\u7684\u8d44\u4ea7", "")
+                .replace("\u5728\u4f7f\u7528\u7684\u8d44\u4ea7", "")
+                .replace("\u7684\u5728\u7528\u8d44\u4ea7", "")
+                .replace("\u5728\u7528\u8d44\u4ea7", "")
+                .replace("\u7684\u540d\u4e0b\u8d44\u4ea7", "")
+                .replace("\u540d\u4e0b\u8d44\u4ea7", "")
+                .replace("\u7684\u8d44\u4ea7", "")
+                .replace("\u8d44\u4ea7", "")
                 .replace("\u662f\u8c01", "")
                 .trim();
 
@@ -224,6 +239,7 @@ public class IntentRecognizer {
      * 意图类型枚举。
      */
     public enum IntentType {
+        PROFILE_ASSET_IN_USE,
         PROFILE_ARCHIVE,
         PROFILE_SCHEDULE,
         PROFILE_GENERAL,

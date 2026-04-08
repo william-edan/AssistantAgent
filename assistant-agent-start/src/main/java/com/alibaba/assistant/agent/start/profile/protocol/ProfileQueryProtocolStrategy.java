@@ -60,6 +60,8 @@ public class ProfileQueryProtocolStrategy implements ProtocolStrategy {
 
     private static final String TITLE_SUFFIX_GENERAL = "\u7684\u4e2a\u4eba\u4fe1\u606f";
 
+    private static final String TITLE_SUFFIX_ASSET = "\u7684\u5728\u7528\u8d44\u4ea7";
+
     private static final String TITLE_QUERY_FAILED = "\u4e2a\u4eba\u6863\u6848\u67e5\u8be2\u5931\u8d25";
 
     private static final String VALUE_QUERY_FAILED = "\u67e5\u8be2\u5931\u8d25";
@@ -72,7 +74,11 @@ public class ProfileQueryProtocolStrategy implements ProtocolStrategy {
 
     private static final String TEXT_QUERY_SUCCESS_GENERAL = "\u5df2\u4e3a\u4f60\u67e5\u8be2\u5230%s\u7684\u4e2a\u4eba\u4fe1\u606f\uff0c\u4e0b\u9762\u662f\u5173\u952e\u4fe1\u606f\u3002";
 
+    private static final String TEXT_QUERY_SUCCESS_ASSET = "\u5df2\u4e3a\u4f60\u67e5\u8be2\u5230%s\u7684\u5728\u7528\u8d44\u4ea7\u4fe1\u606f\uff0c\u4e0b\u9762\u662f\u5173\u952e\u4fe1\u606f\u3002";
+
     private static final String TEXT_QUERY_SUCCESS_SCHEDULE_LIST = "\u5df2\u4e3a\u4f60\u67e5\u8be2\u5230%s\u7684%d\u6761\u4e2a\u4eba\u65e5\u7a0b\u4fe1\u606f\u3002";
+
+    private static final String TEXT_QUERY_SUCCESS_ASSET_LIST = "\u5df2\u4e3a\u4f60\u67e5\u8be2\u5230%s\u7684%d\u6761\u5728\u7528\u8d44\u4ea7\u4fe1\u606f\u3002";
 
     private static final String LABEL_NAME = "\u59d3\u540d";
 
@@ -120,6 +126,32 @@ public class ProfileQueryProtocolStrategy implements ProtocolStrategy {
 
     private static final String LABEL_RECENT_SCHEDULE = "\u6700\u8fd1\u4e00\u6761\u5b89\u6392";
 
+    private static final String LABEL_ASSET_NAME = "\u8d44\u4ea7\u540d\u79f0";
+
+    private static final String LABEL_ASSET_CODE = "\u8d44\u4ea7\u7f16\u7801";
+
+    private static final String LABEL_ASSET_MODEL = "\u8d44\u4ea7\u578b\u53f7";
+
+    private static final String LABEL_ASSET_CATEGORY = "\u8d44\u4ea7\u5206\u7c7b";
+
+    private static final String LABEL_ASSET_BRAND = "\u8d44\u4ea7\u54c1\u724c";
+
+    private static final String LABEL_WARRANTY_DATE = "\u8d28\u4fdd\u5230\u671f\u65e5";
+
+    private static final String LABEL_UNIT = "\u5355\u4f4d";
+
+    private static final String LABEL_PURCHASE_PRICE = "\u8d2d\u4e70\u4ef7\u683c";
+
+    private static final String LABEL_PURCHASE_DATE = "\u8d2d\u4e70\u65e5\u671f";
+
+    private static final String LABEL_DEPRECIATION_RATE = "\u5e74\u6298\u65e7\u7387(%)";
+
+    private static final String LABEL_ASSET_STATUS = "\u8d44\u4ea7\u72b6\u6001";
+
+    private static final String LABEL_ASSET_SOURCE = "\u8d44\u4ea7\u6765\u6e90";
+
+    private static final String LABEL_ASSET_COUNT = "\u8d44\u4ea7\u603b\u6570";
+
     private static final String SECTION_BASIC = "\u57fa\u7840\u4fe1\u606f";
 
     private static final String SECTION_EDUCATION = "\u6559\u80b2\u4fe1\u606f";
@@ -127,6 +159,8 @@ public class ProfileQueryProtocolStrategy implements ProtocolStrategy {
     private static final String SECTION_CONTACT = "\u8054\u7cfb\u4fe1\u606f";
 
     private static final String SECTION_EXTRA = "\u5176\u4ed6\u4fe1\u606f";
+
+    private static final String SECTION_ASSET = "\u8d44\u4ea7\u4fe1\u606f";
 
     private static final String SECTION_FAILURE = "\u5931\u8d25\u4fe1\u606f";
 
@@ -196,6 +230,12 @@ public class ProfileQueryProtocolStrategy implements ProtocolStrategy {
         List<Map<String, Object>> records = extractRecordList(data);
         Map<String, Object> profile = normalizeProfile(extractProfileValues(payload));
         String displayName = resolveDisplayName(payload, data, profile);
+        if (shouldBuildAssetListResult(payload, records)) {
+            return buildAssetListResult(payload, data, displayName, records);
+        }
+        if (isAssetIntent(payload)) {
+            return buildAssetSingleResult(payload, data, displayName, records, profile);
+        }
         if (shouldBuildScheduleListResult(payload, records)) {
             return buildScheduleListResult(payload, data, displayName, records);
         }
@@ -215,6 +255,16 @@ public class ProfileQueryProtocolStrategy implements ProtocolStrategy {
         result.put("profile", profile);
         putText(result, "threadId", asText(data.get("threadId")));
         return result;
+    }
+
+    private boolean isAssetIntent(Map<String, Object> payload) {
+        return "PROFILE_ASSET_IN_USE".equals(resolveIntent(payload));
+    }
+
+    private boolean shouldBuildAssetListResult(Map<String, Object> payload, List<Map<String, Object>> records) {
+        return isAssetIntent(payload)
+                && records != null
+                && records.size() > 1;
     }
 
     private boolean shouldBuildScheduleListResult(Map<String, Object> payload, List<Map<String, Object>> records) {
@@ -244,6 +294,234 @@ public class ProfileQueryProtocolStrategy implements ProtocolStrategy {
         result.put("profile", buildScheduleListProfile(displayName, displayRecords));
         putText(result, "threadId", asText(data.get("threadId")));
         return result;
+    }
+
+    private Map<String, Object> buildAssetSingleResult(
+            Map<String, Object> payload,
+            Map<String, Object> data,
+            String displayName,
+            List<Map<String, Object>> records,
+            Map<String, Object> profile) {
+        Map<String, Object> assetRecord = records != null && !records.isEmpty()
+                ? new LinkedHashMap<>(records.get(0))
+                : new LinkedHashMap<>(profile);
+        Map<String, Object> assetProfile = buildAssetProfile(displayName, assetRecord);
+        Map<String, Object> finalOutputs = buildAssetSingleFinalOutputs(displayName, assetProfile);
+        String summary = TEXT_QUERY_SUCCESS_ASSET.formatted(displayName);
+
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("templateCode", PROFILE_CARD_TEMPLATE_CODE);
+        result.put("title", displayName + TITLE_SUFFIX_ASSET);
+        result.put("summary", summary);
+        result.put("text", summary);
+        result.put("recordType", RECORD_TYPE_SINGLE);
+        result.put("finalOutputs", finalOutputs);
+        result.put("highlights", buildAssetHighlights(assetProfile));
+        result.put("sections", buildAssetSections(assetProfile));
+        result.put("profile", assetProfile);
+        putText(result, "threadId", asText(data.get("threadId")));
+        return result;
+    }
+
+    private Map<String, Object> buildAssetListResult(
+            Map<String, Object> payload,
+            Map<String, Object> data,
+            String displayName,
+            List<Map<String, Object>> records) {
+        List<Map<String, Object>> displayRecords = buildAssetDisplayRecords(records);
+        String summary = TEXT_QUERY_SUCCESS_ASSET_LIST.formatted(displayName, displayRecords.size());
+
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("templateCode", PROFILE_CARD_TEMPLATE_CODE);
+        result.put("title", displayName + TITLE_SUFFIX_ASSET);
+        result.put("summary", summary);
+        result.put("text", summary);
+        result.put("recordType", RECORD_TYPE_LIST);
+        result.put("finalOutputs", buildAssetListFinalOutputs(displayName, displayRecords));
+        result.put("highlights", buildAssetListHighlights(displayName, displayRecords));
+        result.put("sections", buildAssetListSections(displayRecords));
+        result.put("records", displayRecords);
+        result.put("profile", buildAssetListFinalOutputs(displayName, displayRecords));
+        putText(result, "threadId", asText(data.get("threadId")));
+        return result;
+    }
+
+    private Map<String, Object> buildAssetProfile(String displayName, Map<String, Object> assetRecord) {
+        Map<String, Object> assetProfile = new LinkedHashMap<>();
+        putText(assetProfile, LABEL_NAME, displayName);
+        assetProfile.putAll(buildAssetFinalOutputs(assetRecord));
+        return assetProfile;
+    }
+
+    private Map<String, Object> buildAssetSingleFinalOutputs(
+            String displayName,
+            Map<String, Object> assetProfile) {
+        Map<String, Object> finalOutputs = new LinkedHashMap<>();
+        putText(finalOutputs, LABEL_INFO_NAME, displayName + TITLE_SUFFIX_ASSET);
+        putAssetField(finalOutputs, assetProfile, LABEL_NAME);
+        putAssetField(finalOutputs, assetProfile, LABEL_ASSET_NAME);
+        putAssetField(finalOutputs, assetProfile, LABEL_ASSET_CODE);
+        putAssetField(finalOutputs, assetProfile, LABEL_ASSET_STATUS);
+        putAssetField(finalOutputs, assetProfile, LABEL_ASSET_MODEL);
+        putAssetField(finalOutputs, assetProfile, LABEL_ASSET_CATEGORY);
+        putAssetField(finalOutputs, assetProfile, LABEL_ASSET_BRAND);
+        putAssetField(finalOutputs, assetProfile, LABEL_WARRANTY_DATE);
+        putAssetField(finalOutputs, assetProfile, LABEL_UNIT);
+        putAssetField(finalOutputs, assetProfile, LABEL_PURCHASE_PRICE);
+        putAssetField(finalOutputs, assetProfile, LABEL_PURCHASE_DATE);
+        putAssetField(finalOutputs, assetProfile, LABEL_DEPRECIATION_RATE);
+        putAssetField(finalOutputs, assetProfile, LABEL_ASSET_SOURCE);
+        return finalOutputs;
+    }
+
+    private Map<String, Object> buildAssetFinalOutputs(Map<String, Object> assetRecord) {
+        Map<String, Object> finalOutputs = new LinkedHashMap<>();
+        putResolvedAssetField(finalOutputs, LABEL_ASSET_NAME, assetRecord,
+                "assetName", "asset_name", "assetUnitName", "asset_unit_name", "unitName", "unit_name", "资产名称", "单位名称");
+        putResolvedAssetField(finalOutputs, LABEL_ASSET_CODE, assetRecord,
+                "assetCode", "asset_code", "code", "编号", "资产编码", "资产编号");
+        putResolvedAssetField(finalOutputs, LABEL_ASSET_MODEL, assetRecord,
+                "assetModel", "asset_model", "model", "规格型号", "资产型号");
+        putResolvedAssetField(finalOutputs, LABEL_ASSET_CATEGORY, assetRecord,
+                "assetCategory", "asset_category", "category", "资产分类");
+        putResolvedAssetField(finalOutputs, LABEL_ASSET_BRAND, assetRecord,
+                "assetBrand", "asset_brand", "brand", "资产品牌");
+        putResolvedAssetField(finalOutputs, LABEL_WARRANTY_DATE, assetRecord,
+                "warrantyDate", "warranty_date", "warrantyExpireDate", "warranty_expire_date", "质保到期日期", "质保到期日");
+        putResolvedAssetField(finalOutputs, LABEL_UNIT, assetRecord,
+                "unit", "单位");
+        putResolvedAssetField(finalOutputs, LABEL_PURCHASE_PRICE, assetRecord,
+                "purchasePrice", "purchase_price", "buyPrice", "buy_price", "price", "价格", "购买价格");
+        putResolvedAssetField(finalOutputs, LABEL_PURCHASE_DATE, assetRecord,
+                "purchaseDate", "purchase_date", "buyDate", "buy_date", "purchaseInDate", "purchase_in_date", "购进日期", "购买日期");
+        putResolvedAssetField(finalOutputs, LABEL_DEPRECIATION_RATE, assetRecord,
+                "depreciationRate", "depreciation_rate", "annualDepreciationRate", "annual_depreciation_rate", "年折旧率(%)", "年折旧率");
+        putResolvedAssetField(finalOutputs, LABEL_ASSET_STATUS, assetRecord,
+                "assetStatus", "asset_status", "status", "状态", "资产状态");
+        putResolvedAssetField(finalOutputs, LABEL_ASSET_SOURCE, assetRecord,
+                "assetSource", "asset_source", "source", "来源", "资产来源");
+        return finalOutputs;
+    }
+
+    private void putResolvedAssetField(
+            Map<String, Object> target,
+            String label,
+            Map<String, Object> assetRecord,
+            String... aliases) {
+        String value = resolveProfileValue(assetRecord, aliases);
+        if (StringUtils.hasText(value)) {
+            target.put(label, value);
+        }
+    }
+
+    private void putAssetField(Map<String, Object> target, Map<String, Object> assetProfile, String label) {
+        putText(target, label, asText(assetProfile.get(label)));
+    }
+
+    private List<Map<String, Object>> buildAssetHighlights(Map<String, Object> finalOutputs) {
+        List<Map<String, Object>> highlights = new ArrayList<>();
+        addResultItem(highlights, LABEL_NAME, finalOutputs.get(LABEL_NAME));
+        addResultItem(highlights, LABEL_ASSET_NAME, finalOutputs.get(LABEL_ASSET_NAME));
+        addResultItem(highlights, LABEL_ASSET_CODE, finalOutputs.get(LABEL_ASSET_CODE));
+        addResultItem(highlights, LABEL_ASSET_STATUS, finalOutputs.get(LABEL_ASSET_STATUS));
+        return highlights;
+    }
+
+    private List<Map<String, Object>> buildAssetSections(Map<String, Object> assetProfile) {
+        List<Map<String, Object>> sections = new ArrayList<>();
+
+        List<Map<String, Object>> basicItems = new ArrayList<>();
+        addAssetItem(basicItems, assetProfile, LABEL_NAME);
+        addAssetItem(basicItems, assetProfile, LABEL_ASSET_NAME);
+        addAssetItem(basicItems, assetProfile, LABEL_ASSET_CODE);
+        addAssetItem(basicItems, assetProfile, LABEL_ASSET_STATUS);
+        addSectionIfPresent(sections, "basic", SECTION_BASIC, basicItems);
+
+        List<Map<String, Object>> assetItems = new ArrayList<>();
+        addAssetItem(assetItems, assetProfile, LABEL_ASSET_MODEL);
+        addAssetItem(assetItems, assetProfile, LABEL_ASSET_CATEGORY);
+        addAssetItem(assetItems, assetProfile, LABEL_ASSET_BRAND);
+        addAssetItem(assetItems, assetProfile, LABEL_WARRANTY_DATE);
+        addAssetItem(assetItems, assetProfile, LABEL_UNIT);
+        addAssetItem(assetItems, assetProfile, LABEL_PURCHASE_PRICE);
+        addAssetItem(assetItems, assetProfile, LABEL_PURCHASE_DATE);
+        addAssetItem(assetItems, assetProfile, LABEL_DEPRECIATION_RATE);
+        addAssetItem(assetItems, assetProfile, LABEL_ASSET_SOURCE);
+        addSectionIfPresent(sections, "asset", SECTION_ASSET, assetItems);
+        return sections;
+    }
+
+    private void addAssetItem(List<Map<String, Object>> items, Map<String, Object> assetProfile, String label) {
+        addResultItem(items, label, assetProfile.get(label));
+    }
+
+    private List<Map<String, Object>> buildAssetItems(Map<String, Object> finalOutputs) {
+        List<Map<String, Object>> items = new ArrayList<>();
+        for (Map.Entry<String, Object> entry : finalOutputs.entrySet()) {
+            addResultItem(items, entry.getKey(), entry.getValue());
+        }
+        return items;
+    }
+
+    private void addResultItem(List<Map<String, Object>> items, String label, Object value) {
+        String text = asText(value);
+        if (StringUtils.hasText(label) && StringUtils.hasText(text)) {
+            items.add(buildFieldItem(label, text));
+        }
+    }
+
+    private List<Map<String, Object>> buildAssetDisplayRecords(List<Map<String, Object>> records) {
+        if (records == null || records.isEmpty()) {
+            return List.of();
+        }
+        List<Map<String, Object>> displayRecords = new ArrayList<>();
+        for (Map<String, Object> record : records) {
+            Map<String, Object> displayRecord = buildAssetFinalOutputs(record);
+            if (!displayRecord.isEmpty()) {
+                displayRecords.add(displayRecord);
+            }
+        }
+        return displayRecords;
+    }
+
+    private Map<String, Object> buildAssetListFinalOutputs(
+            String displayName,
+            List<Map<String, Object>> displayRecords) {
+        Map<String, Object> finalOutputs = new LinkedHashMap<>();
+        putText(finalOutputs, LABEL_INFO_NAME, displayName + TITLE_SUFFIX_ASSET);
+        putText(finalOutputs, LABEL_NAME, displayName);
+        putText(finalOutputs, LABEL_ASSET_COUNT, String.valueOf(displayRecords.size()));
+        if (!displayRecords.isEmpty()) {
+            Map<String, Object> firstRecord = displayRecords.get(0);
+            putText(finalOutputs, LABEL_ASSET_NAME, asText(firstRecord.get(LABEL_ASSET_NAME)));
+            putText(finalOutputs, LABEL_ASSET_STATUS, asText(firstRecord.get(LABEL_ASSET_STATUS)));
+        }
+        return finalOutputs;
+    }
+
+    private List<Map<String, Object>> buildAssetListHighlights(
+            String displayName,
+            List<Map<String, Object>> displayRecords) {
+        List<Map<String, Object>> highlights = new ArrayList<>();
+        addResultItem(highlights, LABEL_NAME, displayName);
+        addResultItem(highlights, LABEL_ASSET_COUNT, String.valueOf(displayRecords.size()));
+        if (!displayRecords.isEmpty()) {
+            Map<String, Object> firstRecord = displayRecords.get(0);
+            addResultItem(highlights, LABEL_ASSET_NAME, firstRecord.get(LABEL_ASSET_NAME));
+            addResultItem(highlights, LABEL_ASSET_STATUS, firstRecord.get(LABEL_ASSET_STATUS));
+        }
+        return highlights;
+    }
+
+    private List<Map<String, Object>> buildAssetListSections(List<Map<String, Object>> displayRecords) {
+        List<Map<String, Object>> sections = new ArrayList<>();
+        for (int index = 0; index < displayRecords.size(); index++) {
+            sections.add(buildSection(
+                    "asset_" + (index + 1),
+                    "第" + (index + 1) + "条资产",
+                    buildAssetItems(displayRecords.get(index))));
+        }
+        return sections;
     }
 
     private Map<String, Object> buildFailureResult(Map<String, Object> payload) {

@@ -61,20 +61,18 @@ public class ProfileHttpService {
             new ParameterizedTypeReference<>() {
             };
 
-    /**
-     * 限制流空闲超时，不限制整条流总时长。
-     */
     private static final Duration DEFAULT_STREAM_IDLE_TIMEOUT = Duration.ofSeconds(30);
 
-    /**
-     * DataAgent 终止性失败关键词。
-     */
     private static final List<String> TERMINAL_FAILURE_MARKERS = List.of(
             "未检索到相关数据表",
             "流程已终止",
             "未找到匹配档案",
             "未找到相关数据",
             "未查询到相关信息");
+
+    private static final List<String> ZERO_RECORD_MARKERS = List.of(
+            "共返回 0 条记录",
+            "共返回0条记录");
 
     private static final TypeReference<LinkedHashMap<String, Object>> MAP_TYPE = new TypeReference<>() {
     };
@@ -106,19 +104,38 @@ public class ProfileHttpService {
     }
 
     /**
-     * 查询指定姓名的个人档案。
+     * Query profile archive information.
      *
-     * @param name 待查询姓名
-     * @return 归一化后的档案结果
+     * @param name employee name
+     * @return normalized profile result
      */
     public Mono<ProfileDTO> queryProfile(String name) {
         return queryProfile(name, IntentRecognizer.IntentType.PROFILE_ARCHIVE);
     }
 
+    /**
+     * Query profile-related information for a specific intent.
+     *
+     * @param name employee name
+     * @param intentType query intent
+     * @return normalized profile result
+     */
     public Mono<ProfileDTO> queryProfile(String name, IntentRecognizer.IntentType intentType) {
+        return queryProfile(name, intentType, null);
+    }
+
+    /**
+     * Query profile-related information for a specific intent.
+     *
+     * @param name display name
+     * @param intentType query intent
+     * @param userId optional OA user id
+     * @return normalized profile result
+     */
+    public Mono<ProfileDTO> queryProfile(String name, IntentRecognizer.IntentType intentType, Long userId) {
         IntentRecognizer.IntentType resolvedIntentType = Optional.ofNullable(intentType)
                 .orElse(IntentRecognizer.IntentType.PROFILE_ARCHIVE);
-        return requestStream(name, resolvedIntentType)
+        return requestStream(name, resolvedIntentType, userId)
                 .timeout(streamIdleTimeout)
                 .<DataAgentStreamEvent>handle((event, sink) -> {
                     if (event.error()) {
@@ -135,24 +152,23 @@ public class ProfileHttpService {
                         .onRetryExhaustedThrow((spec, signal) -> signal.failure()))
                 .doOnSuccess(profileDTO -> logger.info(
                         "ProfileHttpService#queryProfile - success, name={}, threadId={}",
-                        profileDTO.name(), profileDTO.threadId()))
+                        profileDTO.name(),
+                        profileDTO.threadId()))
                 .doOnError(error -> logger.warn(
                         "ProfileHttpService#queryProfile - failed, name={}, error={}",
-                        name, error.getMessage()));
+                        name,
+                        error.getMessage()));
     }
 
-    /**
-     * 发起 SSE 请求。
-     *
-     * @param name 查询姓名
-     * @return SSE 事件流
-     */
-    private Flux<DataAgentStreamEvent> requestStream(String name, IntentRecognizer.IntentType intentType) {
+    private Flux<DataAgentStreamEvent> requestStream(
+            String name,
+            IntentRecognizer.IntentType intentType,
+            Long userId) {
         return profileWebClient.get()
                 .uri(uriBuilder -> uriBuilder
                         .path(searchPath)
                         .queryParam("agentId", agentId)
-                        .queryParam("query", buildProfileQuery(name, intentType))
+                        .queryParam("query", buildProfileQuery(name, intentType, userId))
                         .build())
                 .accept(MediaType.TEXT_EVENT_STREAM)
                 .retrieve()
@@ -165,27 +181,6 @@ public class ProfileHttpService {
                 .filter(Objects::nonNull);
     }
 
-    /**
-     * 生成发送给 DataAgent 的自然语言查询。
-     *
-     * <p>这里只保留单一查询意图，避免把“未找到时如何处理”的逻辑也塞给 NL2SQL，
-     * 从而诱导 DataAgent 生成多语句 SQL。</p>
-     *
-     * @param name 姓名
-     * @return 查询语句
-     */
-    private String buildProfileQuery(String name) {
-        return ("查询姓名为%s的个人档案信息，"
-                + "返回该人员的核心档案字段和值。").formatted(name);
-    }
-
-    /**
-     * 聚合 SSE 事件为单个 DTO。
-     *
-     * @param name 姓名
-     * @param events SSE 事件列表
-     * @return 聚合后的 DTO
-     */
     private ProfileDTO aggregateEvents(
             String name,
             IntentRecognizer.IntentType intentType,
@@ -203,22 +198,18 @@ public class ProfileHttpService {
 
         String fallbackText = extractTerminalText(events);
         if (!StringUtils.hasText(fallbackText)) {
-            throw new IllegalStateException("DataAgent 未返回有效文本结果");
+            throw new IllegalStateException(resolveNoResultMessage(intentType));
+        }
+        if (intentType == IntentRecognizer.IntentType.PROFILE_ASSET_IN_USE
+                && containsZeroRecordMarker(fallbackText)) {
+            throw new IllegalStateException(resolveNoResultMessage(intentType));
         }
         if (containsTerminalFailure(fallbackText)) {
-            throw new IllegalStateException(extractFailureMessage(fallbackText));
+            throw new IllegalStateException(resolveFailureMessage(intentType, fallbackText));
         }
         return new ProfileDTO(name, fallbackText, fallbackText, threadId);
     }
 
-    /**
-     * 优先提取最终 RESULT_SET 结果。
-     *
-     * @param name 查询姓名
-     * @param threadId 线程 ID
-     * @param events SSE 事件列表
-     * @return 命中最终结果时返回 DTO
-     */
     private Optional<ProfileDTO> extractResultSetProfile(
             String name,
             IntentRecognizer.IntentType intentType,
@@ -232,14 +223,6 @@ public class ProfileHttpService {
                 .flatMap(resultSetText -> parseResultSetProfile(name, intentType, threadId, resultSetText));
     }
 
-    /**
-     * 解析 RESULT_SET 事件文本。
-     *
-     * @param name 查询姓名
-     * @param threadId 线程 ID
-     * @param resultSetText RESULT_SET 文本
-     * @return 解析后的 DTO
-     */
     private Optional<ProfileDTO> parseResultSetProfile(
             String name,
             IntentRecognizer.IntentType intentType,
@@ -277,12 +260,6 @@ public class ProfileHttpService {
         }
     }
 
-    /**
-     * 归一化 RESULT_SET 中的多条记录，保留原始字段顺序。
-     *
-     * @param rows DataAgent 返回的结果行
-     * @return 归一化后的记录列表
-     */
     private List<Map<String, Object>> normalizeResultRows(List<?> rows) {
         if (rows == null || rows.isEmpty()) {
             return List.of();
@@ -298,14 +275,6 @@ public class ProfileHttpService {
         return normalizedRows;
     }
 
-    /**
-     * 构建结果集摘要，多条记录时优先输出列表汇总文案。
-     *
-     * @param displayName 展示姓名
-     * @param intentType 意图类型
-     * @param rows 结果记录
-     * @return 摘要文本
-     */
     private String buildResultSetSummary(
             String displayName,
             IntentRecognizer.IntentType intentType,
@@ -314,37 +283,42 @@ public class ProfileHttpService {
             return null;
         }
         if (rows.size() == 1) {
-            return buildRowSummary(rows.get(0));
+            return buildRowSummary(rows.get(0), intentType);
         }
         return switch (Optional.ofNullable(intentType).orElse(IntentRecognizer.IntentType.PROFILE_ARCHIVE)) {
+            case PROFILE_ASSET_IN_USE -> "已查询到%s的%d条在用资产".formatted(displayName, rows.size());
             case PROFILE_SCHEDULE -> "已查询到%s的%d条日程".formatted(displayName, rows.size());
             case PROFILE_GENERAL -> "已查询到%s的%d条个人信息".formatted(displayName, rows.size());
             case PROFILE_ARCHIVE, UNKNOWN -> "已查询到%s的%d条相关记录".formatted(displayName, rows.size());
         };
     }
 
-    /**
-     * 解析结果展示姓名，优先使用结果集中的姓名字段，未命中时回退到查询姓名。
-     *
-     * @param requestedName 查询姓名
-     * @param rows 结果记录
-     * @return 展示姓名
-     */
     private String resolveResultName(String requestedName, List<Map<String, Object>> rows) {
         if (rows == null || rows.isEmpty()) {
             return requestedName;
         }
-        String rowName = resolveRowValue(rows.get(0), "name", "employeeName", "employee_name", "姓名", "员工姓名");
+        String rowName = resolveRowValue(rows.get(0),
+                "name",
+                "employeeName",
+                "employee_name",
+                "userName",
+                "user_name",
+                "assignee",
+                "姓名",
+                "使用人员",
+                "领用人",
+                "员工姓名");
         return StringUtils.hasText(rowName) ? rowName : requestedName;
     }
 
-    /**
-     * 构建最终返回给前端的档案摘要。
-     *
-     * @param row 首条结果记录
-     * @return 人类可读的摘要文本
-     */
-    private String buildRowSummary(Map<String, Object> row) {
+    private String buildRowSummary(Map<String, Object> row, IntentRecognizer.IntentType intentType) {
+        if (IntentRecognizer.IntentType.PROFILE_ASSET_IN_USE == intentType) {
+            String assetSummary = buildAssetRowSummary(row);
+            if (StringUtils.hasText(assetSummary)) {
+                return assetSummary;
+            }
+        }
+
         List<String> summaryParts = new ArrayList<>();
         addIfHasText(summaryParts, resolveRowValue(row, "name", "employeeName", "employee_name", "姓名", "员工姓名"));
         addIfHasText(summaryParts, resolveRowValue(row, "gender", "sex", "性别", "员工性别"));
@@ -379,23 +353,39 @@ public class ProfileHttpService {
                 "日程",
                 "行程",
                 "事项"));
-        addIfHasText(summaryParts, resolveRowValue(row, "city", "currentAddress", "current_address", "现居地址", "城市"));
+        addIfHasText(summaryParts, resolveRowValue(row,
+                "city",
+                "currentAddress",
+                "current_address",
+                "现居地地址",
+                "城市"));
         if (summaryParts.size() > 1) {
             return String.join("，", summaryParts);
         }
         return row.entrySet().stream()
                 .filter(entry -> StringUtils.hasText(asText(entry.getValue())))
                 .map(entry -> entry.getKey() + "：" + asText(entry.getValue()))
-                .collect(Collectors.joining("，"));
+                .collect(Collectors.joining("；"));
     }
 
-    /**
-     * 根据别名解析结果行中的目标字段值。
-     *
-     * @param row 查询结果行
-     * @param aliases 目标字段别名
-     * @return 命中的字段值
-     */
+    private String buildAssetRowSummary(Map<String, Object> row) {
+        if (row == null || row.isEmpty()) {
+            return null;
+        }
+        List<String> summaryParts = new ArrayList<>();
+        addIfHasText(summaryParts, resolveRowValue(row,
+                "assetName", "asset_name", "assetUnitName", "asset_unit_name", "unitName", "unit_name", "资产名称", "单位名称"));
+        addIfHasText(summaryParts, resolveRowValue(row,
+                "assetCode", "asset_code", "code", "编号", "资产编码", "资产编号"));
+        addIfHasText(summaryParts, resolveRowValue(row,
+                "assetModel", "asset_model", "model", "规格型号", "资产型号"));
+        addIfHasText(summaryParts, resolveRowValue(row,
+                "assetStatus", "status", "状态", "资产状态"));
+        addIfHasText(summaryParts, resolveRowValue(row,
+                "assetSource", "source", "来源", "资产来源"));
+        return summaryParts.isEmpty() ? null : String.join("，", summaryParts);
+    }
+
     private String resolveRowValue(Map<String, Object> row, String... aliases) {
         if (row == null || row.isEmpty() || aliases == null || aliases.length == 0) {
             return null;
@@ -412,44 +402,26 @@ public class ProfileHttpService {
         return null;
     }
 
-    /**
-     * 判断当前别名是否表示性别字段。
-     *
-     * @param alias 字段别名
-     * @return 是否为性别字段
-     */
     private boolean isGenderAlias(String alias) {
         String normalizedAlias = normalizeKey(alias);
         return "gender".equals(normalizedAlias)
                 || "sex".equals(normalizedAlias)
-                || "\u6027\u522b".equals(alias)
-                || "\u5458\u5de5\u6027\u522b".equals(alias);
+                || "性别".equals(alias)
+                || "员工性别".equals(alias);
     }
 
-    /**
-     * 将性别编码转换成前端友好的展示值。
-     *
-     * @param rawGender 原始性别值
-     * @return 归一化后的展示值
-     */
     private String normalizeGenderValue(String rawGender) {
         if (!StringUtils.hasText(rawGender)) {
             return rawGender;
         }
         String normalized = rawGender.trim().toLowerCase(Locale.ROOT);
         return switch (normalized) {
-            case "1", "m", "male", "man", "\u7537" -> "\u7537";
-            case "0", "2", "f", "female", "woman", "\u5973" -> "\u5973";
+            case "1", "m", "male", "man", "男" -> "男";
+            case "0", "2", "f", "female", "woman", "女" -> "女";
             default -> rawGender.trim();
         };
     }
 
-    /**
-     * 统一字段名格式，便于兼容不同命名风格的结果列。
-     *
-     * @param key 原始字段名
-     * @return 归一化后的字段名
-     */
     private String normalizeKey(String key) {
         if (!StringUtils.hasText(key)) {
             return "";
@@ -457,24 +429,12 @@ public class ProfileHttpService {
         return key.replaceAll("[\\s_\\-]", "").toLowerCase(Locale.ROOT);
     }
 
-    /**
-     * 仅在文本非空时追加到摘要片段中。
-     *
-     * @param parts 摘要片段集合
-     * @param value 文本值
-     */
     private void addIfHasText(List<String> parts, String value) {
         if (StringUtils.hasText(value)) {
             parts.add(value);
         }
     }
 
-    /**
-     * 从普通文本事件中提取末尾节点文本。
-     *
-     * @param events SSE 事件列表
-     * @return 聚合后的末尾文本
-     */
     private String extractTerminalText(List<DataAgentStreamEvent> events) {
         String terminalNodeName = events.stream()
                 .filter(this::isReadableTextEvent)
@@ -492,22 +452,10 @@ public class ProfileHttpService {
                 .trim();
     }
 
-    /**
-     * 判断当前异常是否允许重试。
-     *
-     * @param throwable 异常
-     * @return 是否允许重试
-     */
     private boolean isRetryable(Throwable throwable) {
         return !(throwable instanceof IllegalArgumentException || throwable instanceof IllegalStateException);
     }
 
-    /**
-     * 解析错误事件的提示文本。
-     *
-     * @param event SSE 错误事件
-     * @return 错误信息
-     */
     private String resolveErrorMessage(DataAgentStreamEvent event) {
         return Optional.ofNullable(event)
                 .map(DataAgentStreamEvent::text)
@@ -515,37 +463,18 @@ public class ProfileHttpService {
                 .orElse("DataAgent 返回错误事件");
     }
 
-    /**
-     * 判断事件是否为可聚合的普通文本事件。
-     *
-     * @param event SSE 事件
-     * @return 是普通文本时返回 true
-     */
     private boolean isReadableTextEvent(DataAgentStreamEvent event) {
         return event != null
                 && StringUtils.hasText(event.text())
                 && "TEXT".equalsIgnoreCase(Optional.ofNullable(event.textType()).orElse(""));
     }
 
-    /**
-     * 判断事件是否为最终结果集事件。
-     *
-     * @param event SSE 事件
-     * @return 是结果集事件时返回 true
-     */
     private boolean isResultSetEvent(DataAgentStreamEvent event) {
         return event != null
                 && StringUtils.hasText(event.text())
                 && "RESULT_SET".equalsIgnoreCase(Optional.ofNullable(event.textType()).orElse(""));
     }
 
-    /**
-     * 判断事件是否应该参与末尾文本聚合。
-     *
-     * @param event 当前事件
-     * @param terminalNodeName 最终文本节点名
-     * @return 应参与聚合时返回 true
-     */
     private boolean shouldIncludeEventForAggregation(DataAgentStreamEvent event, String terminalNodeName) {
         if (!StringUtils.hasText(terminalNodeName)) {
             return true;
@@ -553,22 +482,14 @@ public class ProfileHttpService {
         return terminalNodeName.equals(event.nodeName());
     }
 
-    /**
-     * 判断文本中是否包含终止性失败信号。
-     *
-     * @param rawText 文本
-     * @return 命中失败信号时返回 true
-     */
     private boolean containsTerminalFailure(String rawText) {
         return TERMINAL_FAILURE_MARKERS.stream().anyMatch(rawText::contains);
     }
 
-    /**
-     * 从失败文本中提取更适合返回给前端的错误摘要。
-     *
-     * @param rawText 失败文本
-     * @return 错误摘要
-     */
+    private boolean containsZeroRecordMarker(String rawText) {
+        return ZERO_RECORD_MARKERS.stream().anyMatch(rawText::contains);
+    }
+
     private String extractFailureMessage(String rawText) {
         return rawText.lines()
                 .map(String::trim)
@@ -578,12 +499,19 @@ public class ProfileHttpService {
                 .orElse(rawText);
     }
 
-    /**
-     * 安全转换为文本。
-     *
-     * @param value 任意值
-     * @return 文本值
-     */
+    private String resolveNoResultMessage(IntentRecognizer.IntentType intentType) {
+        return intentType == IntentRecognizer.IntentType.PROFILE_ASSET_IN_USE
+                ? "暂无该用户使用记录"
+                : "DataAgent 未返回有效文本结果";
+    }
+
+    private String resolveFailureMessage(IntentRecognizer.IntentType intentType, String rawText) {
+        if (intentType == IntentRecognizer.IntentType.PROFILE_ASSET_IN_USE) {
+            return "暂无该用户使用记录";
+        }
+        return extractFailureMessage(rawText);
+    }
+
     private String asText(Object value) {
         if (value == null) {
             return null;
@@ -592,12 +520,6 @@ public class ProfileHttpService {
         return StringUtils.hasText(text) ? text : null;
     }
 
-    /**
-     * 安全转换为 Map。
-     *
-     * @param value 任意值
-     * @return Map 结果
-     */
     @SuppressWarnings("unchecked")
     private Map<String, Object> asMap(Object value) {
         if (value instanceof Map<?, ?> map) {
@@ -627,21 +549,13 @@ public class ProfileHttpService {
         }
     }
 
-    /**
-     * DataAgent SSE 事件载荷。
-     *
-     * @param agentId 智能体编号
-     * @param threadId 会话线程标识
-     * @param nodeName 节点名称
-     * @param textType 文本类型
-     * @param text 文本内容
-     * @param error 是否错误
-     * @param complete 是否完成
-     */
-    private String buildProfileQuery(String name, IntentRecognizer.IntentType intentType) {
+    private String buildProfileQuery(String name, IntentRecognizer.IntentType intentType, Long userId) {
         IntentRecognizer.IntentType resolvedIntentType = Optional.ofNullable(intentType)
                 .orElse(IntentRecognizer.IntentType.PROFILE_ARCHIVE);
         return switch (resolvedIntentType) {
+            case PROFILE_ASSET_IN_USE -> ("查询用户ID为%s的当前正在使用的资产，"
+                    + "返回资产名称、资产编码、资产型号、资产分类、资产品牌、质保到期日、单位、购买价格、购买日期、年折旧率、资产状态、资产来源。")
+                    .formatted(String.valueOf(userId));
             case PROFILE_SCHEDULE -> ("查询姓名为%s的个人日程、日历或排期信息，"
                     + "返回该人员日程相关的核心字段和值。").formatted(name);
             case PROFILE_GENERAL -> ("查询姓名为%s的个人信息，"
