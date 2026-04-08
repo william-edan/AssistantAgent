@@ -49,6 +49,10 @@ public class IntentRecognizer {
         String normalizedInput = Optional.ofNullable(userInput)
                 .map(String::trim)
                 .orElse("");
+        // 避免将“公司车辆信息”误识别为“个人信息”。
+        if (isCompanyCarQuery(normalizedInput)) {
+            return RecognitionResult.notMatched();
+        }
         IntentType intentType = detectIntentType(normalizedInput);
         if (intentType == IntentType.UNKNOWN) {
             return RecognitionResult.notMatched();
@@ -233,6 +237,13 @@ public class IntentRecognizer {
             }
         }
         return false;
+    }
+
+    private boolean isCompanyCarQuery(String input) {
+        boolean hasVehicleKeyword = containsAny(input, "车辆", "用车", "公车");
+        boolean hasCompanyKeyword = containsAny(input, "公司", "企业", "单位");
+        boolean hasQueryKeyword = containsAny(input, "查询", "查", "查看", "信息", "列表");
+        return hasVehicleKeyword && hasCompanyKeyword && hasQueryKeyword;
     }
 
     /**
