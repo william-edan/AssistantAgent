@@ -21,6 +21,7 @@ import com.alibaba.assistant.agent.common.hook.AgentPhase;
 import com.alibaba.assistant.agent.common.hook.HookPhases;
 import com.alibaba.assistant.agent.runtime.agent.AssistantStateKeys;
 import com.alibaba.assistant.agent.start.reward.tool.RewardWorkflowTool;
+import com.alibaba.assistant.agent.start.reward.util.RewardFormSummaryParser;
 import com.alibaba.cloud.ai.graph.KeyStrategy;
 import com.alibaba.cloud.ai.graph.OverAllState;
 import com.alibaba.cloud.ai.graph.RunnableConfig;
@@ -35,6 +36,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.context.annotation.Profile;
+import org.springframework.lang.Nullable;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 
@@ -95,25 +97,43 @@ public class RewardFastIntentHook extends AgentHook implements Prioritized {
         }
 
         boolean confirmed = pendingRewardForm.confirming()
-                && (isConfirmText(userInput) || hasStructuredSlotInputs);
+                && (isConfirmText(userInput)
+                || hasStructuredSlotInputs
+                || RewardFormSummaryParser.looksLikeSubmissionSummary(userInput));
         String routeType = pendingRewardForm.active()
                 ? (confirmed ? "REWARD_WORKFLOW_SUBMIT" : "REWARD_WORKFLOW_CONTINUE")
                 : "REWARD_WORKFLOW_DIRECT";
         log.info("RewardFastIntentHook#beforeAgent - routeType={}, confirmed={}", routeType, confirmed);
-        return CompletableFuture.completedFuture(buildToolUpdates(userInput, confirmed, routeType));
+        return CompletableFuture.completedFuture(buildToolUpdates(userInput, confirmed, routeType, state));
     }
 
-    private Map<String, Object> buildToolUpdates(String userInput, boolean confirmed, String routeType) {
+    private Map<String, Object> buildToolUpdates(
+            String userInput,
+            boolean confirmed,
+            String routeType,
+            @Nullable OverAllState state) {
         try {
+            Map<String, Object> toolArgs = new LinkedHashMap<>();
+            toolArgs.put("userInput", Optional.ofNullable(userInput).orElse(""));
+            toolArgs.put("confirmed", confirmed);
+
+            Map<String, Object> slotInputs = extractCurrentTurnSlotInputs(state);
+            if (!slotInputs.isEmpty()) {
+                toolArgs.put("slotInputs", slotInputs);
+            }
+
+            Map<String, Object> frontendThreadState = extractFrontendThreadState(state);
+            if (!frontendThreadState.isEmpty()) {
+                toolArgs.put("frontendThreadState", frontendThreadState);
+            }
+
             AssistantMessage assistantMessage = AssistantMessage.builder()
                     .content("")
                     .toolCalls(List.of(new AssistantMessage.ToolCall(
                             "reward_fast_intent_" + UUID.randomUUID().toString().substring(0, 8),
                             "function",
                             RewardWorkflowTool.TOOL_NAME,
-                            objectMapper.writeValueAsString(Map.of(
-                                    "userInput", Optional.ofNullable(userInput).orElse(""),
-                                    "confirmed", confirmed)))))
+                            objectMapper.writeValueAsString(toolArgs))))
                     .build();
 
             Map<String, Object> fastIntentState = new LinkedHashMap<>();
@@ -131,6 +151,40 @@ public class RewardFastIntentHook extends AgentHook implements Prioritized {
             log.info("RewardFastIntentHook#buildToolUpdates - error={}", exception.getMessage());
             return Map.of();
         }
+    }
+
+    private Map<String, Object> extractCurrentTurnSlotInputs(@Nullable OverAllState state) {
+        if (state == null) {
+            return Map.of();
+        }
+        Object raw = state.value(AssistantStateKeys.CURRENT_TURN_SLOT_INPUTS, Object.class).orElse(null);
+        if (!(raw instanceof Map<?, ?> slotInputs) || slotInputs.isEmpty()) {
+            return Map.of();
+        }
+        Map<String, Object> normalized = new LinkedHashMap<>();
+        slotInputs.forEach((key, value) -> {
+            if (key != null && value != null) {
+                normalized.put(String.valueOf(key), value);
+            }
+        });
+        return normalized;
+    }
+
+    private Map<String, Object> extractFrontendThreadState(@Nullable OverAllState state) {
+        if (state == null) {
+            return Map.of();
+        }
+        Object raw = state.value(AssistantStateKeys.FRONTEND_THREAD_STATE, Object.class).orElse(null);
+        if (!(raw instanceof Map<?, ?> frontendThreadState) || frontendThreadState.isEmpty()) {
+            return Map.of();
+        }
+        Map<String, Object> normalized = new LinkedHashMap<>();
+        frontendThreadState.forEach((key, value) -> {
+            if (key != null && value != null) {
+                normalized.put(String.valueOf(key), value);
+            }
+        });
+        return normalized;
     }
 
     private String resolveUserInput(OverAllState state) {

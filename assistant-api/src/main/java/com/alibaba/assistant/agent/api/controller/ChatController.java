@@ -264,7 +264,8 @@ public class ChatController {
 		if (newMessage == null) {
 			return Flux.error(new ResponseStatusException(HttpStatus.BAD_REQUEST, "newMessage cannot be null"));
 		}
-		List<FrontendEvent> replayEvents = resolveRunReplayEvents(threadId, userId, newMessage, stateDelta);
+		ChatThreadStateData threadState = loadRunThreadState(threadId, userId);
+		List<FrontendEvent> replayEvents = resolveRunReplayEvents(threadState, threadId, newMessage, stateDelta);
 		if (!replayEvents.isEmpty()) {
 			return Flux.fromIterable(replayEvents).map(this::toSse);
 		}
@@ -272,7 +273,9 @@ public class ChatController {
 			// 快速定位：对话主链从这里开始，先装载 Agent，再把用户输入和状态一起送进图运行时。
 			Agent agent = agentLoader.loadAgent(appName);
 			UserMessage userMessage = newMessage.toUserMessage();
-			Map<String, Object> effectiveStateDelta = resolveRoleBindingState(stateDelta, userMessage.getText());
+			Map<String, Object> effectiveStateDelta = resolveRoleBindingState(
+					mergeFrontendThreadState(stateDelta, threadState),
+					userMessage.getText());
 			Map<String, Object> agentInput = buildAgentInput(userMessage, effectiveStateDelta);
 			String turnId = UUID.randomUUID().toString();
 			RunnableConfig.Builder configBuilder = RunnableConfig.builder()
@@ -1186,14 +1189,11 @@ public class ChatController {
 			return List.of();
 		}
 		try {
-			ChatThreadStateData threadState = chatThreadStateService.getThreadState(threadId, assistantUid);
-			if (!shouldReplayPendingForm(threadState, newMessage, stateDelta)) {
-				return List.of();
-			}
-			logger.info(
-					"ChatController#resolveRunReplayEvents - replay pending form instead of re-entering model, threadId={}",
-					threadId);
-			return buildReplayEvents(threadState, "run_sse");
+			return resolveRunReplayEvents(
+					chatThreadStateService.getThreadState(threadId, assistantUid),
+					threadId,
+					newMessage,
+					stateDelta);
 		}
 		catch (Exception ex) {
 			logger.debug("ChatController#resolveRunReplayEvents - reason=thread快照不可用, threadId={}", threadId, ex);
@@ -1201,10 +1201,40 @@ public class ChatController {
 		}
 	}
 
-    private boolean shouldReplayPendingForm(
-            @Nullable ChatThreadStateData threadState,
-            @Nullable UserMessageDTO newMessage,
-            @Nullable Map<String, Object> stateDelta) {
+	private List<FrontendEvent> resolveRunReplayEvents(
+			@Nullable ChatThreadStateData threadState,
+			String threadId,
+			@Nullable UserMessageDTO newMessage,
+			@Nullable Map<String, Object> stateDelta) {
+		if (threadState == null || !shouldReplayPendingForm(threadState, newMessage, stateDelta)) {
+			return List.of();
+		}
+		logger.info(
+				"ChatController#resolveRunReplayEvents - replay pending form instead of re-entering model, threadId={}",
+				threadId);
+		return buildReplayEvents(threadState, "run_sse");
+	}
+
+	@Nullable
+	private ChatThreadStateData loadRunThreadState(String threadId, String assistantUid) {
+		if (chatThreadStateService == null
+				|| !StringUtils.hasText(threadId)
+				|| !StringUtils.hasText(assistantUid)) {
+			return null;
+		}
+		try {
+			return chatThreadStateService.getThreadState(threadId, assistantUid);
+		}
+		catch (Exception ex) {
+			logger.debug("ChatController#loadRunThreadState - reason=thread蹇収涓嶅彲鐢? threadId={}", threadId, ex);
+			return null;
+		}
+	}
+
+	private boolean shouldReplayPendingForm(
+			@Nullable ChatThreadStateData threadState,
+			@Nullable UserMessageDTO newMessage,
+			@Nullable Map<String, Object> stateDelta) {
         if (threadState == null
                 || !threadState.unfinished()
                 || !"FORM_CARD".equalsIgnoreCase(threadState.pendingCardType())
@@ -1224,6 +1254,53 @@ public class ChatController {
 		}
 		return isPromptEcho(incomingText, asText(threadState.pendingForm().get("message")))
 				|| isPromptEcho(incomingText, threadState.lastMessage());
+	}
+
+	private Map<String, Object> mergeFrontendThreadState(
+			@Nullable Map<String, Object> stateDelta,
+			@Nullable ChatThreadStateData threadState) {
+		if (threadState == null || !threadState.unfinished()) {
+			return stateDelta;
+		}
+		Map<String, Object> frontendThreadState = buildFrontendThreadStateSnapshot(threadState);
+		if (frontendThreadState.isEmpty()) {
+			return stateDelta;
+		}
+		Map<String, Object> merged = stateDelta == null || stateDelta.isEmpty()
+				? new LinkedHashMap<>()
+				: new LinkedHashMap<>(stateDelta);
+		merged.putIfAbsent(AssistantStateKeys.FRONTEND_THREAD_STATE, frontendThreadState);
+		return merged;
+	}
+
+	private Map<String, Object> buildFrontendThreadStateSnapshot(ChatThreadStateData threadState) {
+		if (threadState == null) {
+			return Map.of();
+		}
+		Map<String, Object> snapshot = new LinkedHashMap<>();
+		putIfHasText(snapshot, "status", threadState.status());
+		putIfHasText(snapshot, "phase", threadState.phase());
+		snapshot.put("unfinished", threadState.unfinished());
+		snapshot.put("canResume", threadState.canResume());
+		putIfHasText(snapshot, "toolCode", threadState.toolCode());
+		putIfHasText(snapshot, "pendingCardType", threadState.pendingCardType());
+		putIfHasText(snapshot, "lastMessage", threadState.lastMessage());
+		if (threadState.pendingForm() != null && !threadState.pendingForm().isEmpty()) {
+			snapshot.put("pendingForm", new LinkedHashMap<>(threadState.pendingForm()));
+		}
+		if (threadState.lastResult() != null && !threadState.lastResult().isEmpty()) {
+			snapshot.put("lastResult", new LinkedHashMap<>(threadState.lastResult()));
+		}
+		if (threadState.tasks() != null && !threadState.tasks().isEmpty()) {
+			snapshot.put("tasks", threadState.tasks());
+		}
+		if (threadState.notifications() != null && !threadState.notifications().isEmpty()) {
+			snapshot.put("notifications", threadState.notifications());
+		}
+		if (threadState.nextAction() != null && !threadState.nextAction().isEmpty()) {
+			snapshot.put("nextAction", new LinkedHashMap<>(threadState.nextAction()));
+		}
+		return snapshot;
 	}
 
 	private boolean hasExplicitRunReplayInput(@Nullable Map<String, Object> stateDelta) {

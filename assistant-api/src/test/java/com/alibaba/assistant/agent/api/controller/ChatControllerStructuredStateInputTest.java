@@ -282,6 +282,39 @@ class ChatControllerStructuredStateInputTest {
     }
 
     @Test
+    void shouldInjectPersistedFrontendThreadStateIntoAgentInputWhenContinuingPendingFormRun() throws Exception {
+        authenticate();
+        when(chatThreadStateService.getThreadState("thread-reward-form-submit", "1001"))
+                .thenReturn(pendingFormThreadState("thread-reward-form-submit"));
+        when(agentLoader.loadAgent("grayscale_agent")).thenReturn(agent);
+        when(agent.stream(anyMap(), any(RunnableConfig.class))).thenReturn(Flux.empty());
+
+        AgentRunRequest request = new AgentRunRequest();
+        request.threadId = "thread-reward-form-submit";
+        request.userId = "ignored-user";
+        request.newMessage = new UserMessageDTO(FORM_PROMPT);
+        request.stateDelta = new LinkedHashMap<>();
+        request.stateDelta.put("types", 2);
+        request.stateDelta.put("cost", "200");
+
+        controller.runSse(request, null, null, null).blockLast();
+
+        ArgumentCaptor<Map<String, Object>> inputCaptor = ArgumentCaptor.forClass(Map.class);
+        verify(agent).stream(inputCaptor.capture(), any(RunnableConfig.class));
+        Map<String, Object> agentInput = inputCaptor.getValue();
+        assertEquals(2, agentInput.get("types"));
+        assertEquals("200", agentInput.get("cost"));
+        @SuppressWarnings("unchecked")
+        Map<String, Object> frontendThreadState =
+                (Map<String, Object>) agentInput.get(AssistantStateKeys.FRONTEND_THREAD_STATE);
+        assertEquals("FORM_CARD", frontendThreadState.get("pendingCardType"));
+        assertEquals("WAITING_INPUT", frontendThreadState.get("status"));
+        assertEquals(
+                pendingFormThreadState("thread-reward-form-submit").pendingForm(),
+                frontendThreadState.get("pendingForm"));
+    }
+
+    @Test
     void shouldNotReplayTerminalReadOnlyFormDuringRunSse() throws Exception {
         authenticate();
         when(chatThreadStateService.getThreadState("thread-profile-done", "1001"))

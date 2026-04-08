@@ -38,11 +38,15 @@ public class DataAgentResultParser {
             Pattern.compile("```(?:json)?\\s*(.*?)\\s*```", Pattern.CASE_INSENSITIVE | Pattern.DOTALL);
 
     private static final Pattern UID_THEN_NAME_PATTERN =
-            Pattern.compile("(?:uid|用户id)\\s*[:：=]?\\s*(\\d+).*?(?:uname|姓名|用户名)\\s*[:：=]?\\s*([\\p{IsHan}A-Za-z0-9_·-]+)",
+            Pattern.compile(
+                    "(?:uid|用户id|用户ID|员工id|员工ID)\\s*[:：=]?\\s*(\\d+).*?"
+                            + "(?:uname|姓名|员工姓名|用户名|用户名称)\\s*[:：=]?\\s*([\\p{IsHan}A-Za-z0-9_·-]+)",
                     Pattern.CASE_INSENSITIVE | Pattern.DOTALL);
 
     private static final Pattern NAME_THEN_UID_PATTERN =
-            Pattern.compile("(?:uname|姓名|用户名)\\s*[:：=]?\\s*([\\p{IsHan}A-Za-z0-9_·-]+).*?(?:uid|用户id)\\s*[:：=]?\\s*(\\d+)",
+            Pattern.compile(
+                    "(?:uname|姓名|员工姓名|用户名|用户名称)\\s*[:：=]?\\s*([\\p{IsHan}A-Za-z0-9_·-]+).*?"
+                            + "(?:uid|用户id|用户ID|员工id|员工ID)\\s*[:：=]?\\s*(\\d+)",
                     Pattern.CASE_INSENSITIVE | Pattern.DOTALL);
 
     private final ObjectMapper objectMapper;
@@ -128,8 +132,18 @@ public class DataAgentResultParser {
         if (node == null || !node.isObject()) {
             return Optional.empty();
         }
-        Long uid = firstLong(node, "uid", "userId", "user_id", "id");
-        String uname = firstText(node, "uname", "userName", "user_name", "username", "name", "姓名");
+        Long uid = firstLong(node, "uid", "userId", "user_id", "id", "用户ID", "用户id", "员工ID", "员工id");
+        String uname = firstText(
+                node,
+                "uname",
+                "userName",
+                "user_name",
+                "username",
+                "name",
+                "姓名",
+                "员工姓名",
+                "用户名",
+                "用户名称");
         if (uid == null || !StringUtils.hasText(uname)) {
             return Optional.empty();
         }

@@ -29,6 +29,7 @@ import com.alibaba.assistant.agent.start.reward.node.RewardAutoExecuteNode;
 import com.alibaba.assistant.agent.start.reward.node.RewardFormNode;
 import com.alibaba.assistant.agent.start.reward.node.RewardIntentNode;
 import com.alibaba.assistant.agent.start.reward.util.RewardErrorMessageUtil;
+import com.alibaba.assistant.agent.start.reward.util.RewardFormSummaryParser;
 import com.alibaba.cloud.ai.graph.OverAllState;
 import com.alibaba.cloud.ai.graph.agent.tools.ToolContextConstants;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -82,14 +83,14 @@ public class RewardWorkflowTool extends AbstractDynamicCodeactTool {
     protected String doCall(Map<String, Object> args, @Nullable ToolContext toolContext) throws Exception {
         try {
             String userInput = resolveUserInput(args, toolContext);
-            PendingRewardForm pendingRewardForm = resolvePendingRewardForm(toolContext);
+            PendingRewardForm pendingRewardForm = resolvePendingRewardForm(args, toolContext);
             boolean startFreshRequest = shouldStartFreshRequest(userInput, pendingRewardForm);
             PendingRewardForm effectivePendingForm = startFreshRequest ? PendingRewardForm.inactive() : pendingRewardForm;
             if (!effectivePendingForm.active() && !isRewardRequest(userInput)) {
                 return objectMapper.writeValueAsString(errorPayload("当前输入不属于员工奖惩流程"));
             }
 
-            Map<String, Object> slotInputs = resolveSlotInputs(args, toolContext, effectivePendingForm);
+            Map<String, Object> slotInputs = resolveSlotInputs(args, toolContext, effectivePendingForm, userInput);
             RewardIntentResult intentResult = mergeIntentResult(
                     rewardIntentNode.identify(userInput),
                     effectivePendingForm,
@@ -142,8 +143,10 @@ public class RewardWorkflowTool extends AbstractDynamicCodeactTool {
     private Map<String, Object> resolveSlotInputs(
             Map<String, Object> args,
             @Nullable ToolContext toolContext,
-            PendingRewardForm pendingRewardForm) {
+            PendingRewardForm pendingRewardForm,
+            String userInput) {
         Map<String, Object> slotInputs = new LinkedHashMap<>(pendingRewardForm.values());
+        slotInputs.putAll(RewardFormSummaryParser.extractSlotInputs(userInput));
         slotInputs.putAll(extractArgumentSlotInputs(args));
         OverAllState state = extractState(toolContext);
         if (state == null) {
@@ -210,7 +213,8 @@ public class RewardWorkflowTool extends AbstractDynamicCodeactTool {
         if (Boolean.TRUE.equals(args.get("confirmed"))) {
             return true;
         }
-        return pendingRewardForm.confirming() && isConfirmText(userInput);
+        return pendingRewardForm.confirming()
+                && (isConfirmText(userInput) || RewardFormSummaryParser.looksLikeSubmissionSummary(userInput));
     }
 
     private Map<String, Object> normalizeNodeResult(RewardNodeResult nodeResult) {
@@ -248,7 +252,8 @@ public class RewardWorkflowTool extends AbstractDynamicCodeactTool {
     private boolean shouldStartFreshRequest(String userInput, PendingRewardForm pendingRewardForm) {
         return pendingRewardForm.active()
                 && isRewardRequest(userInput)
-                && !isConfirmText(userInput);
+                && !isConfirmText(userInput)
+                && !RewardFormSummaryParser.hasFormLikeSlotInputs(userInput);
     }
 
     private Map<String, Object> errorPayload(String message) {
@@ -261,12 +266,17 @@ public class RewardWorkflowTool extends AbstractDynamicCodeactTool {
                 "artifactCode", TOOL_NAME));
     }
 
-    private PendingRewardForm resolvePendingRewardForm(@Nullable ToolContext toolContext) {
-        OverAllState state = extractState(toolContext);
-        if (state == null) {
-            return PendingRewardForm.inactive();
+    private PendingRewardForm resolvePendingRewardForm(
+            Map<String, Object> args,
+            @Nullable ToolContext toolContext) {
+        PendingRewardForm statePendingForm = toPendingRewardForm(resolveFrontendThreadState(toolContext));
+        if (statePendingForm.active()) {
+            return statePendingForm;
         }
-        Object rawThreadState = state.value(AssistantStateKeys.FRONTEND_THREAD_STATE, Object.class).orElse(null);
+        return toPendingRewardForm(args.get("frontendThreadState"));
+    }
+
+    private PendingRewardForm toPendingRewardForm(@Nullable Object rawThreadState) {
         if (!(rawThreadState instanceof Map<?, ?> threadState)) {
             return PendingRewardForm.inactive();
         }
@@ -292,6 +302,14 @@ public class RewardWorkflowTool extends AbstractDynamicCodeactTool {
         boolean confirming = "CONFIRM".equalsIgnoreCase(mode)
                 || "WAITING_CONFIRMATION".equalsIgnoreCase(asText(pendingForm.get("status")));
         return new PendingRewardForm(true, confirming, values);
+    }
+
+    private Object resolveFrontendThreadState(@Nullable ToolContext toolContext) {
+        OverAllState state = extractState(toolContext);
+        if (state == null) {
+            return null;
+        }
+        return state.value(AssistantStateKeys.FRONTEND_THREAD_STATE, Object.class).orElse(null);
     }
 
     private OverAllState extractState(@Nullable ToolContext toolContext) {

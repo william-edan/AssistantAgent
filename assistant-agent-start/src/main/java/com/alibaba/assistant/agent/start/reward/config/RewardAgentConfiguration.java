@@ -20,6 +20,7 @@ import com.alibaba.assistant.agent.start.reward.node.RewardAutoExecuteNode;
 import com.alibaba.assistant.agent.start.reward.node.RewardFormNode;
 import com.alibaba.assistant.agent.start.reward.node.RewardIntentNode;
 import com.alibaba.assistant.agent.start.reward.service.DataAgentService;
+import com.alibaba.assistant.agent.start.reward.service.RewardEmployeeHttpService;
 import com.alibaba.assistant.agent.start.reward.util.DataAgentResultParser;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.netty.channel.ChannelOption;
@@ -27,12 +28,12 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Profile;
+import reactor.netty.http.client.HttpClient;
 import org.springframework.http.client.reactive.ReactorClientHttpConnector;
 import org.springframework.web.reactive.function.client.WebClient;
-import reactor.netty.http.client.HttpClient;
 
 /**
- * 员工奖惩流程配置。
+ * Reward workflow configuration.
  */
 @Configuration
 @Profile("migration")
@@ -62,10 +63,9 @@ public class RewardAgentConfiguration {
 
     @Bean
     public RewardFormNode rewardFormNode(
-            DataAgentService dataAgentService,
-            RewardsClient rewardsClient,
-            DataAgentResultParser resultParser) {
-        return new RewardFormNode(dataAgentService, rewardsClient, resultParser);
+            RewardEmployeeHttpService rewardEmployeeHttpService,
+            RewardsClient rewardsClient) {
+        return new RewardFormNode(rewardEmployeeHttpService, rewardsClient);
     }
 
     @Bean

@@ -23,8 +23,7 @@ import com.alibaba.assistant.agent.start.reward.model.RewardIntentResult;
 import com.alibaba.assistant.agent.start.reward.model.RewardNodeResult;
 import com.alibaba.assistant.agent.start.reward.model.RewardUserRecord;
 import com.alibaba.assistant.agent.start.reward.model.RewardWorkflowContext;
-import com.alibaba.assistant.agent.start.reward.service.DataAgentService;
-import com.alibaba.assistant.agent.start.reward.util.DataAgentResultParser;
+import com.alibaba.assistant.agent.start.reward.service.RewardEmployeeHttpService;
 import com.alibaba.assistant.agent.start.reward.util.RewardErrorMessageUtil;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -40,27 +39,24 @@ import java.util.Map;
 import java.util.Optional;
 
 /**
- * 员工奖惩表单节点。
+ * Reward form node.
  */
 public class RewardFormNode {
 
     private static final Logger log = LoggerFactory.getLogger(RewardFormNode.class);
 
-    private static final String USER_LOOKUP_FAILED_MESSAGE = "未查询到员工，请重新选择员工";
+    private static final String USER_LOOKUP_FAILED_MESSAGE =
+            "\u672a\u67e5\u8be2\u5230\u5458\u5de5\uff0c\u8bf7\u91cd\u65b0\u9009\u62e9\u5458\u5de5";
 
-    private final DataAgentService dataAgentService;
+    private final RewardEmployeeHttpService rewardEmployeeHttpService;
 
     private final RewardsClient rewardsClient;
 
-    private final DataAgentResultParser resultParser;
-
     public RewardFormNode(
-            DataAgentService dataAgentService,
-            RewardsClient rewardsClient,
-            DataAgentResultParser resultParser) {
-        this.dataAgentService = dataAgentService;
+            RewardEmployeeHttpService rewardEmployeeHttpService,
+            RewardsClient rewardsClient) {
+        this.rewardEmployeeHttpService = rewardEmployeeHttpService;
         this.rewardsClient = rewardsClient;
-        this.resultParser = resultParser;
     }
 
     public Mono<RewardNodeResult> handle(RewardWorkflowContext context) {
@@ -72,7 +68,7 @@ public class RewardFormNode {
                 .flatMap(categories -> prepareValues(context)
                         .flatMap(preparedValues -> buildNodeResult(context, preparedValues, categories)))
                 .onErrorResume(error -> Mono.just(errorResult(
-                        RewardErrorMessageUtil.resolveMessage(error, "员工奖惩处理失败"))));
+                        RewardErrorMessageUtil.resolveMessage(error, "\u5458\u5de5\u5956\u60e9\u5904\u7406\u5931\u8d25"))));
     }
 
     private Mono<PreparedValues> prepareValues(RewardWorkflowContext context) {
@@ -81,10 +77,11 @@ public class RewardFormNode {
         if (!StringUtils.hasText(uname)) {
             return Mono.just(new PreparedValues(values, null));
         }
-        String prompt = "查询员工 %s 的用户ID".formatted(uname);
-        log.info("RewardFormNode#prepareValues - prompt={}", prompt);
-        return dataAgentService.query(prompt)
-                .map(resultParser::parseUser)
+        if (StringUtils.hasText(asText(values.get("uid")))) {
+            return Mono.just(new PreparedValues(values, null));
+        }
+        log.info("RewardFormNode#prepareValues - lookup employee via api, uname={}", uname);
+        return rewardEmployeeHttpService.findUser(uname, context.toolContext())
                 .map(optionalUser -> optionalUser
                         .map(user -> new PreparedValues(applyResolvedUser(values, user), null))
                         .orElseGet(() -> new PreparedValues(values, USER_LOOKUP_FAILED_MESSAGE)));
@@ -94,7 +91,7 @@ public class RewardFormNode {
             RewardWorkflowContext context,
             PreparedValues preparedValues,
             List<RewardCategoryRecord> categories) {
-        Map<String, Object> values = preparedValues.values();
+        Map<String, Object> values = normalizeValues(preparedValues.values(), categories);
         List<Map<String, Object>> fields = buildFields(values, categories);
         if (StringUtils.hasText(preparedValues.userMessage())) {
             return Mono.just(formResult(
@@ -102,7 +99,7 @@ public class RewardFormNode {
                     "COLLECT",
                     values,
                     fields,
-                    List.of(Map.of("name", "uname", "title", "员工")),
+                    List.of(Map.of("name", "uname", "title", "\u5458\u5de5")),
                     false,
                     preparedValues.userMessage()));
         }
@@ -126,7 +123,7 @@ public class RewardFormNode {
                     fields,
                     List.of(),
                     true,
-                    "请确认奖惩信息后提交。"));
+                    "\u8bf7\u786e\u8ba4\u5956\u60e9\u4fe1\u606f\u540e\u63d0\u4ea4\u3002"));
         }
 
         RewardAddRequest request = new RewardAddRequest(
@@ -143,7 +140,7 @@ public class RewardFormNode {
                         "uid", request.uid(),
                         "uname", request.uname())))
                 .onErrorResume(error -> Mono.just(errorResult(
-                        RewardErrorMessageUtil.resolveMessage(error, "员工奖惩处理失败"))));
+                        RewardErrorMessageUtil.resolveMessage(error, "\u5458\u5de5\u5956\u60e9\u5904\u7406\u5931\u8d25"))));
     }
 
     private Map<String, Object> buildInitialValues(RewardWorkflowContext context) {
@@ -178,19 +175,43 @@ public class RewardFormNode {
         return resolvedValues;
     }
 
+    private Map<String, Object> normalizeValues(Map<String, Object> values, List<RewardCategoryRecord> categories) {
+        Map<String, Object> normalizedValues = new LinkedHashMap<>(values);
+        String rewardCategory = asText(normalizedValues.get("rewards_cate"));
+        if (!StringUtils.hasText(rewardCategory)) {
+            return normalizedValues;
+        }
+        boolean matchedById = categories.stream()
+                .filter(category -> category != null)
+                .map(RewardCategoryRecord::id)
+                .anyMatch(rewardCategory::equals);
+        if (matchedById) {
+            return normalizedValues;
+        }
+        categories.stream()
+                .filter(category -> category != null && StringUtils.hasText(category.name()))
+                .filter(category -> rewardCategory.equals(category.name())
+                        || rewardCategory.contains(category.name())
+                        || category.name().contains(rewardCategory))
+                .findFirst()
+                .map(RewardCategoryRecord::id)
+                .ifPresent(categoryId -> normalizedValues.put("rewards_cate", categoryId));
+        return normalizedValues;
+    }
+
     private List<Map<String, Object>> buildFields(Map<String, Object> values, List<RewardCategoryRecord> categories) {
         List<Map<String, Object>> fields = new ArrayList<>();
-        fields.add(field("uname", "员工", values.get("uname"), true, "TEXT", null));
-        fields.add(field("types", "奖惩类型", values.get("types"), true, "SELECT", List.of(
-                Map.<String, Object>of("label", "奖励", "value", 1),
-                Map.<String, Object>of("label", "惩罚", "value", 2))));
-        fields.add(field("rewards_cate", "奖惩项目", values.get("rewards_cate"), true, "SELECT",
+        fields.add(field("uname", "\u5458\u5de5", values.get("uname"), true, "TEXT", null));
+        fields.add(field("types", "\u5956\u60e9\u7c7b\u578b", values.get("types"), true, "SELECT", List.of(
+                Map.<String, Object>of("label", "\u5956\u52b1", "value", 1),
+                Map.<String, Object>of("label", "\u60e9\u7f5a", "value", 2))));
+        fields.add(field("rewards_cate", "\u5956\u60e9\u9879\u76ee", values.get("rewards_cate"), true, "SELECT",
                 categories.stream()
                         .map(category -> Map.<String, Object>of("label", category.name(), "value", category.id()))
                         .toList()));
-        fields.add(field("cost", "金额", values.get("cost"), true, "TEXT", null));
-        fields.add(field("rewards_time", "日期", values.get("rewards_time"), true, "DATE", null));
-        fields.add(field("remark", "备注", values.get("remark"), false, "TEXTAREA", null));
+        fields.add(field("cost", "\u91d1\u989d", values.get("cost"), true, "TEXT", null));
+        fields.add(field("rewards_time", "\u65e5\u671f", values.get("rewards_time"), true, "DATE", null));
+        fields.add(field("remark", "\u5907\u6ce8", values.get("remark"), false, "TEXTAREA", null));
         return fields;
     }
 
@@ -209,9 +230,9 @@ public class RewardFormNode {
                 .distinct()
                 .toList();
         if (titles.isEmpty()) {
-            return "请补全奖惩信息。";
+            return "\u8bf7\u8865\u5168\u5956\u60e9\u4fe1\u606f\u3002";
         }
-        return "请补全" + String.join("、", titles) + "。";
+        return "\u8bf7\u8865\u5168" + String.join("\u3001", titles) + "\u3002";
     }
 
     private RewardNodeResult formResult(
@@ -257,9 +278,9 @@ public class RewardFormNode {
             return result.message();
         }
         if (result != null && StringUtils.hasText(result.rewardId())) {
-            return "保存成功，记录ID=" + result.rewardId();
+            return "\u4fdd\u5b58\u6210\u529f\uff0c\u8bb0\u5f55ID=" + result.rewardId();
         }
-        return "保存成功";
+        return "\u4fdd\u5b58\u6210\u529f";
     }
 
     private Map<String, Object> field(
