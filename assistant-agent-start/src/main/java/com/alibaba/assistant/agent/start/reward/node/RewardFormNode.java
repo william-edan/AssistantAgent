@@ -46,7 +46,7 @@ public class RewardFormNode {
     private static final Logger log = LoggerFactory.getLogger(RewardFormNode.class);
 
     private static final String USER_LOOKUP_FAILED_MESSAGE =
-            "\u672a\u67e5\u8be2\u5230\u5458\u5de5\uff0c\u8bf7\u91cd\u65b0\u9009\u62e9\u5458\u5de5";
+            "未查询到员工，请重新选择员工";
 
     private final RewardEmployeeHttpService rewardEmployeeHttpService;
 
@@ -68,7 +68,7 @@ public class RewardFormNode {
                 .flatMap(categories -> prepareValues(context)
                         .flatMap(preparedValues -> buildNodeResult(context, preparedValues, categories)))
                 .onErrorResume(error -> Mono.just(errorResult(
-                        RewardErrorMessageUtil.resolveMessage(error, "\u5458\u5de5\u5956\u60e9\u5904\u7406\u5931\u8d25"))));
+                        RewardErrorMessageUtil.resolveMessage(error, "员工奖惩处理失败"))));
     }
 
     private Mono<PreparedValues> prepareValues(RewardWorkflowContext context) {
@@ -99,7 +99,7 @@ public class RewardFormNode {
                     "COLLECT",
                     values,
                     fields,
-                    List.of(Map.of("name", "uname", "title", "\u5458\u5de5")),
+                    List.of(Map.of("name", "uname", "title", "员工")),
                     false,
                     preparedValues.userMessage()));
         }
@@ -123,7 +123,7 @@ public class RewardFormNode {
                     fields,
                     List.of(),
                     true,
-                    "\u8bf7\u786e\u8ba4\u5956\u60e9\u4fe1\u606f\u540e\u63d0\u4ea4\u3002"));
+                    "请确认奖惩信息后提交。"));
         }
 
         RewardAddRequest request = new RewardAddRequest(
@@ -140,7 +140,7 @@ public class RewardFormNode {
                         "uid", request.uid(),
                         "uname", request.uname())))
                 .onErrorResume(error -> Mono.just(errorResult(
-                        RewardErrorMessageUtil.resolveMessage(error, "\u5458\u5de5\u5956\u60e9\u5904\u7406\u5931\u8d25"))));
+                        RewardErrorMessageUtil.resolveMessage(error, "员工奖惩处理失败"))));
     }
 
     private Map<String, Object> buildInitialValues(RewardWorkflowContext context) {
@@ -201,17 +201,17 @@ public class RewardFormNode {
 
     private List<Map<String, Object>> buildFields(Map<String, Object> values, List<RewardCategoryRecord> categories) {
         List<Map<String, Object>> fields = new ArrayList<>();
-        fields.add(field("uname", "\u5458\u5de5", values.get("uname"), true, "TEXT", null));
-        fields.add(field("types", "\u5956\u60e9\u7c7b\u578b", values.get("types"), true, "SELECT", List.of(
-                Map.<String, Object>of("label", "\u5956\u52b1", "value", 1),
-                Map.<String, Object>of("label", "\u60e9\u7f5a", "value", 2))));
-        fields.add(field("rewards_cate", "\u5956\u60e9\u9879\u76ee", values.get("rewards_cate"), true, "SELECT",
+        fields.add(field("uname", "员工", values.get("uname"), true, "TEXT", null));
+        fields.add(field("types", "奖惩类型", values.get("types"), true, "SELECT", List.of(
+                Map.<String, Object>of("label", "奖励", "value", 1),
+                Map.<String, Object>of("label", "惩罚", "value", 2))));
+        fields.add(field("rewards_cate", "奖惩项目", values.get("rewards_cate"), true, "SELECT",
                 categories.stream()
                         .map(category -> Map.<String, Object>of("label", category.name(), "value", category.id()))
                         .toList()));
-        fields.add(field("cost", "\u91d1\u989d", values.get("cost"), true, "TEXT", null));
-        fields.add(field("rewards_time", "\u65e5\u671f", values.get("rewards_time"), true, "DATE", null));
-        fields.add(field("remark", "\u5907\u6ce8", values.get("remark"), false, "TEXTAREA", null));
+        fields.add(field("cost", "金额", values.get("cost"), true, "TEXT", null));
+        fields.add(field("rewards_time", "日期", values.get("rewards_time"), true, "DATE", null));
+        fields.add(field("remark", "备注", values.get("remark"), false, "TEXTAREA", null));
         return fields;
     }
 
@@ -230,9 +230,9 @@ public class RewardFormNode {
                 .distinct()
                 .toList();
         if (titles.isEmpty()) {
-            return "\u8bf7\u8865\u5168\u5956\u60e9\u4fe1\u606f\u3002";
+            return "请补全奖惩信息。";
         }
-        return "\u8bf7\u8865\u5168" + String.join("\u3001", titles) + "\u3002";
+        return "请补全" + String.join("、", titles) + "。";
     }
 
     private RewardNodeResult formResult(
@@ -278,9 +278,9 @@ public class RewardFormNode {
             return result.message();
         }
         if (result != null && StringUtils.hasText(result.rewardId())) {
-            return "\u4fdd\u5b58\u6210\u529f\uff0c\u8bb0\u5f55ID=" + result.rewardId();
+            return "保存成功，记录ID=" + result.rewardId();
         }
-        return "\u4fdd\u5b58\u6210\u529f";
+        return "保存成功";
     }
 
     private Map<String, Object> field(

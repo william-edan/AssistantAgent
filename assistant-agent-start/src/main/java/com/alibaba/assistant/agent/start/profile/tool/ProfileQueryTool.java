@@ -92,7 +92,7 @@ public class ProfileQueryTool extends AbstractDynamicCodeactTool {
             return objectMapper.writeValueAsString(Map.of(
                     "success", false,
                     "matched", false,
-                    "message", "\u5f53\u524d\u8f93\u5165\u4e0d\u5c5e\u4e8e\u4e2a\u4eba\u4fe1\u606f\u67e5\u8be2\u610f\u56fe"));
+                    "message", "当前输入不属于个人信息查询意图"));
         }
 
         try {
@@ -183,7 +183,7 @@ public class ProfileQueryTool extends AbstractDynamicCodeactTool {
     private static ToolDefinition buildToolDefinition() {
         return DefaultToolDefinition.builder()
                 .name(TOOL_NAME)
-                .description("\u67e5\u8be2\u6307\u5b9a\u4eba\u5458\u4e2a\u4eba\u6863\u6848\u3001\u65e5\u7a0b\u6216\u901a\u7528\u4e2a\u4eba\u4fe1\u606f\u7684\u5de5\u5177\uff0c\u547d\u4e2d\u540e\u76f4\u63a5\u8c03\u7528\u672c\u5730 DataAgent \u6d41\u5f0f\u641c\u7d22\u63a5\u53e3")
+                .description("查询指定人员个人档案、日程或通用个人信息的工具，命中后直接调用本地 DataAgent 流式搜索接口")
                 .inputSchema("""
                         {
                           "type": "object",
@@ -208,11 +208,11 @@ public class ProfileQueryTool extends AbstractDynamicCodeactTool {
         return DefaultCodeactToolMetadata.builder()
                 .addSupportedLanguage(Language.PYTHON)
                 .targetClassName("profile_tools")
-                .targetClassDescription("\u4e2a\u4eba\u4fe1\u606f\u67e5\u8be2\u5de5\u5177\u96c6\u5408")
+                .targetClassDescription("个人信息查询工具集合")
                 .fewShots(List.of(new CodeExample(
                         "query personal info",
                         "result = profile_query(userInput='张三的个人档案')",
-                        "\u8fd4\u56de\u5f20\u4e09\u7684\u4e2a\u4eba\u4fe1\u606f\u6458\u8981")))
+                        "返回张三的个人信息摘要")))
                 .displayName("profile_query")
                 .returnDirect(true)
                 .alwaysAvailable(true)

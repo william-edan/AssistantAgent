@@ -26,9 +26,9 @@ import java.util.Set;
 public final class RewardErrorMessageUtil {
 
     private static final Set<String> GENERIC_MESSAGES = Set.of(
-            "\u5458\u5de5\u5956\u60e9\u5904\u7406\u5931\u8d25",
-            "\u5904\u7406\u5931\u8d25",
-            "\u5956\u60e9\u6d41\u7a0b\u6267\u884c\u5931\u8d25");
+            "员工奖惩处理失败",
+            "处理失败",
+            "奖惩流程执行失败");
 
     private RewardErrorMessageUtil() {
     }

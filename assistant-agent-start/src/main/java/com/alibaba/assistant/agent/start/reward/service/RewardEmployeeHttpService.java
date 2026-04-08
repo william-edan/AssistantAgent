@@ -56,10 +56,10 @@ public class RewardEmployeeHttpService {
             "user_id",
             "employeeId",
             "employee_id",
-            "\u7528\u6237ID",
-            "\u7528\u6237id",
-            "\u5458\u5de5ID",
-            "\u5458\u5de5id");
+            "用户ID",
+            "用户id",
+            "员工ID",
+            "员工id");
 
     private static final List<String> USER_NAME_KEYS = List.of(
             "name",
@@ -76,10 +76,10 @@ public class RewardEmployeeHttpService {
             "employeeName",
             "employee_name",
             "uname",
-            "\u59d3\u540d",
-            "\u5458\u5de5\u59d3\u540d",
-            "\u7528\u6237\u540d",
-            "\u771f\u5b9e\u59d3\u540d");
+            "姓名",
+            "员工姓名",
+            "用户名",
+            "真实姓名");
 
     private final ToolExecutor toolExecutor;
 
@@ -143,7 +143,7 @@ public class RewardEmployeeHttpService {
                     .filter(user -> score(keyword, user) > 0);
         }
         catch (Exception exception) {
-            throw new IllegalStateException("\u5458\u5de5\u67e5\u8be2\u7ed3\u679c\u89e3\u6790\u5931\u8d25", exception);
+            throw new IllegalStateException("员工查询结果解析失败", exception);
         }
     }
 

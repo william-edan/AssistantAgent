@@ -54,122 +54,122 @@ public class ProfileQueryProtocolStrategy implements ProtocolStrategy {
 
     private static final String RECORD_TYPE_LIST = "list";
 
-    private static final String TITLE_SUFFIX_PROFILE = "\u7684\u4e2a\u4eba\u6863\u6848";
+    private static final String TITLE_SUFFIX_PROFILE = "的个人档案";
 
-    private static final String TITLE_SUFFIX_SCHEDULE = "\u7684\u4e2a\u4eba\u65e5\u7a0b";
+    private static final String TITLE_SUFFIX_SCHEDULE = "的个人日程";
 
-    private static final String TITLE_SUFFIX_GENERAL = "\u7684\u4e2a\u4eba\u4fe1\u606f";
+    private static final String TITLE_SUFFIX_GENERAL = "的个人信息";
 
-    private static final String TITLE_SUFFIX_ASSET = "\u7684\u5728\u7528\u8d44\u4ea7";
+    private static final String TITLE_SUFFIX_ASSET = "的在用资产";
 
-    private static final String TITLE_QUERY_FAILED = "\u4e2a\u4eba\u6863\u6848\u67e5\u8be2\u5931\u8d25";
+    private static final String TITLE_QUERY_FAILED = "个人档案查询失败";
 
-    private static final String VALUE_QUERY_FAILED = "\u67e5\u8be2\u5931\u8d25";
+    private static final String VALUE_QUERY_FAILED = "查询失败";
 
-    private static final String VALUE_PERSON_FALLBACK = "\u76ee\u6807\u4eba\u5458";
+    private static final String VALUE_PERSON_FALLBACK = "目标人员";
 
-    private static final String TEXT_QUERY_SUCCESS = "\u5df2\u4e3a\u4f60\u67e5\u8be2\u5230%s\u7684\u4e2a\u4eba\u6863\u6848\uff0c\u4e0b\u9762\u662f\u5173\u952e\u4fe1\u606f\u3002";
+    private static final String TEXT_QUERY_SUCCESS = "已为你查询到%s的个人档案，下面是关键信息。";
 
-    private static final String TEXT_QUERY_SUCCESS_SCHEDULE = "\u5df2\u4e3a\u4f60\u67e5\u8be2\u5230%s\u7684\u4e2a\u4eba\u65e5\u7a0b\u4fe1\u606f\uff0c\u4e0b\u9762\u662f\u5173\u952e\u4fe1\u606f\u3002";
+    private static final String TEXT_QUERY_SUCCESS_SCHEDULE = "已为你查询到%s的个人日程信息，下面是关键信息。";
 
-    private static final String TEXT_QUERY_SUCCESS_GENERAL = "\u5df2\u4e3a\u4f60\u67e5\u8be2\u5230%s\u7684\u4e2a\u4eba\u4fe1\u606f\uff0c\u4e0b\u9762\u662f\u5173\u952e\u4fe1\u606f\u3002";
+    private static final String TEXT_QUERY_SUCCESS_GENERAL = "已为你查询到%s的个人信息，下面是关键信息。";
 
-    private static final String TEXT_QUERY_SUCCESS_ASSET = "\u5df2\u4e3a\u4f60\u67e5\u8be2\u5230%s\u7684\u5728\u7528\u8d44\u4ea7\u4fe1\u606f\uff0c\u4e0b\u9762\u662f\u5173\u952e\u4fe1\u606f\u3002";
+    private static final String TEXT_QUERY_SUCCESS_ASSET = "已为你查询到%s的在用资产信息，下面是关键信息。";
 
-    private static final String TEXT_QUERY_SUCCESS_SCHEDULE_LIST = "\u5df2\u4e3a\u4f60\u67e5\u8be2\u5230%s\u7684%d\u6761\u4e2a\u4eba\u65e5\u7a0b\u4fe1\u606f\u3002";
+    private static final String TEXT_QUERY_SUCCESS_SCHEDULE_LIST = "已为你查询到%s的%d条个人日程信息。";
 
-    private static final String TEXT_QUERY_SUCCESS_ASSET_LIST = "\u5df2\u4e3a\u4f60\u67e5\u8be2\u5230%s\u7684%d\u6761\u5728\u7528\u8d44\u4ea7\u4fe1\u606f\u3002";
+    private static final String TEXT_QUERY_SUCCESS_ASSET_LIST = "已为你查询到%s的%d条在用资产信息。";
 
-    private static final String LABEL_NAME = "\u59d3\u540d";
+    private static final String LABEL_NAME = "姓名";
 
-    private static final String LABEL_GENDER = "\u6027\u522b";
+    private static final String LABEL_GENDER = "性别";
 
-    private static final String LABEL_AGE = "\u5e74\u9f84";
+    private static final String LABEL_AGE = "年龄";
 
-    private static final String LABEL_POSITION = "\u804c\u52a1";
+    private static final String LABEL_POSITION = "职务";
 
-    private static final String LABEL_CITY = "\u57ce\u5e02";
+    private static final String LABEL_CITY = "城市";
 
-    private static final String LABEL_STATUS = "\u72b6\u6001";
+    private static final String LABEL_STATUS = "状态";
 
-    private static final String LABEL_REASON = "\u5931\u8d25\u539f\u56e0";
+    private static final String LABEL_REASON = "失败原因";
 
-    private static final String LABEL_BIRTHDAY = "\u751f\u65e5";
+    private static final String LABEL_BIRTHDAY = "生日";
 
-    private static final String LABEL_JOB_NUMBER = "\u5de5\u53f7";
+    private static final String LABEL_JOB_NUMBER = "工号";
 
-    private static final String LABEL_EDUCATION = "\u5b66\u5386";
+    private static final String LABEL_EDUCATION = "学历";
 
-    private static final String LABEL_GRADUATE_SCHOOL = "\u6bd5\u4e1a\u5b66\u6821";
+    private static final String LABEL_GRADUATE_SCHOOL = "毕业学校";
 
-    private static final String LABEL_SPECIALITY = "\u6240\u5b66\u4e13\u4e1a";
+    private static final String LABEL_SPECIALITY = "所学专业";
 
-    private static final String LABEL_MOBILE = "\u624b\u673a\u53f7";
+    private static final String LABEL_MOBILE = "手机号";
 
-    private static final String LABEL_EMAIL = "\u90ae\u7bb1";
+    private static final String LABEL_EMAIL = "邮箱";
 
-    private static final String LABEL_CURRENT_ADDRESS = "\u73b0\u5c45\u5730\u5740";
+    private static final String LABEL_CURRENT_ADDRESS = "现居地地址";
 
-    private static final String LABEL_HOME_ADDRESS = "\u5bb6\u5ead\u5730\u5740";
+    private static final String LABEL_HOME_ADDRESS = "家庭地址";
 
-    private static final String LABEL_PROFILE_NAME = "\u6863\u6848\u540d\u79f0";
+    private static final String LABEL_PROFILE_NAME = "档案名称";
 
-    private static final String LABEL_SCHEDULE_NAME = "\u65e5\u7a0b\u540d\u79f0";
+    private static final String LABEL_SCHEDULE_NAME = "日程名称";
 
-    private static final String LABEL_INFO_NAME = "\u4fe1\u606f\u540d\u79f0";
+    private static final String LABEL_INFO_NAME = "信息名称";
 
-    private static final String LABEL_SCHEDULE_COUNT = "\u884c\u7a0b\u603b\u6570";
+    private static final String LABEL_SCHEDULE_COUNT = "行程总数";
 
-    private static final String LABEL_EARLIEST_START_TIME = "\u6700\u65e9\u5f00\u59cb\u65f6\u95f4";
+    private static final String LABEL_EARLIEST_START_TIME = "最早开始时间";
 
-    private static final String LABEL_LATEST_END_TIME = "\u6700\u665a\u7ed3\u675f\u65f6\u95f4";
+    private static final String LABEL_LATEST_END_TIME = "最晚结束时间";
 
-    private static final String LABEL_RECENT_SCHEDULE = "\u6700\u8fd1\u4e00\u6761\u5b89\u6392";
+    private static final String LABEL_RECENT_SCHEDULE = "最近一条安排";
 
-    private static final String LABEL_ASSET_NAME = "\u8d44\u4ea7\u540d\u79f0";
+    private static final String LABEL_ASSET_NAME = "资产名称";
 
-    private static final String LABEL_ASSET_CODE = "\u8d44\u4ea7\u7f16\u7801";
+    private static final String LABEL_ASSET_CODE = "资产编码";
 
-    private static final String LABEL_ASSET_MODEL = "\u8d44\u4ea7\u578b\u53f7";
+    private static final String LABEL_ASSET_MODEL = "资产型号";
 
-    private static final String LABEL_ASSET_CATEGORY = "\u8d44\u4ea7\u5206\u7c7b";
+    private static final String LABEL_ASSET_CATEGORY = "资产分类";
 
-    private static final String LABEL_ASSET_BRAND = "\u8d44\u4ea7\u54c1\u724c";
+    private static final String LABEL_ASSET_BRAND = "资产品牌";
 
-    private static final String LABEL_WARRANTY_DATE = "\u8d28\u4fdd\u5230\u671f\u65e5";
+    private static final String LABEL_WARRANTY_DATE = "质保到期日";
 
-    private static final String LABEL_UNIT = "\u5355\u4f4d";
+    private static final String LABEL_UNIT = "单位";
 
-    private static final String LABEL_PURCHASE_PRICE = "\u8d2d\u4e70\u4ef7\u683c";
+    private static final String LABEL_PURCHASE_PRICE = "购买价格";
 
-    private static final String LABEL_PURCHASE_DATE = "\u8d2d\u4e70\u65e5\u671f";
+    private static final String LABEL_PURCHASE_DATE = "购买日期";
 
-    private static final String LABEL_DEPRECIATION_RATE = "\u5e74\u6298\u65e7\u7387(%)";
+    private static final String LABEL_DEPRECIATION_RATE = "年折旧率(%)";
 
-    private static final String LABEL_ASSET_STATUS = "\u8d44\u4ea7\u72b6\u6001";
+    private static final String LABEL_ASSET_STATUS = "资产状态";
 
-    private static final String LABEL_ASSET_SOURCE = "\u8d44\u4ea7\u6765\u6e90";
+    private static final String LABEL_ASSET_SOURCE = "资产来源";
 
-    private static final String LABEL_ASSET_COUNT = "\u8d44\u4ea7\u603b\u6570";
+    private static final String LABEL_ASSET_COUNT = "资产总数";
 
-    private static final String SECTION_BASIC = "\u57fa\u7840\u4fe1\u606f";
+    private static final String SECTION_BASIC = "基础信息";
 
-    private static final String SECTION_EDUCATION = "\u6559\u80b2\u4fe1\u606f";
+    private static final String SECTION_EDUCATION = "教育信息";
 
-    private static final String SECTION_CONTACT = "\u8054\u7cfb\u4fe1\u606f";
+    private static final String SECTION_CONTACT = "联系信息";
 
-    private static final String SECTION_EXTRA = "\u5176\u4ed6\u4fe1\u606f";
+    private static final String SECTION_EXTRA = "其他信息";
 
-    private static final String SECTION_ASSET = "\u8d44\u4ea7\u4fe1\u606f";
+    private static final String SECTION_ASSET = "资产信息";
 
-    private static final String SECTION_FAILURE = "\u5931\u8d25\u4fe1\u606f";
+    private static final String SECTION_FAILURE = "失败信息";
 
-    private static final String GENDER_MALE = "\u7537";
+    private static final String GENDER_MALE = "男";
 
-    private static final String GENDER_FEMALE = "\u5973";
+    private static final String GENDER_FEMALE = "女";
 
     private static final Pattern KEY_VALUE_PATTERN = Pattern.compile(
-            "([\\p{L}\\p{N}_\\-\\s]+?)\\s*[:\\uFF1A]\\s*(.*?)(?=(?:[\\uFF0C,\\uFF1B;\\n\\r]+[\\p{L}\\p{N}_\\-\\s]+\\s*[:\\uFF1A])|$)");
+            "([\\p{L}\\p{N}_\\-\\s]+?)\\s*[:：]\\s*(.*?)(?=(?:[，,；;\\n\\r]+[\\p{L}\\p{N}_\\-\\s]+\\s*[:：])|$)");
 
     private final ProtocolPayloadSupport payloadSupport;
 
@@ -528,7 +528,7 @@ public class ProfileQueryProtocolStrategy implements ProtocolStrategy {
         String errorMessage = firstText(payload.get("error"), payload.get("message"), TITLE_QUERY_FAILED);
 
         Map<String, Object> finalOutputs = new LinkedHashMap<>();
-        finalOutputs.put("\u7ed3\u679c\u8bf4\u660e", errorMessage);
+        finalOutputs.put("结果说明", errorMessage);
 
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("templateCode", PROFILE_CARD_TEMPLATE_CODE);
@@ -576,7 +576,7 @@ public class ProfileQueryProtocolStrategy implements ProtocolStrategy {
 
     private Map<String, Object> normalizeProfile(Map<String, Object> profile) {
         Map<String, Object> normalizedProfile = profile != null ? new LinkedHashMap<>(profile) : new LinkedHashMap<>();
-        Optional<String> genderKey = findMatchedKey(normalizedProfile, "gender", "sex", "\u6027\u522b", "\u5458\u5de5\u6027\u522b");
+        Optional<String> genderKey = findMatchedKey(normalizedProfile, "gender", "sex", "性别", "员工性别");
         if (genderKey.isEmpty()) {
             return normalizedProfile;
         }
@@ -624,30 +624,30 @@ public class ProfileQueryProtocolStrategy implements ProtocolStrategy {
 
         finalOutputs.put(resolvePrimaryOutputLabel(payload), displayName + titleSuffix);
         addFinalOutputItem(finalOutputs, LABEL_NAME, displayName, profile, consumedKeys,
-                "name", "employeeName", "employee_name", "\u59d3\u540d", "\u5458\u5de5\u59d3\u540d");
+                "name", "employeeName", "employee_name", "姓名", "员工姓名");
         addFinalOutputItem(finalOutputs, LABEL_GENDER,
-                resolveProfileValue(profile, "gender", "sex", "\u6027\u522b", "\u5458\u5de5\u6027\u522b"),
-                profile, consumedKeys, "gender", "sex", "\u6027\u522b", "\u5458\u5de5\u6027\u522b");
+                resolveProfileValue(profile, "gender", "sex", "性别", "员工性别"),
+                profile, consumedKeys, "gender", "sex", "性别", "员工性别");
         addFinalOutputItem(finalOutputs, LABEL_AGE,
-                formatAge(resolveProfileValue(profile, "age", "\u5e74\u9f84")),
-                profile, consumedKeys, "age", "\u5e74\u9f84");
+                formatAge(resolveProfileValue(profile, "age", "年龄")),
+                profile, consumedKeys, "age", "年龄");
         addFinalOutputItem(finalOutputs, LABEL_POSITION,
                 resolveProfileValue(profile,
-                        "position", "positionName", "position_name", "job", "title", "\u804c\u4f4d", "\u804c\u52a1", "\u5c97\u4f4d"),
+                        "position", "positionName", "position_name", "job", "title", "职位", "职务", "岗位"),
                 profile, consumedKeys,
-                "position", "positionName", "position_name", "job", "title", "\u804c\u4f4d", "\u804c\u52a1", "\u5c97\u4f4d");
+                "position", "positionName", "position_name", "job", "title", "职位", "职务", "岗位");
         addFinalOutputItem(finalOutputs, LABEL_MOBILE,
-                resolveProfileValue(profile, "mobile", "phone", "\u624b\u673a\u53f7", "\u624b\u673a\u53f7\u7801", "\u8054\u7cfb\u7535\u8bdd"),
-                profile, consumedKeys, "mobile", "phone", "\u624b\u673a\u53f7", "\u624b\u673a\u53f7\u7801", "\u8054\u7cfb\u7535\u8bdd");
+                resolveProfileValue(profile, "mobile", "phone", "手机号", "手机号码", "联系电话"),
+                profile, consumedKeys, "mobile", "phone", "手机号", "手机号码", "联系电话");
         addFinalOutputItem(finalOutputs, LABEL_BIRTHDAY,
-                resolveProfileValue(profile, "birthday", "birthDate", "birth_date", "\u51fa\u751f\u65e5\u671f", "\u751f\u65e5"),
-                profile, consumedKeys, "birthday", "birthDate", "birth_date", "\u51fa\u751f\u65e5\u671f", "\u751f\u65e5");
+                resolveProfileValue(profile, "birthday", "birthDate", "birth_date", "出生日期", "生日"),
+                profile, consumedKeys, "birthday", "birthDate", "birth_date", "出生日期", "生日");
         addFinalOutputItem(finalOutputs, LABEL_SPECIALITY,
-                resolveProfileValue(profile, "speciality", "specialty", "major", "\u6240\u5b66\u4e13\u4e1a", "\u4e13\u4e1a"),
-                profile, consumedKeys, "speciality", "specialty", "major", "\u6240\u5b66\u4e13\u4e1a", "\u4e13\u4e1a");
+                resolveProfileValue(profile, "speciality", "specialty", "major", "所学专业", "专业"),
+                profile, consumedKeys, "speciality", "specialty", "major", "所学专业", "专业");
         addFinalOutputItem(finalOutputs, LABEL_HOME_ADDRESS,
-                resolveProfileValue(profile, "homeAddress", "home_address", "familyAddress", "family_address", "\u5bb6\u5ead\u5730\u5740"),
-                profile, consumedKeys, "homeAddress", "home_address", "familyAddress", "family_address", "\u5bb6\u5ead\u5730\u5740");
+                resolveProfileValue(profile, "homeAddress", "home_address", "familyAddress", "family_address", "家庭地址"),
+                profile, consumedKeys, "homeAddress", "home_address", "familyAddress", "family_address", "家庭地址");
 
         appendRemainingProfileOutputs(finalOutputs, profile, consumedKeys);
         return finalOutputs;
@@ -666,7 +666,7 @@ public class ProfileQueryProtocolStrategy implements ProtocolStrategy {
             Map<String, Object> data,
             Map<String, Object> profile) {
         return firstText(
-                resolveProfileValue(profile, "name", "employeeName", "employee_name", "\u59d3\u540d", "\u5458\u5de5\u59d3\u540d"),
+                resolveProfileValue(profile, "name", "employeeName", "employee_name", "姓名", "员工姓名"),
                 asText(data.get("name")),
                 asText(payload.get("name")),
                 VALUE_PERSON_FALLBACK);
@@ -679,15 +679,15 @@ public class ProfileQueryProtocolStrategy implements ProtocolStrategy {
             String displayName) {
         List<String> parts = new ArrayList<>();
         addIfHasText(parts, displayName);
-        addIfHasText(parts, resolveProfileValue(profile, "gender", "sex", "\u6027\u522b", "\u5458\u5de5\u6027\u522b"));
-        Optional.ofNullable(resolveProfileValue(profile, "age", "\u5e74\u9f84"))
+        addIfHasText(parts, resolveProfileValue(profile, "gender", "sex", "性别", "员工性别"));
+        Optional.ofNullable(resolveProfileValue(profile, "age", "年龄"))
                 .filter(StringUtils::hasText)
-                .map(age -> age.endsWith("\u5c81") ? age : age + "\u5c81")
+                .map(age -> age.endsWith("岁") ? age : age + "岁")
                 .ifPresent(parts::add);
         addIfHasText(parts, resolveProfileValue(profile,
-                "position", "positionName", "position_name", "job", "title", "\u804c\u4f4d", "\u804c\u52a1", "\u5c97\u4f4d"));
+                "position", "positionName", "position_name", "job", "title", "职位", "职务", "岗位"));
         if (!parts.isEmpty()) {
-            return String.join("\uff0c", parts);
+            return String.join("，", parts);
         }
         return firstText(data.get("summary"), payload.get("message"), displayName + TITLE_SUFFIX_PROFILE);
     }
@@ -719,7 +719,7 @@ public class ProfileQueryProtocolStrategy implements ProtocolStrategy {
         if (!StringUtils.hasText(age)) {
             return null;
         }
-        return age.endsWith("\u5c81") ? age : age + "\u5c81";
+        return age.endsWith("岁") ? age : age + "岁";
     }
 
     private Map<String, Object> parseRawText(String rawText) {
@@ -757,24 +757,24 @@ public class ProfileQueryProtocolStrategy implements ProtocolStrategy {
             Set<String> consumedKeys) {
         List<Map<String, Object>> highlights = new ArrayList<>();
         addResolvedItem(highlights, LABEL_NAME, displayName, profile, consumedKeys,
-                "name", "employeeName", "employee_name", "\u59d3\u540d", "\u5458\u5de5\u59d3\u540d");
+                "name", "employeeName", "employee_name", "姓名", "员工姓名");
         addResolvedItem(highlights, LABEL_GENDER,
-                resolveProfileValue(profile, "gender", "sex", "\u6027\u522b", "\u5458\u5de5\u6027\u522b"),
-                profile, consumedKeys, "gender", "sex", "\u6027\u522b", "\u5458\u5de5\u6027\u522b");
+                resolveProfileValue(profile, "gender", "sex", "性别", "员工性别"),
+                profile, consumedKeys, "gender", "sex", "性别", "员工性别");
         addResolvedItem(highlights, LABEL_AGE,
-                resolveProfileValue(profile, "age", "\u5e74\u9f84"),
-                profile, consumedKeys, "age", "\u5e74\u9f84");
+                resolveProfileValue(profile, "age", "年龄"),
+                profile, consumedKeys, "age", "年龄");
         addResolvedItem(highlights, LABEL_POSITION,
                 resolveProfileValue(profile,
-                        "position", "positionName", "position_name", "job", "title", "\u804c\u4f4d", "\u804c\u52a1", "\u5c97\u4f4d"),
+                        "position", "positionName", "position_name", "job", "title", "职位", "职务", "岗位"),
                 profile, consumedKeys,
-                "position", "positionName", "position_name", "job", "title", "\u804c\u4f4d", "\u804c\u52a1", "\u5c97\u4f4d");
+                "position", "positionName", "position_name", "job", "title", "职位", "职务", "岗位");
         if (highlights.size() < 4) {
             addResolvedItem(highlights, LABEL_CITY,
                     resolveProfileValue(profile,
-                            "city", "currentAddress", "current_address", "\u73b0\u5c45\u5730\u5740", "\u57ce\u5e02"),
+                            "city", "currentAddress", "current_address", "现居地地址", "城市"),
                     profile, consumedKeys,
-                    "city", "currentAddress", "current_address", "\u73b0\u5c45\u5730\u5740", "\u57ce\u5e02");
+                    "city", "currentAddress", "current_address", "现居地地址", "城市");
         }
         return highlights;
     }
@@ -787,51 +787,51 @@ public class ProfileQueryProtocolStrategy implements ProtocolStrategy {
 
         List<Map<String, Object>> basicItems = new ArrayList<>();
         addResolvedItem(basicItems, LABEL_NAME, displayName, profile, consumedKeys,
-                "name", "employeeName", "employee_name", "\u59d3\u540d", "\u5458\u5de5\u59d3\u540d");
+                "name", "employeeName", "employee_name", "姓名", "员工姓名");
         addResolvedItem(basicItems, LABEL_GENDER,
-                resolveProfileValue(profile, "gender", "sex", "\u6027\u522b", "\u5458\u5de5\u6027\u522b"),
-                profile, consumedKeys, "gender", "sex", "\u6027\u522b", "\u5458\u5de5\u6027\u522b");
+                resolveProfileValue(profile, "gender", "sex", "性别", "员工性别"),
+                profile, consumedKeys, "gender", "sex", "性别", "员工性别");
         addResolvedItem(basicItems, LABEL_AGE,
-                resolveProfileValue(profile, "age", "\u5e74\u9f84"),
-                profile, consumedKeys, "age", "\u5e74\u9f84");
+                resolveProfileValue(profile, "age", "年龄"),
+                profile, consumedKeys, "age", "年龄");
         addResolvedItem(basicItems, LABEL_BIRTHDAY,
-                resolveProfileValue(profile, "birthday", "birthDate", "birth_date", "\u51fa\u751f\u65e5\u671f", "\u751f\u65e5"),
-                profile, consumedKeys, "birthday", "birthDate", "birth_date", "\u51fa\u751f\u65e5\u671f", "\u751f\u65e5");
+                resolveProfileValue(profile, "birthday", "birthDate", "birth_date", "出生日期", "生日"),
+                profile, consumedKeys, "birthday", "birthDate", "birth_date", "出生日期", "生日");
         addResolvedItem(basicItems, LABEL_POSITION,
                 resolveProfileValue(profile,
-                        "position", "positionName", "position_name", "job", "title", "\u804c\u4f4d", "\u804c\u52a1", "\u5c97\u4f4d"),
+                        "position", "positionName", "position_name", "job", "title", "职位", "职务", "岗位"),
                 profile, consumedKeys,
-                "position", "positionName", "position_name", "job", "title", "\u804c\u4f4d", "\u804c\u52a1", "\u5c97\u4f4d");
+                "position", "positionName", "position_name", "job", "title", "职位", "职务", "岗位");
         addResolvedItem(basicItems, LABEL_JOB_NUMBER,
-                resolveProfileValue(profile, "jobNumber", "job_number", "employeeNumber", "employee_no", "\u5de5\u53f7"),
-                profile, consumedKeys, "jobNumber", "job_number", "employeeNumber", "employee_no", "\u5de5\u53f7");
+                resolveProfileValue(profile, "jobNumber", "job_number", "employeeNumber", "employee_no", "工号"),
+                profile, consumedKeys, "jobNumber", "job_number", "employeeNumber", "employee_no", "工号");
         addSectionIfPresent(sections, "basic", SECTION_BASIC, basicItems);
 
         List<Map<String, Object>> educationItems = new ArrayList<>();
         addResolvedItem(educationItems, LABEL_EDUCATION,
-                resolveProfileValue(profile, "education", "\u5b66\u5386"),
-                profile, consumedKeys, "education", "\u5b66\u5386");
+                resolveProfileValue(profile, "education", "学历"),
+                profile, consumedKeys, "education", "学历");
         addResolvedItem(educationItems, LABEL_GRADUATE_SCHOOL,
-                resolveProfileValue(profile, "graduateSchool", "graduate_school", "school", "\u6bd5\u4e1a\u5b66\u6821"),
-                profile, consumedKeys, "graduateSchool", "graduate_school", "school", "\u6bd5\u4e1a\u5b66\u6821");
+                resolveProfileValue(profile, "graduateSchool", "graduate_school", "school", "毕业学校"),
+                profile, consumedKeys, "graduateSchool", "graduate_school", "school", "毕业学校");
         addResolvedItem(educationItems, LABEL_SPECIALITY,
-                resolveProfileValue(profile, "speciality", "specialty", "major", "\u6240\u5b66\u4e13\u4e1a", "\u4e13\u4e1a"),
-                profile, consumedKeys, "speciality", "specialty", "major", "\u6240\u5b66\u4e13\u4e1a", "\u4e13\u4e1a");
+                resolveProfileValue(profile, "speciality", "specialty", "major", "所学专业", "专业"),
+                profile, consumedKeys, "speciality", "specialty", "major", "所学专业", "专业");
         addSectionIfPresent(sections, "education", SECTION_EDUCATION, educationItems);
 
         List<Map<String, Object>> contactItems = new ArrayList<>();
         addResolvedItem(contactItems, LABEL_MOBILE,
-                resolveProfileValue(profile, "mobile", "phone", "\u624b\u673a\u53f7", "\u624b\u673a\u53f7\u7801", "\u8054\u7cfb\u7535\u8bdd"),
-                profile, consumedKeys, "mobile", "phone", "\u624b\u673a\u53f7", "\u624b\u673a\u53f7\u7801", "\u8054\u7cfb\u7535\u8bdd");
+                resolveProfileValue(profile, "mobile", "phone", "手机号", "手机号码", "联系电话"),
+                profile, consumedKeys, "mobile", "phone", "手机号", "手机号码", "联系电话");
         addResolvedItem(contactItems, LABEL_EMAIL,
-                resolveProfileValue(profile, "email", "\u90ae\u7bb1"),
-                profile, consumedKeys, "email", "\u90ae\u7bb1");
+                resolveProfileValue(profile, "email", "邮箱"),
+                profile, consumedKeys, "email", "邮箱");
         addResolvedItem(contactItems, LABEL_CURRENT_ADDRESS,
-                resolveProfileValue(profile, "currentAddress", "current_address", "address", "city", "\u73b0\u5c45\u5730\u5740", "\u57ce\u5e02"),
-                profile, consumedKeys, "currentAddress", "current_address", "address", "city", "\u73b0\u5c45\u5730\u5740", "\u57ce\u5e02");
+                resolveProfileValue(profile, "currentAddress", "current_address", "address", "city", "现居地地址", "城市"),
+                profile, consumedKeys, "currentAddress", "current_address", "address", "city", "现居地地址", "城市");
         addResolvedItem(contactItems, LABEL_HOME_ADDRESS,
-                resolveProfileValue(profile, "homeAddress", "home_address", "familyAddress", "family_address", "\u5bb6\u5ead\u5730\u5740"),
-                profile, consumedKeys, "homeAddress", "home_address", "familyAddress", "family_address", "\u5bb6\u5ead\u5730\u5740");
+                resolveProfileValue(profile, "homeAddress", "home_address", "familyAddress", "family_address", "家庭地址"),
+                profile, consumedKeys, "homeAddress", "home_address", "familyAddress", "family_address", "家庭地址");
         addSectionIfPresent(sections, "contact", SECTION_CONTACT, contactItems);
 
         List<Map<String, Object>> extraItems = new ArrayList<>();
@@ -877,11 +877,11 @@ public class ProfileQueryProtocolStrategy implements ProtocolStrategy {
         putText(finalOutputs, LABEL_NAME, displayName);
         putText(finalOutputs, LABEL_SCHEDULE_COUNT, String.valueOf(records.size()));
         putText(finalOutputs, LABEL_EARLIEST_START_TIME, minRecordValue(records,
-                "startTime", "start_time", "startDate", "start_date", "\u5f00\u59cb\u65f6\u95f4", "\u5f00\u59cb\u65e5\u671f"));
+                "startTime", "start_time", "startDate", "start_date", "开始时间", "开始日期"));
         putText(finalOutputs, LABEL_LATEST_END_TIME, maxRecordValue(records,
-                "endTime", "end_time", "endDate", "end_date", "\u7ed3\u675f\u65f6\u95f4", "\u7ed3\u675f\u65e5\u671f"));
+                "endTime", "end_time", "endDate", "end_date", "结束时间", "结束日期"));
         putText(finalOutputs, LABEL_RECENT_SCHEDULE, firstRecordValue(records,
-                "\u5de5\u4f5c\u5b89\u6392\u4e3b\u9898", "schedule", "agenda", "event", "eventName", "event_name", "\u4e8b\u9879", "\u65e5\u7a0b", "\u884c\u7a0b"));
+                "工作安排主题", "schedule", "agenda", "event", "eventName", "event_name", "事项", "日程", "行程"));
         return finalOutputs;
     }
 
@@ -893,13 +893,13 @@ public class ProfileQueryProtocolStrategy implements ProtocolStrategy {
         highlights.add(buildFieldItem(LABEL_SCHEDULE_COUNT, String.valueOf(records.size())));
 
         String earliestStartTime = minRecordValue(records,
-                "startTime", "start_time", "startDate", "start_date", "\u5f00\u59cb\u65f6\u95f4", "\u5f00\u59cb\u65e5\u671f");
+                "startTime", "start_time", "startDate", "start_date", "开始时间", "开始日期");
         if (StringUtils.hasText(earliestStartTime)) {
             highlights.add(buildFieldItem(LABEL_EARLIEST_START_TIME, earliestStartTime));
         }
 
         String recentSchedule = firstRecordValue(records,
-                "\u5de5\u4f5c\u5b89\u6392\u4e3b\u9898", "schedule", "agenda", "event", "eventName", "event_name", "\u4e8b\u9879", "\u65e5\u7a0b", "\u884c\u7a0b");
+                "工作安排主题", "schedule", "agenda", "event", "eventName", "event_name", "事项", "日程", "行程");
         if (StringUtils.hasText(recentSchedule)) {
             highlights.add(buildFieldItem(LABEL_RECENT_SCHEDULE, recentSchedule));
         }
@@ -918,7 +918,7 @@ public class ProfileQueryProtocolStrategy implements ProtocolStrategy {
             }
             sections.add(buildSection(
                     "schedule_" + (index + 1),
-                    "\u7b2c" + (index + 1) + "\u6761\u65e5\u7a0b",
+                    "第" + (index + 1) + "条日程",
                     items));
         }
         return sections;
@@ -1069,8 +1069,8 @@ public class ProfileQueryProtocolStrategy implements ProtocolStrategy {
         }
         String normalized = rawGender.trim().toLowerCase(Locale.ROOT);
         return switch (normalized) {
-            case "1", "m", "male", "man", "\u7537" -> GENDER_MALE;
-            case "0", "2", "f", "female", "woman", "\u5973" -> GENDER_FEMALE;
+            case "1", "m", "male", "man", "男" -> GENDER_MALE;
+            case "0", "2", "f", "female", "woman", "女" -> GENDER_FEMALE;
             default -> rawGender.trim();
         };
     }

@@ -32,12 +32,12 @@ import java.util.regex.Pattern;
 public class IntentRecognizer {
 
     private static final Pattern POSSESSIVE_QUERY_PATTERN = Pattern.compile(
-            "([\\u4e00-\\u9fa5]{2,4}?)\\s*\\u7684\\s*(\\u4e2a\\u4eba\\u6863\\u6848|\\u6863\\u6848|\\u4e2a\\u4eba\\u8d44\\u6599|\\u4fe1\\u606f|\\u8d44\\u6599|\\u65e5\\u7a0b|\\u6392\\u671f|\\u65e5\\u5386|\\u884c\\u7a0b|\\u5728\\u7528\\u8d44\\u4ea7|\\u6b63\\u5728\\u4f7f\\u7528\\u7684\\u8d44\\u4ea7|\\u5728\\u4f7f\\u7528\\u7684\\u8d44\\u4ea7|\\u540d\\u4e0b\\u8d44\\u4ea7|\\u8d44\\u4ea7)");
+            "([一-龥]{2,4}?)\\s*的\\s*(个人档案|档案|个人资料|信息|资料|日程|排期|日历|行程|在用资产|正在使用的资产|在使用的资产|名下资产|资产)");
 
     private static final Pattern LOOKUP_QUERY_PATTERN = Pattern.compile(
-            "(?:\\u5e2e\\u6211\\u67e5\\u4e00\\u4e0b|\\u8bf7\\u5e2e\\u6211\\u67e5\\u4e00\\u4e0b|\\u67e5\\u4e00\\u4e0b|\\u67e5\\u8be2|\\u770b\\u770b|\\u5e2e\\u6211\\u770b\\u4e0b|\\u5e2e\\u6211\\u67e5)\\s*([\\u4e00-\\u9fa5]{2,4}?)\\s*(?:\\u7684)?\\s*(\\u4e2a\\u4eba\\u6863\\u6848|\\u6863\\u6848|\\u4e2a\\u4eba\\u8d44\\u6599|\\u4fe1\\u606f|\\u8d44\\u6599|\\u65e5\\u7a0b|\\u6392\\u671f|\\u65e5\\u5386|\\u884c\\u7a0b|\\u5728\\u7528\\u8d44\\u4ea7|\\u6b63\\u5728\\u4f7f\\u7528\\u7684\\u8d44\\u4ea7|\\u5728\\u4f7f\\u7528\\u7684\\u8d44\\u4ea7|\\u540d\\u4e0b\\u8d44\\u4ea7|\\u8d44\\u4ea7)");
+            "(?:帮我查一下|请帮我查一下|查一下|查询|看看|帮我看下|帮我查)\\s*([一-龥]{2,4}?)\\s*(?:的)?\\s*(个人档案|档案|个人资料|信息|资料|日程|排期|日历|行程|在用资产|正在使用的资产|在使用的资产|名下资产|资产)");
 
-    private static final Pattern WHO_IS_PATTERN = Pattern.compile("([\\u4e00-\\u9fa5]{2,4})\\s*\\u662f\\u8c01");
+    private static final Pattern WHO_IS_PATTERN = Pattern.compile("([一-龥]{2,4})\\s*是谁");
 
     /**
      * 识别输入并返回结果。
@@ -68,13 +68,13 @@ public class IntentRecognizer {
      */
     public IntentType detectIntentType(String normalizedInput) {
         boolean hasAssetKeyword = containsAny(normalizedInput,
-                "\u5728\u7528\u8d44\u4ea7", "\u6b63\u5728\u4f7f\u7528\u7684\u8d44\u4ea7", "\u5728\u4f7f\u7528\u7684\u8d44\u4ea7", "\u540d\u4e0b\u8d44\u4ea7", "\u8d44\u4ea7");
+                "在用资产", "正在使用的资产", "在使用的资产", "名下资产", "资产");
         boolean hasScheduleKeyword = containsAny(normalizedInput,
-                "\u65e5\u7a0b", "\u6392\u671f", "\u65e5\u5386", "\u884c\u7a0b");
+                "日程", "排期", "日历", "行程");
         boolean hasArchiveKeyword = containsAny(normalizedInput,
-                "\u4e2a\u4eba\u6863\u6848", "\u6863\u6848");
+                "个人档案", "档案");
         boolean hasGeneralKeyword = containsAny(normalizedInput,
-                "\u4fe1\u606f", "\u8d44\u6599", "\u662f\u8c01");
+                "信息", "资料", "是谁");
 
         String intentCode = hasAssetKeyword
                 ? "PROFILE_ASSET_IN_USE"
@@ -122,45 +122,45 @@ public class IntentRecognizer {
         }
 
         String fallback = normalizedInput
-                .replace("\u5e2e\u6211\u67e5\u4e00\u4e0b", "")
-                .replace("\u8bf7\u5e2e\u6211\u67e5\u4e00\u4e0b", "")
-                .replace("\u67e5\u4e00\u4e0b", "")
-                .replace("\u67e5\u8be2", "")
-                .replace("\u770b\u770b", "")
-                .replace("\u5e2e\u6211\u770b\u4e0b", "")
-                .replace("\u5e2e\u6211\u67e5", "")
-                .replace("\u7684\u4e2a\u4eba\u6863\u6848", "")
-                .replace("\u4e2a\u4eba\u6863\u6848", "")
-                .replace("\u7684\u4e2a\u4eba\u8d44\u6599", "")
-                .replace("\u4e2a\u4eba\u8d44\u6599", "")
-                .replace("\u7684\u6863\u6848", "")
-                .replace("\u6863\u6848", "")
-                .replace("\u7684\u4fe1\u606f", "")
-                .replace("\u4fe1\u606f", "")
-                .replace("\u7684\u8d44\u6599", "")
-                .replace("\u8d44\u6599", "")
-                .replace("\u7684\u65e5\u7a0b", "")
-                .replace("\u65e5\u7a0b", "")
-                .replace("\u7684\u6392\u671f", "")
-                .replace("\u6392\u671f", "")
-                .replace("\u7684\u65e5\u5386", "")
-                .replace("\u65e5\u5386", "")
-                .replace("\u7684\u884c\u7a0b", "")
-                .replace("\u884c\u7a0b", "")
-                .replace("\u6b63\u5728\u4f7f\u7528\u7684\u8d44\u4ea7", "")
-                .replace("\u5728\u4f7f\u7528\u7684\u8d44\u4ea7", "")
-                .replace("\u7684\u5728\u7528\u8d44\u4ea7", "")
-                .replace("\u5728\u7528\u8d44\u4ea7", "")
-                .replace("\u7684\u540d\u4e0b\u8d44\u4ea7", "")
-                .replace("\u540d\u4e0b\u8d44\u4ea7", "")
-                .replace("\u7684\u8d44\u4ea7", "")
-                .replace("\u8d44\u4ea7", "")
-                .replace("\u662f\u8c01", "")
+                .replace("帮我查一下", "")
+                .replace("请帮我查一下", "")
+                .replace("查一下", "")
+                .replace("查询", "")
+                .replace("看看", "")
+                .replace("帮我看下", "")
+                .replace("帮我查", "")
+                .replace("的个人档案", "")
+                .replace("个人档案", "")
+                .replace("的个人资料", "")
+                .replace("个人资料", "")
+                .replace("的档案", "")
+                .replace("档案", "")
+                .replace("的信息", "")
+                .replace("信息", "")
+                .replace("的资料", "")
+                .replace("资料", "")
+                .replace("的日程", "")
+                .replace("日程", "")
+                .replace("的排期", "")
+                .replace("排期", "")
+                .replace("的日历", "")
+                .replace("日历", "")
+                .replace("的行程", "")
+                .replace("行程", "")
+                .replace("正在使用的资产", "")
+                .replace("在使用的资产", "")
+                .replace("的在用资产", "")
+                .replace("在用资产", "")
+                .replace("的名下资产", "")
+                .replace("名下资产", "")
+                .replace("的资产", "")
+                .replace("资产", "")
+                .replace("是谁", "")
                 .trim();
 
         return Optional.of(fallback)
                 .filter(StringUtils::hasText)
-                .filter(candidate -> candidate.matches("[\\u4e00-\\u9fa5]{2,4}"));
+                .filter(candidate -> candidate.matches("[一-龥]{2,4}"));
     }
 
     /**
@@ -194,23 +194,23 @@ public class IntentRecognizer {
         }
         String normalizedCandidate = candidate.trim();
         String[] prefixes = {
-                "\u8bf7\u5e2e\u6211\u67e5\u4e00\u4e0b",
-                "\u5e2e\u6211\u67e5\u4e00\u4e0b",
-                "\u67e5\u4e00\u4e0b",
-                "\u67e5\u8be2",
-                "\u770b\u770b",
-                "\u5e2e\u6211\u770b\u4e0b",
-                "\u5e2e\u6211\u67e5"
+                "请帮我查一下",
+                "帮我查一下",
+                "查一下",
+                "查询",
+                "看看",
+                "帮我看下",
+                "帮我查"
         };
         for (String prefix : prefixes) {
             if (normalizedCandidate.startsWith(prefix) && normalizedCandidate.length() > prefix.length()) {
                 normalizedCandidate = normalizedCandidate.substring(prefix.length()).trim();
             }
         }
-        if (normalizedCandidate.startsWith("\u4e00\u4e0b") && normalizedCandidate.length() > 2) {
+        if (normalizedCandidate.startsWith("一下") && normalizedCandidate.length() > 2) {
             normalizedCandidate = normalizedCandidate.substring(2);
         }
-        if (normalizedCandidate.endsWith("\u7684") && normalizedCandidate.length() > 1) {
+        if (normalizedCandidate.endsWith("的") && normalizedCandidate.length() > 1) {
             normalizedCandidate = normalizedCandidate.substring(0, normalizedCandidate.length() - 1);
         }
         return normalizedCandidate.trim();

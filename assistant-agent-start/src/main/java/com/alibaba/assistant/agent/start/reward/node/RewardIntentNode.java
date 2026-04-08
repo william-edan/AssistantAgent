@@ -30,7 +30,7 @@ import java.util.regex.Pattern;
  */
 public class RewardIntentNode {
 
-    private static final String USER_NAME_PATTERN = "[\\p{IsHan}A-Za-z\\u00b7]{2,20}";
+    private static final String USER_NAME_PATTERN = "[\\p{IsHan}A-Za-z·]{2,20}";
 
     private static final List<Pattern> USER_PATTERNS = List.of(
             Pattern.compile("(?:奖励|惩罚|处罚)\\s*(" + USER_NAME_PATTERN + ")"),

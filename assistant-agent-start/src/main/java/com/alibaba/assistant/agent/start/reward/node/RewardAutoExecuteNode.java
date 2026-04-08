@@ -89,7 +89,7 @@ public class RewardAutoExecuteNode {
                 .zipWith(rewardsClient.listCategories(context.toolContext()))
                 .flatMap(tuple -> executeBatch(context, amount, tuple.getT1(), tuple.getT2()))
                 .onErrorResume(error -> Mono.just(errorResult(
-                        RewardErrorMessageUtil.resolveMessage(error, "\u5458\u5de5\u5956\u60e9\u5904\u7406\u5931\u8d25"))));
+                        RewardErrorMessageUtil.resolveMessage(error, "员工奖惩处理失败"))));
     }
 
     private Mono<RewardNodeResult> executeBatch(
@@ -120,7 +120,7 @@ public class RewardAutoExecuteNode {
                                 false,
                                 RewardErrorMessageUtil.resolveMessage(
                                         error,
-                                        "\u5956\u60e9\u4fdd\u5b58\u5931\u8d25")))),
+                                        "奖惩保存失败")))),
                         batchConcurrency)
                 .collectList()
                 .map(results -> aggregateResult(category, users.size(), results));
