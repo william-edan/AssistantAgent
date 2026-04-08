@@ -28,9 +28,12 @@ import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 
+import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * 员工奖惩流程协议适配策略。
@@ -97,19 +100,209 @@ public class RewardWorkflowProtocolStrategy implements ProtocolStrategy {
         normalizedPayload.putIfAbsent("toolCode", RewardWorkflowTool.TOOL_NAME);
         normalizedPayload.putIfAbsent("artifactCode", RewardWorkflowTool.TOOL_NAME);
         normalizedPayload.put("values", asMap(normalizedPayload.get("values")));
-        normalizedPayload.put("fields", asListOfMaps(normalizedPayload.get("fields")));
-        normalizedPayload.put("missingFields", asListOfMaps(normalizedPayload.get("missingFields")));
-        normalizedPayload.putIfAbsent("summary", Map.of());
+        normalizedPayload.put("missingFields", normalizeMissingFields(normalizedPayload.get("missingFields")));
+        normalizedPayload.put("fields", normalizeRewardFields(
+                asListOfMaps(normalizedPayload.get("fields")),
+                asMap(normalizedPayload.get("values")),
+                asListOfMaps(normalizedPayload.get("missingFields"))));
         normalizedPayload.putIfAbsent("mode", isConfirmMode(normalizedPayload) ? "CONFIRM" : "COLLECT");
         normalizedPayload.putIfAbsent("status", isConfirmMode(normalizedPayload) ? "WAITING_CONFIRMATION" : "WAITING_INPUT");
         normalizedPayload.putIfAbsent("phase", isConfirmMode(normalizedPayload)
                 ? FrontendStage.CONFIRMING.name()
                 : FrontendStage.COLLECTING.name());
         normalizedPayload.putIfAbsent("canSubmit", isConfirmMode(normalizedPayload));
+        Map<String, Object> summary = asMap(normalizedPayload.get("summary"));
+        normalizedPayload.put("summary", summary.isEmpty()
+                ? buildSummary(asListOfMaps(normalizedPayload.get("fields")))
+                : summary);
         return FrontendFormStateSupport.normalizePayload(
                 normalizedPayload,
                 asText(normalizedPayload.get("phase")),
                 asText(normalizedPayload.get("status")));
+    }
+
+    private List<Map<String, Object>> normalizeRewardFields(
+            List<Map<String, Object>> fields,
+            Map<String, Object> values,
+            List<Map<String, Object>> missingFields) {
+        Set<String> missingNames = new LinkedHashSet<>();
+        for (Map<String, Object> missingField : missingFields) {
+            String name = asText(missingField.get("name"));
+            if (StringUtils.hasText(name)) {
+                missingNames.add(name);
+            }
+        }
+
+        List<Map<String, Object>> normalizedFields = new ArrayList<>();
+        for (Map<String, Object> field : fields) {
+            String name = asText(field.get("name"));
+            if (!StringUtils.hasText(name)) {
+                continue;
+            }
+            Object value = field.containsKey("value") ? field.get("value") : values.get(name);
+            String uiComponent = firstText(asText(field.get("uiComponent")), resolveUiComponent(name, field.get("type")));
+            List<Map<String, Object>> options = normalizeOptions(field.get("options"));
+
+            Map<String, Object> normalizedField = new LinkedHashMap<>();
+            normalizedField.put("name", name);
+            normalizedField.put("title", firstText(field.get("title"), name));
+            normalizedField.put("type", firstText(resolveValueType(name, uiComponent, value), asText(field.get("type"))));
+            normalizedField.put("description", field.get("description"));
+            normalizedField.put("required", Boolean.TRUE.equals(field.get("required")));
+            normalizedField.put("priority", firstText(asText(field.get("priority")), defaultPriority(name)));
+            normalizedField.put("askMode", firstText(asText(field.get("askMode")), "BATCH"));
+            normalizedField.put("uiComponent", uiComponent);
+            normalizedField.put("displayConfig", mergeDisplayConfig(field.get("displayConfig"), name));
+            normalizedField.put("validation", asMap(field.get("validation")));
+            normalizedField.put("computed", asMap(field.get("computed")));
+            normalizedField.put("editable", !Boolean.FALSE.equals(field.get("editable")));
+            normalizedField.put("value", value);
+            normalizedField.put("missing", missingNames.contains(name));
+            normalizedField.put("options", options);
+            normalizedField.put("optionsLoaded", field.containsKey("optionsLoaded")
+                    ? field.get("optionsLoaded")
+                    : !options.isEmpty());
+            normalizedFields.add(normalizedField);
+        }
+        return normalizedFields;
+    }
+
+    private List<Map<String, Object>> normalizeMissingFields(Object rawMissingFields) {
+        List<Map<String, Object>> normalized = new ArrayList<>();
+        for (Map<String, Object> missingField : asListOfMaps(rawMissingFields)) {
+            String name = asText(missingField.get("name"));
+            if (!StringUtils.hasText(name)) {
+                continue;
+            }
+            Map<String, Object> item = new LinkedHashMap<>();
+            item.put("name", name);
+            item.put("title", firstText(missingField.get("title"), name));
+            normalized.add(item);
+        }
+        return normalized;
+    }
+
+    private List<Map<String, Object>> normalizeOptions(Object rawOptions) {
+        List<Map<String, Object>> normalized = new ArrayList<>();
+        for (Map<String, Object> option : asListOfMaps(rawOptions)) {
+            Map<String, Object> item = new LinkedHashMap<>();
+            item.put("label", firstText(option.get("label"), option.get("value")));
+            item.put("value", option.get("value"));
+            item.put("disabled", Boolean.TRUE.equals(option.get("disabled")));
+            normalized.add(item);
+        }
+        return normalized;
+    }
+
+    private Map<String, Object> mergeDisplayConfig(Object rawDisplayConfig, String name) {
+        Map<String, Object> displayConfig = new LinkedHashMap<>(defaultDisplayConfig(name));
+        displayConfig.putAll(asMap(rawDisplayConfig));
+        return displayConfig;
+    }
+
+    private Map<String, Object> defaultDisplayConfig(String name) {
+        Map<String, Object> displayConfig = new LinkedHashMap<>();
+        displayConfig.put("showInSummary", true);
+        displayConfig.put("summaryOrder", summaryOrder(name));
+        displayConfig.put("summaryGroup", "remark".equals(name) ? "SECONDARY" : "CORE");
+        displayConfig.put("inlineEditable", true);
+        if ("remark".equals(name)) {
+            displayConfig.put("secondaryGroup", true);
+        }
+        return displayConfig;
+    }
+
+    private Map<String, Object> buildSummary(List<Map<String, Object>> fields) {
+        List<Map<String, Object>> summaryItems = new ArrayList<>();
+        List<Map<String, Object>> secondaryItems = new ArrayList<>();
+        for (Map<String, Object> field : fields) {
+            Map<String, Object> displayConfig = asMap(field.get("displayConfig"));
+            if (Boolean.FALSE.equals(displayConfig.get("showInSummary"))) {
+                continue;
+            }
+            Object value = field.get("value");
+            String displayValue = resolveDisplayValue(field, value);
+            if (!StringUtils.hasText(displayValue)) {
+                continue;
+            }
+            Map<String, Object> item = new LinkedHashMap<>();
+            item.put("label", firstText(field.get("title"), field.get("name")));
+            item.put("value", displayValue);
+            item.put("icon", asText(displayConfig.get("summaryIcon")));
+            item.put("order", displayConfig.get("summaryOrder"));
+            item.put("group", asText(displayConfig.get("summaryGroup")));
+            if (Boolean.TRUE.equals(displayConfig.get("secondaryGroup"))
+                    || "SECONDARY".equalsIgnoreCase(asText(displayConfig.get("summaryGroup")))) {
+                secondaryItems.add(item);
+            }
+            else {
+                summaryItems.add(item);
+            }
+        }
+        Map<String, Object> summary = new LinkedHashMap<>();
+        summary.put("summaryItems", summaryItems);
+        summary.put("secondaryItems", secondaryItems);
+        return summary;
+    }
+
+    private String resolveDisplayValue(Map<String, Object> field, Object rawValue) {
+        String text = asText(rawValue);
+        if (!StringUtils.hasText(text)) {
+            return text;
+        }
+        for (Map<String, Object> option : asListOfMaps(field.get("options"))) {
+            String optionValue = asText(option.get("value"));
+            if (StringUtils.hasText(optionValue) && optionValue.equals(text)) {
+                return firstText(option.get("label"), optionValue);
+            }
+        }
+        return text;
+    }
+
+    private String resolveUiComponent(String name, Object rawType) {
+        String type = asText(rawType);
+        if ("types".equals(name) || "rewards_cate".equals(name) || "SELECT".equalsIgnoreCase(type)) {
+            return "select";
+        }
+        if ("rewards_time".equals(name) || "DATE".equalsIgnoreCase(type)) {
+            return "date";
+        }
+        if ("remark".equals(name) || "TEXTAREA".equalsIgnoreCase(type)) {
+            return "textarea";
+        }
+        if ("cost".equals(name)) {
+            return "number";
+        }
+        return "text";
+    }
+
+    private String resolveValueType(String name, String uiComponent, Object value) {
+        if ("types".equals(name) || value instanceof Integer || value instanceof Long) {
+            return "integer";
+        }
+        if ("cost".equals(name)) {
+            return "number";
+        }
+        if ("select".equals(uiComponent)) {
+            return value instanceof Number ? "integer" : "string";
+        }
+        return "string";
+    }
+
+    private String defaultPriority(String name) {
+        return "remark".equals(name) ? "SECONDARY" : "CORE";
+    }
+
+    private int summaryOrder(String name) {
+        return switch (name) {
+            case "uname" -> 1;
+            case "types" -> 2;
+            case "rewards_cate" -> 3;
+            case "cost" -> 4;
+            case "rewards_time" -> 5;
+            case "remark" -> 6;
+            default -> 99;
+        };
     }
 
     private Map<String, Object> buildFormSnapshot(Map<String, Object> formPayload, Map<String, Object> state) {
