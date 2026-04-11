@@ -155,43 +155,46 @@ public class ExpenseAddFormTool extends AbstractDynamicCodeactTool {
         putIfHasText(values, "subject_id", summary.subjectId());
         putIfHasText(values, "project_id", summary.projectId());
         putIfHasText(values, "ptname", summary.applicant());
+        putIfHasText(values, "flow_id", summary.flow());
         putIfHasText(values, "check_uids", summary.approver());
         putIfHasText(values, "check_copy_uids", summary.copyUsers());
 
-        boolean hasSummaryDetail = StringUtils.hasText(summary.detailCategory())
-                || StringUtils.hasText(summary.detailAmount())
-                || StringUtils.hasText(summary.detailRemarks());
+        List<Map<String, Object>> summaryDetails = buildSummaryDetails(summary.details());
+        boolean hasSummaryDetail = !summaryDetails.isEmpty();
         if (!hasSummaryDetail) {
             normalizeDetails(values, fieldOptions);
             return;
         }
 
-        if (!hasValue(values.get("details"))) {
-            Map<String, Object> detail = new LinkedHashMap<>();
-            putIfHasText(detail, "cate_id", summary.detailCategory());
-            putIfHasText(detail, "amount", summary.detailAmount());
-            putIfHasText(detail, "remarks", summary.detailRemarks());
-            detail.put("expense_id", "0");
-            values.put("details", List.of(detail));
+        if (!hasMeaningfulDetails(values.get("details"))) {
+            values.put("details", summaryDetails);
         }
         else {
             List<Map<String, Object>> details = toListOfMaps(values.get("details"));
-            if (!details.isEmpty()) {
-                Map<String, Object> firstDetail = new LinkedHashMap<>(details.get(0));
-                if (!StringUtils.hasText(asText(firstDetail.get("cate_id")))) {
-                    putIfHasText(firstDetail, "cate_id", summary.detailCategory());
+            List<Map<String, Object>> mergedDetails = new ArrayList<>();
+            int size = Math.max(details.size(), summaryDetails.size());
+            for (int index = 0; index < size; index++) {
+                Map<String, Object> detail = index < details.size()
+                        ? new LinkedHashMap<>(details.get(index))
+                        : new LinkedHashMap<>();
+                Map<String, Object> summaryDetail = index < summaryDetails.size() ? summaryDetails.get(index) : Map.of();
+                if (!StringUtils.hasText(asText(detail.get("cate_id")))) {
+                    putIfHasText(detail, "cate_id", asText(summaryDetail.get("cate_id")));
                 }
-                if (!StringUtils.hasText(asText(firstDetail.get("amount")))) {
-                    putIfHasText(firstDetail, "amount", summary.detailAmount());
+                if (!StringUtils.hasText(asText(detail.get("amount")))) {
+                    putIfHasText(detail, "amount", asText(summaryDetail.get("amount")));
                 }
-                if (!StringUtils.hasText(asText(firstDetail.get("remarks")))) {
-                    putIfHasText(firstDetail, "remarks", summary.detailRemarks());
+                if (!StringUtils.hasText(asText(detail.get("remarks")))) {
+                    putIfHasText(detail, "remarks", asText(summaryDetail.get("remarks")));
                 }
-                if (!StringUtils.hasText(asText(firstDetail.get("expense_id")))) {
-                    firstDetail.put("expense_id", "0");
+                if (!StringUtils.hasText(asText(detail.get("expense_id")))) {
+                    detail.put("expense_id", "0");
                 }
-                List<Map<String, Object>> mergedDetails = new ArrayList<>(details);
-                mergedDetails.set(0, firstDetail);
+                if (hasMeaningfulDetails(List.of(detail))) {
+                    mergedDetails.add(detail);
+                }
+            }
+            if (!mergedDetails.isEmpty()) {
                 values.put("details", mergedDetails);
             }
         }
@@ -210,9 +213,6 @@ public class ExpenseAddFormTool extends AbstractDynamicCodeactTool {
         }
         if (!StringUtils.hasText(asText(values.get("code")))) {
             values.put("code", "BX" + LocalDateTime.now().format(CODE_FORMATTER));
-        }
-        if (!StringUtils.hasText(asText(values.get("flow_id")))) {
-            values.put("flow_id", fieldOptions.defaultFlowId());
         }
         // 需求临时约定：部门固定为 2。
         values.put("department", "2");
@@ -352,15 +352,13 @@ public class ExpenseAddFormTool extends AbstractDynamicCodeactTool {
         List<Map<String, Object>> flowOptions = loadFlowOptions(toolContext);
         List<ExpenseToolMetaService.UserRecord> users = loadUsers(toolContext);
         List<Map<String, Object>> userOptions = buildUserOptions(users);
-        String defaultFlowId = resolveDefaultFlowId(flowOptions);
         return new FieldOptions(
                 subjectOptions,
                 expenseCategoryOptions,
                 projectOptions,
                 flowOptions,
                 users,
-                userOptions,
-                defaultFlowId);
+                userOptions);
     }
 
     private List<Map<String, Object>> loadSubjectOptions(@Nullable ToolContext toolContext) {
@@ -425,14 +423,6 @@ public class ExpenseAddFormTool extends AbstractDynamicCodeactTool {
             log.warn("ExpenseAddFormTool#loadFlowOptions - preload failed, error={}", exception.getMessage());
             return List.of();
         }
-    }
-
-    private String resolveDefaultFlowId(List<Map<String, Object>> flowOptions) {
-        if (flowOptions == null || flowOptions.isEmpty()) {
-            return ExpenseToolMetaService.DEFAULT_FLOW_ID;
-        }
-        String flowId = asText(flowOptions.get(0).get("value"));
-        return StringUtils.hasText(flowId) ? flowId : ExpenseToolMetaService.DEFAULT_FLOW_ID;
     }
 
     private List<Map<String, Object>> buildFields(Map<String, Object> values, FieldOptions fieldOptions) {
@@ -583,8 +573,12 @@ public class ExpenseAddFormTool extends AbstractDynamicCodeactTool {
         for (Map<String, Object> option : options) {
             String valueText = asText(option.get("value"));
             String labelText = firstText(option.get("label"), option.get("title"), option.get("name"));
-            if (normalizedRawValue.equals(normalizeComparisonText(valueText))
-                    || normalizedRawValue.equals(normalizeComparisonText(labelText))) {
+            String normalizedValueText = normalizeComparisonText(valueText);
+            String normalizedLabelText = normalizeComparisonText(labelText);
+            if (normalizedRawValue.equals(normalizedValueText)
+                    || normalizedRawValue.equals(normalizedLabelText)
+                    || (StringUtils.hasText(normalizedLabelText) && normalizedRawValue.contains(normalizedLabelText))
+                    || (StringUtils.hasText(normalizedValueText) && normalizedRawValue.contains(normalizedValueText))) {
                 return valueText;
             }
         }
@@ -653,6 +647,40 @@ public class ExpenseAddFormTool extends AbstractDynamicCodeactTool {
             return !map.isEmpty();
         }
         return true;
+    }
+
+    // 将自然语言解析结果转换为表单可直接消费的明细结构。
+    private List<Map<String, Object>> buildSummaryDetails(
+            List<ExpenseFormSummaryParser.DetailSummary> summaries) {
+        if (summaries == null || summaries.isEmpty()) {
+            return List.of();
+        }
+        List<Map<String, Object>> details = new ArrayList<>();
+        for (ExpenseFormSummaryParser.DetailSummary summary : summaries) {
+            Map<String, Object> detail = new LinkedHashMap<>();
+            putIfHasText(detail, "cate_id", summary.category());
+            putIfHasText(detail, "amount", summary.amount());
+            putIfHasText(detail, "remarks", summary.remarks());
+            detail.put("expense_id", "0");
+            if (StringUtils.hasText(asText(detail.get("cate_id")))
+                    || StringUtils.hasText(asText(detail.get("amount")))
+                    || StringUtils.hasText(asText(detail.get("remarks")))) {
+                details.add(detail);
+            }
+        }
+        return details;
+    }
+
+    // 只要存在一条填写过的明细，就认为当前 details 有效，避免覆盖前端已录入内容。
+    private boolean hasMeaningfulDetails(Object rawDetails) {
+        List<Map<String, Object>> details = toListOfMaps(rawDetails);
+        if (details.isEmpty()) {
+            return false;
+        }
+        return details.stream().anyMatch(detail ->
+                StringUtils.hasText(asText(detail.get("cate_id")))
+                        || StringUtils.hasText(asText(detail.get("amount")))
+                        || StringUtils.hasText(asText(detail.get("remarks"))));
     }
 
     @SuppressWarnings("unchecked")
@@ -761,7 +789,6 @@ public class ExpenseAddFormTool extends AbstractDynamicCodeactTool {
             List<Map<String, Object>> projectOptions,
             List<Map<String, Object>> flowOptions,
             List<ExpenseToolMetaService.UserRecord> users,
-            List<Map<String, Object>> userOptions,
-            String defaultFlowId) {
+            List<Map<String, Object>> userOptions) {
     }
 }

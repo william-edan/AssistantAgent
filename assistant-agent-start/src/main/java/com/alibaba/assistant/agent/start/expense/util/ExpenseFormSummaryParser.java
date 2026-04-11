@@ -18,6 +18,7 @@ package com.alibaba.assistant.agent.start.expense.util;
 import org.springframework.lang.Nullable;
 import org.springframework.util.StringUtils;
 
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -28,9 +29,9 @@ import java.util.regex.Pattern;
 /**
  * 报销表单自然语言摘要解析器。
  *
- * <p>支持两类输入：
- * 1) 非结构化口语：如“报销交通费100元”；</p>
- * <p>2) 标签式自然语言：如“报销主体 A，关联项目 B，报销人 C，报销类型 住宿费，金额 12”。</p>
+ * <p>支持两类输入：</p>
+ * <p>1) 非结构化口语：如“报销交通费100元”；</p>
+ * <p>2) 标签式自然语言：如“报销主体 A，关联项目 B，报销明细 报销类型 住宿费, 金额 100; 报销类型 招待费, 金额 200”。</p>
  */
 public final class ExpenseFormSummaryParser {
 
@@ -39,6 +40,12 @@ public final class ExpenseFormSummaryParser {
     private static final Pattern DATE_PATTERN = Pattern.compile("(20\\d{2}-\\d{1,2}-\\d{1,2})");
 
     private static final Pattern MONTH_PATTERN = Pattern.compile("(20\\d{2}-\\d{1,2})(?!-\\d{1,2})");
+
+    private static final Pattern LABELED_TYPE_PATTERN = Pattern.compile("(?:报销类型|费用类型|类型)\\s*[:：=]?\\s*([^,，;；\\n]+)");
+
+    private static final Pattern LABELED_AMOUNT_PATTERN = Pattern.compile("(?:报销金额|费用金额|金额)\\s*[:：=]?\\s*(\\d+(?:\\.\\d{1,2})?)");
+
+    private static final Pattern LABELED_REMARKS_PATTERN = Pattern.compile("(?:备注|说明)\\s*[:：=]?\\s*([^,，;；\\n]+)");
 
     private static final Pattern AMOUNT_PATTERN = Pattern.compile("(\\d+(?:\\.\\d{1,2})?)");
 
@@ -55,6 +62,7 @@ public final class ExpenseFormSummaryParser {
 
         String normalizedInput = userInput.trim();
         Map<String, String> rawValues = extractRawValues(normalizedInput);
+        List<DetailSummary> details = parseDetails(normalizedInput);
 
         String code = firstText(rawValues.get("code"), firstMatch(CODE_PATTERN, normalizedInput, 1));
         String expenseTime = firstText(
@@ -64,17 +72,25 @@ public final class ExpenseFormSummaryParser {
                 normalizeMonth(rawValues.get("income_month")),
                 normalizeMonth(firstMatch(MONTH_PATTERN, normalizedInput, 1)));
 
-        String detailAmount = normalizeAmount(firstText(rawValues.get("detail_amount"), firstMatch(AMOUNT_PATTERN, normalizedInput, 1)));
-        String detailCategory = rawValues.get("detail_category");
-        String detailRemarks = rawValues.get("detail_remarks");
+        if (details.isEmpty()) {
+            String detailAmount = normalizeAmount(firstText(
+                    rawValues.get("detail_amount"),
+                    firstMatch(AMOUNT_PATTERN, normalizedInput, 1)));
+            String detailCategory = rawValues.get("detail_category");
+            String detailRemarks = rawValues.get("detail_remarks");
 
-        // 兼容“报销交通费100元”这类非结构化口语输入。
-        String looseDetailText = extractLooseDetailText(normalizedInput, detailAmount);
-        if (!StringUtils.hasText(detailCategory)) {
-            detailCategory = looseDetailText;
-        }
-        if (!StringUtils.hasText(detailRemarks)) {
-            detailRemarks = looseDetailText;
+            String looseDetailText = extractLooseDetailText(normalizedInput, detailAmount);
+            if (!StringUtils.hasText(detailCategory)) {
+                detailCategory = looseDetailText;
+            }
+            if (!StringUtils.hasText(detailRemarks)) {
+                detailRemarks = looseDetailText;
+            }
+            if (StringUtils.hasText(detailCategory)
+                    || StringUtils.hasText(detailAmount)
+                    || StringUtils.hasText(detailRemarks)) {
+                details = List.of(new DetailSummary(detailCategory, detailAmount, detailRemarks));
+            }
         }
 
         return new ParsedExpenseSummary(
@@ -86,9 +102,8 @@ public final class ExpenseFormSummaryParser {
                 rawValues.get("applicant"),
                 rawValues.get("approver"),
                 rawValues.get("copy_users"),
-                detailCategory,
-                detailAmount,
-                detailRemarks);
+                rawValues.get("flow"),
+                details);
     }
 
     /**
@@ -111,31 +126,43 @@ public final class ExpenseFormSummaryParser {
             putIfHasText(values, "applicant", extractValue(segment, List.of("报销人", "申请人")));
             putIfHasText(values, "approver", extractValue(segment, List.of("审批人", "审核人")));
             putIfHasText(values, "copy_users", extractValue(segment, List.of("抄送人")));
+            putIfHasText(values, "flow", extractValue(segment, List.of("审批流程", "审批流", "流程")));
             putIfHasText(values, "expense_time", extractValue(segment, List.of("报销日期", "日期")));
             putIfHasText(values, "income_month", extractValue(segment, List.of("所属月份", "月份")));
             putIfHasText(values, "code", extractValue(segment, List.of("凭证编号", "编号", "单号")));
             putIfHasText(values, "detail_category", extractValue(segment, List.of("报销类型", "费用类型", "类型")));
             putIfHasText(values, "detail_amount", extractValue(segment, List.of("报销金额", "费用金额", "金额")));
             putIfHasText(values, "detail_remarks", extractValue(segment, List.of("备注", "说明")));
-
-            String detailBlock = extractValue(segment, List.of("报销明细", "明细"));
-            if (StringUtils.hasText(detailBlock)) {
-                if (!StringUtils.hasText(values.get("detail_category"))) {
-                    putIfHasText(values, "detail_category", extractValue(detailBlock, List.of("报销类型", "费用类型", "类型")));
-                }
-                if (!StringUtils.hasText(values.get("detail_amount"))) {
-                    putIfHasText(values, "detail_amount", extractValue(detailBlock, List.of("报销金额", "费用金额", "金额")));
-                }
-                if (!StringUtils.hasText(values.get("detail_remarks"))) {
-                    putIfHasText(values, "detail_remarks", detailBlock);
-                }
-            }
         }
 
         if (StringUtils.hasText(values.get("detail_amount"))) {
             values.put("detail_amount", normalizeAmount(values.get("detail_amount")));
         }
         return values;
+    }
+
+    /**
+     * 支持多条明细抽取：
+     * “报销类型 住宿费, 金额 100; 报销类型 招待费, 金额 200”
+     */
+    private static List<DetailSummary> parseDetails(String userInput) {
+        if (!StringUtils.hasText(userInput)) {
+            return List.of();
+        }
+        List<DetailSummary> details = new ArrayList<>();
+        for (String rawSegment : userInput.split("[;；\\n]")) {
+            String segment = normalizeSegment(rawSegment);
+            if (!StringUtils.hasText(segment)) {
+                continue;
+            }
+            String category = firstMatch(LABELED_TYPE_PATTERN, segment, 1);
+            String amount = normalizeAmount(firstMatch(LABELED_AMOUNT_PATTERN, segment, 1));
+            String remarks = firstMatch(LABELED_REMARKS_PATTERN, segment, 1);
+            if (StringUtils.hasText(category) || StringUtils.hasText(amount) || StringUtils.hasText(remarks)) {
+                details.add(new DetailSummary(category, amount, remarks));
+            }
+        }
+        return details;
     }
 
     private static String normalizeSegment(String segment) {
@@ -260,12 +287,14 @@ public final class ExpenseFormSummaryParser {
             String applicant,
             String approver,
             String copyUsers,
-            String detailCategory,
-            String detailAmount,
-            String detailRemarks) {
+            String flow,
+            List<DetailSummary> details) {
 
         public static ParsedExpenseSummary empty() {
-            return new ParsedExpenseSummary(null, null, null, null, null, null, null, null, null, null, null);
+            return new ParsedExpenseSummary(null, null, null, null, null, null, null, null, null, List.of());
         }
+    }
+
+    public record DetailSummary(String category, String amount, String remarks) {
     }
 }

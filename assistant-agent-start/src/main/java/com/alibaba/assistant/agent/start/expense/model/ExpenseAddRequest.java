@@ -42,7 +42,9 @@ public record ExpenseAddRequest(
         String applicantId,
         String applicantName,
         String department,
+        String checkUnames,
         String checkUids,
+        String checkCopyUnames,
         String checkCopyUids,
         List<ExpenseAddDetail> details) {
 }

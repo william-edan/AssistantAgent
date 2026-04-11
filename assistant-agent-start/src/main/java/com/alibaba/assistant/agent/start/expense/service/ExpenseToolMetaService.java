@@ -65,8 +65,6 @@ public class ExpenseToolMetaService {
 
     private static final String FLOW_LOOKUP_FLOW_ID = "0";
 
-    public static final String DEFAULT_FLOW_ID = "7";
-
     public static final String CHECK_NAME = "expense";
 
     public static final String EXPENSE_SUBJECT_LOOKUP_TOOL_CODE = "gougu_oa.expense_subject_lookup";
@@ -80,6 +78,8 @@ public class ExpenseToolMetaService {
     public static final String APPROVAL_FLOW_NODES_LOOKUP_TOOL_CODE = "gougu_oa.approval_flow_nodes_lookup";
 
     public static final String EXPENSE_ADD_TOOL_CODE = "gougu_oa.expense_add";
+
+    public static final String EXPENSE_SUBMIT_TOOL_CODE = "gougu_oa.expense_submit";
 
     private static final Set<String> USER_CONTAINER_KEYS = Set.of(
             "children",
@@ -193,6 +193,9 @@ public class ExpenseToolMetaService {
      * 提交报销申请。
      */
     public AddResult addExpense(ExpenseAddRequest request, @Nullable ToolContext toolContext) {
+        if (!StringUtils.hasText(request.flowId())) {
+            throw new IllegalArgumentException("审批流程不能为空");
+        }
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("subject_id", request.subjectId());
         body.put("code", request.code());
@@ -200,9 +203,15 @@ public class ExpenseToolMetaService {
         body.put("income_month", request.incomeMonth());
         body.put("project_id", request.projectId());
         body.put("ptname", request.applicantName());
-        body.put("flow_id", Optional.ofNullable(request.flowId()).filter(StringUtils::hasText).orElse(DEFAULT_FLOW_ID));
+        body.put("loan", "");
+        body.put("loan_id", "0");
+        body.put("file", "");
+        body.put("file_ids", "");
+        body.put("flow_id", request.flowId());
         body.put("check_name", CHECK_NAME);
+        body.put("check_uames", Optional.ofNullable(request.checkUnames()).orElse(""));
         body.put("check_uids", request.checkUids());
+        body.put("check_copy_unames", Optional.ofNullable(request.checkCopyUnames()).orElse(""));
         body.put("check_copy_uids", Optional.ofNullable(request.checkCopyUids()).orElse(""));
 
         List<ExpenseAddDetail> details = request.details() != null ? request.details() : List.of();
@@ -223,6 +232,61 @@ public class ExpenseToolMetaService {
         String message = resolveMessage(executionResult).orElse("报销申请提交成功");
         String recordId = resolveRecordId(executionResult).orElse(null);
         return new AddResult(true, message, recordId, summarizePayload(executionResult.payload()));
+    }
+
+    /**
+     * 先新增报销单，再调用 submit_check 正式发起审批。
+     */
+    public AddResult createAndSubmitExpense(ExpenseAddRequest request, @Nullable ToolContext toolContext) {
+        AddResult addResult = addExpense(request, toolContext);
+        String recordId = Optional.ofNullable(addResult.recordId())
+                .filter(StringUtils::hasText)
+                .orElseThrow(() -> new IllegalStateException("新增报销申请失败：接口未返回 return_id"));
+
+        ToolExecutor.ExecutionResult submitResult = execute(
+                EXPENSE_SUBMIT_TOOL_CODE,
+                Map.of("body", Map.copyOf(buildSubmitBody(request, recordId))),
+                toolContext);
+
+        String message = resolveMessage(submitResult)
+                .or(() -> Optional.ofNullable(addResult.message()).filter(StringUtils::hasText))
+                .orElse("提交报销申请成功");
+        return new AddResult(true, message, recordId, summarizePayload(submitResult.payload()));
+    }
+
+    // submit_check 复用新增后的关键信息，并补齐 action_id / id 供审批中心识别。
+    private Map<String, Object> buildSubmitBody(ExpenseAddRequest request, String recordId) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("subject_id", request.subjectId());
+        body.put("code", request.code());
+        body.put("expense_time", request.expenseTime());
+        body.put("income_month", request.incomeMonth());
+        body.put("ptname", request.applicantName());
+        body.put("project_id", request.projectId());
+        body.put("loan", "");
+        body.put("loan_id", "0");
+        body.put("file", "");
+        body.put("file_ids", "");
+        body.put("flow_id", request.flowId());
+        body.put("check_uames", Optional.ofNullable(request.checkUnames()).orElse(""));
+        body.put("check_uids", request.checkUids());
+        body.put("check_copy_unames", Optional.ofNullable(request.checkCopyUnames()).orElse(""));
+        body.put("check_copy_uids", Optional.ofNullable(request.checkCopyUids()).orElse(""));
+        body.put("id", recordId);
+        body.put("check_name", CHECK_NAME);
+        body.put("action_id", recordId);
+
+        List<ExpenseAddDetail> details = request.details() != null ? request.details() : List.of();
+        for (int index = 0; index < details.size(); index++) {
+            ExpenseAddDetail detail = details.get(index);
+            body.put("amount[" + index + "]", detail.amount().stripTrailingZeros().toPlainString());
+            body.put("cate_id[" + index + "]", detail.cateId());
+            body.put("remarks[" + index + "]", Optional.ofNullable(detail.remarks()).orElse(""));
+            body.put("expense_id[" + index + "]", Optional.ofNullable(detail.expenseId())
+                    .filter(StringUtils::hasText)
+                    .orElse("0"));
+        }
+        return body;
     }
 
     private Optional<OptionRecord> matchOption(String rawValue, List<OptionRecord> options) {

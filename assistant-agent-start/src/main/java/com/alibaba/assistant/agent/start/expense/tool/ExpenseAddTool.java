@@ -95,8 +95,8 @@ public class ExpenseAddTool extends AbstractDynamicCodeactTool {
                     values.get("ptname"),
                     "报销人",
                     toolContext);
-            String approverId = resolveRequiredUserIds(values.get("check_uids"), "审批人", toolContext);
-            String copyUserIds = resolveOptionalUserIds(values.get("check_copy_uids"), "抄送人", toolContext);
+            ResolvedUsers approver = resolveRequiredUsers(values.get("check_uids"), "审批人", toolContext);
+            ResolvedUsers copyUsers = resolveOptionalUsers(values.get("check_copy_uids"), "抄送人", toolContext);
             List<ExpenseAddDetail> details = resolveDetails(values.get("details"), toolContext);
 
             ExpenseAddRequest request = new ExpenseAddRequest(
@@ -109,11 +109,13 @@ public class ExpenseAddTool extends AbstractDynamicCodeactTool {
                     applicant.id(),
                     applicant.name(),
                     firstText(values.get("department"), applicant.departmentName()),
-                    approverId,
-                    copyUserIds,
+                    approver.names(),
+                    approver.ids(),
+                    copyUsers.names(),
+                    copyUsers.ids(),
                     details);
 
-            ExpenseToolMetaService.AddResult result = expenseToolMetaService.addExpense(request, toolContext);
+            ExpenseToolMetaService.AddResult result = expenseToolMetaService.createAndSubmitExpense(request, toolContext);
             return objectMapper.writeValueAsString(successPayload(result, request));
         }
         catch (Exception exception) {
@@ -221,22 +223,23 @@ public class ExpenseAddTool extends AbstractDynamicCodeactTool {
         throw new IllegalStateException("未找到对应" + displayName + "，请重新选择。");
     }
 
-    private String resolveRequiredUserIds(
+    private ResolvedUsers resolveRequiredUsers(
             Object rawValue,
             String displayName,
             @Nullable ToolContext toolContext) {
-        String userIds = resolveOptionalUserIds(rawValue, displayName, toolContext);
-        if (!StringUtils.hasText(userIds)) {
+        ResolvedUsers resolvedUsers = resolveOptionalUsers(rawValue, displayName, toolContext);
+        if (!StringUtils.hasText(resolvedUsers.ids())) {
             throw new IllegalStateException("请选择" + displayName + "。");
         }
-        return userIds;
+        return resolvedUsers;
     }
 
-    private String resolveOptionalUserIds(
+    private ResolvedUsers resolveOptionalUsers(
             Object rawValue,
             String displayName,
             @Nullable ToolContext toolContext) {
         List<String> userIds = new ArrayList<>();
+        List<String> userNames = new ArrayList<>();
         for (String candidate : toStringList(rawValue)) {
             Optional<ExpenseToolMetaService.UserRecord> user = expenseToolMetaService.findUserById(candidate, toolContext)
                     .or(() -> expenseToolMetaService.findUserByName(candidate, toolContext));
@@ -244,8 +247,9 @@ public class ExpenseAddTool extends AbstractDynamicCodeactTool {
                 throw new IllegalStateException("未找到对应" + displayName + "，请重新选择。");
             }
             userIds.add(user.get().id());
+            userNames.add(user.get().name());
         }
-        return String.join(",", userIds);
+        return new ResolvedUsers(String.join(",", userIds), String.join(",", userNames));
     }
 
     private List<ExpenseAddDetail> resolveDetails(Object rawDetails, @Nullable ToolContext toolContext) {
@@ -426,6 +430,9 @@ public class ExpenseAddTool extends AbstractDynamicCodeactTool {
         }
         String text = String.valueOf(value).trim();
         return StringUtils.hasText(text) ? text : null;
+    }
+
+    private record ResolvedUsers(String ids, String names) {
     }
 
     private static ToolDefinition buildToolDefinition() {
