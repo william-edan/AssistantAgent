@@ -18,10 +18,10 @@ spring:
     placeholder-replacement: false
   data:
     redis:
-      host: ${REDIS_HOST:localhost}
+      host: ${REDIS_HOST:192.168.2.26}
       port: ${REDIS_PORT:6379}
-      password: ${REDIS_PASSWORD:redis_CCMk6W}
-      database: ${REDIS_DB:0}
+      password: ${REDIS_PASSWORD:kYpw7saS2Ts3RnHn}
+      database: ${REDIS_DB:1}
 
 # MyBatis-Plus
 mybatis-plus:
@@ -42,9 +42,15 @@ assistant:
     default-space-environment: ${ASSISTANT_DEFAULT_SPACE_ENVIRONMENT:prod}
   profile:
     data-agent:
-      base-url: ${PROFILE_DATA_AGENT_BASE_URL:http://localhost:8066}
+      base-url: ${PROFILE_DATA_AGENT_BASE_URL:http://192.168.2.26:8066}
       search-path: ${PROFILE_DATA_AGENT_SEARCH_PATH:/api/stream/search}
       agent-id: ${PROFILE_DATA_AGENT_ID:5}
+  reward:
+    data-agent:
+      base-url: ${REWARD_DATA_AGENT_BASE_URL:${PROFILE_DATA_AGENT_BASE_URL:http://192.168.2.26:8066}}
+      search-path: ${REWARD_DATA_AGENT_SEARCH_PATH:/api/stream/search}
+      agent-id: ${REWARD_DATA_AGENT_ID:5}
+      max-retries: ${REWARD_DATA_AGENT_MAX_RETRIES:2}
   debug:
     http:
       enabled: true
@@ -222,5 +228,4 @@ management:
     enabled: true
     sampling:
       probability: 1.0
-
 
